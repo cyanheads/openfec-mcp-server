@@ -26,6 +26,12 @@ Tailor suggestions to what's actually missing or stale — don't recite the full
 
 ---
 
+## API Reference
+
+The OpenFEC OpenAPI spec (Swagger 2.0) is at `docs/openapi-spec.json` — 100 paths, 203 definitions. **Consult it directly** for parameter names, enums, response shapes, and pagination models. Don't guess at API behavior.
+
+---
+
 ## Core Rules
 
 - **Logic throws, framework catches.** Tool/resource handlers are pure — throw on failure, no `try/catch`. Plain `Error` is fine; the framework catches, classifies, and formats. Use error factories (`notFound()`, `validationError()`, etc.) when the error code matters.

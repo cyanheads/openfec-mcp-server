@@ -1,5 +1,5 @@
 {
-  "name": "openfec-mcp-server",
+  "name": "@cyanheads/openfec-mcp-server",
   "version": "0.1.0",
   "description": "MCP server for the OpenFEC API — query federal election campaign finance data from the FEC.",
   "type": "module",
