@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/openfec-mcp-server",
-  "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
+  "description": "Access FEC campaign finance data. Query data about candidates, money trails, and election filings.",
   "repository": {
     "url": "https://github.com/cyanheads/openfec-mcp-server",
     "source": "github"
