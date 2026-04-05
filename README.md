@@ -187,24 +187,6 @@ Add the following to your MCP client configuration file.
 }
 ```
 
-Or with npx (no Bun required):
-
-```json
-{
-  "mcpServers": {
-    "openfec": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@cyanheads/openfec-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "FEC_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
-
 Or with Docker:
 
 ```json
