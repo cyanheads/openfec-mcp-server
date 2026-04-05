@@ -1,0 +1,162 @@
+# openfec-mcp-server - Directory Structure
+
+Generated on: 2026-04-05 00:52:40
+
+```text
+openfec-mcp-server/
+├── .claude/
+├── .github/
+│   └── ISSUE_TEMPLATE/
+│       ├── bug_report.yml
+│       ├── config.yml
+│       └── feature_request.yml
+├── .vscode/
+│   ├── extensions.json
+│   └── settings.json
+├── claude-plans/
+├── docs/
+│   ├── design.md
+│   └── openapi-spec.json
+├── scripts/
+│   ├── build.ts
+│   ├── clean.ts
+│   ├── devcheck.ts
+│   ├── lint-mcp.ts
+│   └── tree.ts
+├── skills/
+│   ├── add-prompt/
+│   │   └── SKILL.md
+│   ├── add-resource/
+│   │   └── SKILL.md
+│   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-test/
+│   │   └── SKILL.md
+│   ├── add-tool/
+│   │   └── SKILL.md
+│   ├── api-auth/
+│   │   └── SKILL.md
+│   ├── api-config/
+│   │   └── SKILL.md
+│   ├── api-context/
+│   │   └── SKILL.md
+│   ├── api-errors/
+│   │   └── SKILL.md
+│   ├── api-services/
+│   │   ├── references/
+│   │   │   ├── graph.md
+│   │   │   ├── llm.md
+│   │   │   └── speech.md
+│   │   └── SKILL.md
+│   ├── api-testing/
+│   │   └── SKILL.md
+│   ├── api-utils/
+│   │   ├── references/
+│   │   │   ├── formatting.md
+│   │   │   ├── parsing.md
+│   │   │   └── security.md
+│   │   └── SKILL.md
+│   ├── api-workers/
+│   │   └── SKILL.md
+│   ├── design-mcp-server/
+│   │   └── SKILL.md
+│   ├── devcheck/
+│   │   └── SKILL.md
+│   ├── field-test/
+│   │   └── SKILL.md
+│   ├── maintenance/
+│   │   └── SKILL.md
+│   ├── migrate-mcp-ts-template/
+│   │   └── SKILL.md
+│   ├── polish-docs-meta/
+│   │   ├── references/
+│   │   │   ├── agent-protocol.md
+│   │   │   ├── package-meta.md
+│   │   │   ├── readme.md
+│   │   │   └── server-json.md
+│   │   └── SKILL.md
+│   ├── report-issue-framework/
+│   │   └── SKILL.md
+│   ├── report-issue-local/
+│   │   └── SKILL.md
+│   └── setup/
+│       └── SKILL.md
+├── src/
+│   ├── config/
+│   │   └── server-config.ts
+│   ├── mcp-server/
+│   │   ├── prompts/
+│   │   │   └── definitions/
+│   │   │       ├── campaign-analysis.prompt.ts
+│   │   │       ├── index.ts
+│   │   │       └── money-trail.prompt.ts
+│   │   ├── resources/
+│   │   │   └── definitions/
+│   │   │       ├── candidate.resource.ts
+│   │   │       ├── committee.resource.ts
+│   │   │       ├── election.resource.ts
+│   │   │       └── index.ts
+│   │   └── tools/
+│   │       └── definitions/
+│   │           ├── index.ts
+│   │           ├── lookup-calendar.tool.ts
+│   │           ├── lookup-elections.tool.ts
+│   │           ├── search-candidates.tool.ts
+│   │           ├── search-committees.tool.ts
+│   │           ├── search-contributions.tool.ts
+│   │           ├── search-disbursements.tool.ts
+│   │           ├── search-expenditures.tool.ts
+│   │           ├── search-filings.tool.ts
+│   │           └── search-legal.tool.ts
+│   ├── services/
+│   │   └── openfec/
+│   │       ├── openfec-service.ts
+│   │       └── types.ts
+│   └── index.ts
+├── tests/
+│   ├── config/
+│   │   └── server-config.test.ts
+│   ├── mcp-server/
+│   │   ├── prompts/
+│   │   │   └── definitions/
+│   │   │       ├── campaign-analysis.prompt.test.ts
+│   │   │       └── money-trail.prompt.test.ts
+│   │   ├── resources/
+│   │   │   └── definitions/
+│   │   │       ├── candidate.resource.test.ts
+│   │   │       ├── committee.resource.test.ts
+│   │   │       └── election.resource.test.ts
+│   │   └── tools/
+│   │       └── definitions/
+│   │           ├── lookup-calendar.tool.test.ts
+│   │           ├── lookup-elections.tool.test.ts
+│   │           ├── search-candidates.tool.test.ts
+│   │           ├── search-committees.tool.test.ts
+│   │           ├── search-contributions.tool.test.ts
+│   │           ├── search-disbursements.tool.test.ts
+│   │           ├── search-expenditures.tool.test.ts
+│   │           ├── search-filings.tool.test.ts
+│   │           └── search-legal.tool.test.ts
+│   └── services/
+│       └── openfec/
+│           └── openfec-service.test.ts
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── biome.json
+├── bun.lock
+├── bunfig.toml
+├── CHANGELOG.md
+├── CLAUDE.md
+├── devcheck.config.json
+├── Dockerfile
+├── LICENSE
+├── package.json
+├── README.md
+├── server.json
+├── tsconfig.build.json
+├── tsconfig.json
+└── vitest.config.ts
+```
+
+_Note: This tree excludes files and directories matched by .gitignore and default patterns._

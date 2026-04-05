@@ -48,34 +48,33 @@ The OpenFEC OpenAPI spec (Swagger 2.0) is at `docs/openapi-spec.json` — 100 pa
 
 ```ts
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 
-export const searchItems = tool('search_items', {
-  description: 'Search inventory items by query.',
-  annotations: { readOnlyHint: true },
+export const searchCandidates = tool('openfec_search_candidates', {
+  description: 'Find federal candidates by name, state, office, party, or cycle.',
+  annotations: { readOnlyHint: true, idempotentHint: true },
   input: z.object({
-    query: z.string().describe('Search terms'),
-    limit: z.number().default(10).describe('Max results'),
+    query: z.string().optional().describe('Full-text candidate name search.'),
+    candidate_id: z.string().optional().describe('FEC candidate ID (e.g., P00003392).'),
+    state: z.string().optional().describe('Two-letter US state code.'),
+    office: z.enum(['H', 'S', 'P']).optional().describe('H=House, S=Senate, P=President.'),
+    // ... more filters, pagination
   }),
   output: z.object({
-    items: z.array(z.object({
-      id: z.string().describe('Item ID'),
-      name: z.string().describe('Item name'),
-    })).describe('Matching items'),
+    candidates: z.array(z.record(z.string(), z.unknown())).describe('Candidate records.'),
+    pagination: z.object({ page: z.number(), pages: z.number(), count: z.number(), per_page: z.number() }),
   }),
-  auth: ['inventory:read'],
-
   async handler(input, ctx) {
-    const items = await findItems(input.query, input.limit);
-    ctx.log.info('Search completed', { query: input.query, count: items.length });
-    return { items };
+    const fec = getOpenFecService();
+    if (input.candidate_id && !/^[HSP]\d+$/i.test(input.candidate_id)) {
+      throw invalidParams('Invalid candidate ID format', { candidate_id: input.candidate_id });
+    }
+    const result = await fec.searchCandidates(input, ctx);
+    ctx.log.info('Candidate search completed', { count: result.pagination.count });
+    return result;
   },
-
-  // format() populates content[] — the only field most LLM clients forward to
-  // the model. Render all data the LLM needs, not just a count or title.
-  format: (result) => [{
-    type: 'text',
-    text: result.items.map(i => `**${i.id}**: ${i.name}`).join('\n'),
-  }],
+  format: (result) => [{ type: 'text', text: /* render candidate records */ }],
 });
 ```
 
@@ -83,15 +82,23 @@ export const searchItems = tool('search_items', {
 
 ```ts
 import { resource, z } from '@cyanheads/mcp-ts-core';
+import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 
-export const itemData = resource('inventory://{itemId}', {
-  description: 'Fetch an inventory item by ID.',
-  params: z.object({ itemId: z.string().describe('Item identifier') }),
-  auth: ['inventory:read'],
+export const candidateResource = resource('openfec://candidate/{candidate_id}', {
+  name: 'FEC Candidate Profile',
+  description: 'Fetch a federal candidate profile with current financial totals.',
+  mimeType: 'application/json',
+  params: z.object({
+    candidate_id: z.string().describe('FEC candidate ID (e.g., P00003392)'),
+  }),
   async handler(params, ctx) {
-    const item = await ctx.state.get(`item:${params.itemId}`);
-    if (!item) throw new Error(`Item ${params.itemId} not found`);
-    return item;
+    const fec = getOpenFecService();
+    const candidateResult = await fec.getCandidate(params.candidate_id, ctx);
+    const candidate = candidateResult.results[0];
+    if (!candidate) throw new Error(`Candidate ${params.candidate_id} not found`);
+    const totalsResult = await fec.getCandidateTotals({ candidate_id: params.candidate_id }, ctx);
+    ctx.log.info('Candidate resource fetched', { candidate_id: params.candidate_id });
+    return { ...candidate, ...(totalsResult.results[0] ?? {}) };
   },
 });
 ```
@@ -101,15 +108,21 @@ export const itemData = resource('inventory://{itemId}', {
 ```ts
 import { prompt, z } from '@cyanheads/mcp-ts-core';
 
-export const reviewCode = prompt('review_code', {
-  description: 'Review code for issues and best practices.',
+export const moneyTrailPrompt = prompt('openfec_money_trail', {
+  description: 'Framework for tracing the flow of money around a candidate or race.',
   args: z.object({
-    code: z.string().describe('Code to review'),
-    language: z.string().optional().describe('Programming language'),
+    candidate_name: z.string().optional().describe('Candidate name to investigate.'),
+    candidate_id: z.string().optional().describe('FEC candidate ID (e.g., P00003392).'),
+    cycle: z.string().optional().describe('Election cycle year (e.g., 2024).'),
   }),
-  generate: (args) => [
-    { role: 'user', content: { type: 'text', text: `Review this ${args.language ?? ''} code:\n${args.code}` } },
-  ],
+  generate: (args) => {
+    const target = args.candidate_id
+      ? `candidate ID ${args.candidate_id}`
+      : args.candidate_name
+        ? `"${args.candidate_name}"`
+        : 'the specified candidate';
+    return [{ role: 'user', content: { type: 'text', text: `Trace the money trail for ${target}...` } }];
+  },
 });
 ```
 
@@ -118,14 +131,18 @@ export const reviewCode = prompt('review_code', {
 ```ts
 // src/config/server-config.ts — lazy-parsed, separate from framework config
 const ServerConfigSchema = z.object({
-  myApiKey: z.string().describe('External API key'),
-  maxResults: z.coerce.number().default(100),
+  fecApiKey: z.string().min(1, 'FEC_API_KEY is required.'),
+  fecBaseUrl: z.string().default('https://api.open.fec.gov/v1').describe('OpenFEC API base URL'),
+  fecMaxRetries: z.coerce.number().int().min(0).default(3).describe('Max retry attempts'),
+  fecRequestTimeout: z.coerce.number().int().min(1000).default(30_000).describe('Request timeout in ms'),
 });
 let _config: z.infer<typeof ServerConfigSchema> | undefined;
 export function getServerConfig() {
   _config ??= ServerConfigSchema.parse({
-    myApiKey: process.env.MY_API_KEY,
-    maxResults: process.env.MY_MAX_RESULTS,
+    fecApiKey: process.env.FEC_API_KEY,
+    fecBaseUrl: process.env.FEC_BASE_URL,
+    fecMaxRetries: process.env.FEC_MAX_RETRIES,
+    fecRequestTimeout: process.env.FEC_REQUEST_TIMEOUT,
   });
   return _config;
 }
@@ -141,10 +158,7 @@ Handlers receive a unified `ctx` object. Key properties:
 |:---------|:------------|
 | `ctx.log` | Request-scoped logger — `.debug()`, `.info()`, `.notice()`, `.warning()`, `.error()`. Auto-correlates requestId, traceId, tenantId. |
 | `ctx.state` | Tenant-scoped KV — `.get(key)`, `.set(key, value, { ttl? })`, `.delete(key)`, `.list(prefix, { cursor, limit })`. Accepts any serializable value. |
-| `ctx.elicit` | Ask user for structured input. **Check for presence first:** `if (ctx.elicit) { ... }` |
-| `ctx.sample` | Request LLM completion from the client. **Check for presence first:** `if (ctx.sample) { ... }` |
 | `ctx.signal` | `AbortSignal` for cancellation. |
-| `ctx.progress` | Task progress (present when `task: true`) — `.setTotal(n)`, `.increment()`, `.update(message)`. |
 | `ctx.requestId` | Unique request ID. |
 | `ctx.tenantId` | Tenant ID from JWT or `'default'` for stdio. |
 
@@ -181,16 +195,27 @@ src/
   config/
     server-config.ts                    # Server-specific env vars (Zod schema)
   services/
-    [domain]/
-      [domain]-service.ts               # Domain service (init/accessor pattern)
-      types.ts                          # Domain types
+    openfec/
+      openfec-service.ts                # OpenFEC API client (init/accessor pattern)
+      types.ts                          # API request/response types
   mcp-server/
     tools/definitions/
-      [tool-name].tool.ts               # Tool definitions
+      search-candidates.tool.ts         # 9 tool definitions (*.tool.ts)
+      search-committees.tool.ts
+      search-contributions.tool.ts
+      search-disbursements.tool.ts
+      search-expenditures.tool.ts
+      search-filings.tool.ts
+      lookup-elections.tool.ts
+      search-legal.tool.ts
+      lookup-calendar.tool.ts
     resources/definitions/
-      [resource-name].resource.ts       # Resource definitions
+      candidate.resource.ts             # 3 resource definitions (*.resource.ts)
+      committee.resource.ts
+      election.resource.ts
     prompts/definitions/
-      [prompt-name].prompt.ts           # Prompt definitions
+      campaign-analysis.prompt.ts       # 2 prompt definitions (*.prompt.ts)
+      money-trail.prompt.ts
 ```
 
 ---
@@ -252,6 +277,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run devcheck` | Lint + format + typecheck + security |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting |
+| `bun run lint:mcp` | Validate MCP tool/resource/prompt definitions |
 | `bun test` | Run tests |
 | `bun run dev:stdio` | Dev mode (stdio) |
 | `bun run dev:http` | Dev mode (HTTP) |
@@ -268,7 +294,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { McpError, JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 
 // Server's own code — via path alias
-import { getMyService } from '@/services/my-domain/my-service.js';
+import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 ```
 
 ---
@@ -283,4 +309,4 @@ import { getMyService } from '@/services/my-domain/my-service.js';
 - [ ] `format()` renders all data the LLM needs — `content[]` is the only field most clients forward to the model
 - [ ] Registered in `createApp()` arrays (directly or via barrel exports)
 - [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
-- [ ] `npm run devcheck` passes
+- [ ] `bun run devcheck` passes
