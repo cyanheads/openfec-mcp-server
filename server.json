@@ -6,14 +6,20 @@
     "url": "https://github.com/cyanheads/openfec-mcp-server",
     "source": "github"
   },
-  "version": "0.2.2",
+  "version": "0.2.3",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://openfec.caseyjhand.com/mcp"
+    }
+  ],
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "packageArguments": [
         { "type": "positional", "value": "run" },
         { "type": "positional", "value": "start:stdio" }
@@ -40,7 +46,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "packageArguments": [
         { "type": "positional", "value": "run" },
         { "type": "positional", "value": "start:http" }
