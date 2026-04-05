@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-259?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) 
+[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.2.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-259?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) 
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.2.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
 
@@ -169,6 +169,63 @@ OpenFEC-specific:
 
 ## Getting Started
 
+Add the following to your MCP client configuration file.
+
+```json
+{
+  "mcpServers": {
+    "openfec": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["@cyanheads/openfec-mcp-server@latest"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "FEC_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+Or with npx (no Bun required):
+
+```json
+{
+  "mcpServers": {
+    "openfec": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cyanheads/openfec-mcp-server@latest"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "FEC_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+Or with Docker:
+
+```json
+{
+  "mcpServers": {
+    "openfec": {
+      "type": "stdio",
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "MCP_TRANSPORT_TYPE=stdio", "-e", "FEC_API_KEY=your-api-key", "ghcr.io/cyanheads/openfec-mcp-server:latest"]
+    }
+  }
+}
+```
+
+For Streamable HTTP, set the transport and start the server:
+
+```sh
+MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 FEC_API_KEY=your-key bun run start:http
+# Server listens at http://localhost:3010/mcp
+```
+
 ### Prerequisites
 
 - [Bun v1.2.0](https://bun.sh/) or higher
@@ -177,44 +234,21 @@ OpenFEC-specific:
 ### Installation
 
 1. **Clone the repository:**
+
 ```sh
 git clone https://github.com/cyanheads/openfec-mcp-server.git
 ```
 
 2. **Navigate into the directory:**
+
 ```sh
 cd openfec-mcp-server
 ```
 
 3. **Install dependencies:**
+
 ```sh
 bun install
-```
-
-4. **Set up environment:**
-```sh
-cp .env.example .env
-# Edit .env and add your FEC_API_KEY
-```
-
-### MCP Client Configuration
-
-Add to your MCP client config (e.g., `claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "openfec": {
-      "type": "stdio",
-      "command": "bun",
-      "args": ["run", "start:stdio"],
-      "cwd": "/path/to/openfec-mcp-server",
-      "env": {
-        "FEC_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
 ```
 
 ## Configuration
@@ -254,13 +288,6 @@ Add to your MCP client config (e.g., `claude_desktop_config.json`):
   bun run devcheck     # Lints, formats, type-checks
   bun run test         # Runs test suite
   ```
-
-### Docker
-
-```sh
-docker build -t openfec-mcp-server .
-docker run -e FEC_API_KEY=your-key -p 3010:3010 openfec-mcp-server
-```
 
 ## Project Structure
 
