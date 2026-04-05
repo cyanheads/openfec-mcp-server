@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1 — 2026-04-04
+
+### Added
+
+- Search criteria echo on empty results — all 9 tools now return the filters that produced zero matches, helping diagnose why a query returned nothing
+- `buildSearchCriteria()`, `formatEmptyResult()`, and `SearchCriteriaSchema` in `format-helpers.ts` for consistent empty-result rendering across tools
+
+### Changed
+
+- Empty-result format messages unified to "No results found" with echoed criteria and domain-specific suggestions (previously each tool had a bespoke message)
+
+---
+
 ## 0.3.0 — 2026-04-04
 
 ### Changed
