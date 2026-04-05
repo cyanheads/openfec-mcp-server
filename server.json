@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/openfec-mcp-server",
-  "description": "MCP server for the OpenFEC API — query federal election campaign finance data from the FEC.",
+  "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings.",
   "repository": {
     "url": "https://github.com/cyanheads/openfec-mcp-server",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "packageArguments": [
         { "type": "positional", "value": "run" },
         { "type": "positional", "value": "start:stdio" }
@@ -40,7 +40,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "packageArguments": [
         { "type": "positional", "value": "run" },
         { "type": "positional", "value": "start:http" }
