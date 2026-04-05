@@ -9,7 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$ } from './utils/format-helpers.js';
+import { renderRecord } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 /** Derive the current two-year election cycle (always even). */
@@ -40,9 +40,7 @@ export const searchContributions = tool('openfec_search_contributions', {
     candidate_id: z
       .string()
       .optional()
-      .describe(
-        'Candidate ID. Used with by_size/by_state aggregates to route to the /by_candidate variant.',
-      ),
+      .describe('Candidate ID. Enables by_size and by_state aggregates without a committee_id.'),
     contributor_name: z.string().optional().describe('Full-text donor name search. Itemized only.'),
     contributor_employer: z
       .string()
@@ -65,8 +63,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       .number()
       .optional()
       .describe(
-        'Two-year election cycle (e.g., 2024). Even years only. ' +
-          'Defaults to current cycle for itemized mode (API requires two_year_transaction_period).',
+        'Two-year election cycle (e.g., 2024). Even years only. Defaults to current cycle for itemized mode.',
       ),
     min_date: z
       .string()
@@ -195,16 +192,16 @@ export const searchContributions = tool('openfec_search_contributions', {
       }
     }
 
-    const params: FecParams = { per_page: input.per_page };
+    // /by_candidate variants require cycle — default to current if not provided
+    const useByCandidate = (mode === 'by_size' || mode === 'by_state') && input.candidate_id;
+    const cycle = input.cycle ?? (useByCandidate ? currentCycle() : undefined);
+
+    const params: FecParams = { per_page: input.per_page, sort: '-total', sort_hide_null: true };
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
-    if (input.cycle) params.cycle = input.cycle;
+    if (cycle) params.cycle = cycle;
 
-    // For by_size and by_state, route to /by_candidate variant when candidate_id is provided
-    let aggregateMode: string = mode;
-    if ((mode === 'by_size' || mode === 'by_state') && input.candidate_id) {
-      aggregateMode = `${mode}_candidate`;
-    }
+    const aggregateMode: string = useByCandidate ? `${mode}_candidate` : mode;
 
     const result = await fec.getContributionAggregates(aggregateMode, params, ctx);
     ctx.log.info('Contribution aggregates fetched', {
@@ -229,48 +226,32 @@ export const searchContributions = tool('openfec_search_contributions', {
       ];
     }
 
-    // Detect itemized vs aggregate by presence of next_cursor key
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;
+    const lines: string[] = [];
 
     if (isItemized) {
-      const lines: string[] = [
-        `**${result.count?.toLocaleString() ?? '?'} total contributions**\n`,
-      ];
+      if (result.count != null) {
+        lines.push(`**${result.count.toLocaleString()} total contributions**\n`);
+      }
       for (const r of result.results) {
-        const name = r.contributor_name ?? 'Unknown';
-        const employer = r.contributor_employer ?? '';
-        const amount = fmt$(r.contribution_receipt_amount);
-        const date = r.contribution_receipt_date ?? '';
-        const committee = r.committee_name ?? r.committee_id ?? '';
-        const city = r.contributor_city ?? '';
-        const state = r.contributor_state ?? '';
-        const location = [city, state].filter(Boolean).join(', ');
-
-        lines.push(`- **${name}** ${location ? `(${location})` : ''}`);
-        lines.push(`  ${amount} on ${date} → ${committee}`);
-        if (employer) lines.push(`  Employer: ${employer}`);
+        const name = String(r.contributor_name ?? 'Unknown');
+        lines.push(`**${name}**\n${renderRecord(r, new Set(['contributor_name']))}`);
       }
       if (result.next_cursor) {
-        lines.push(`\n_More results available — pass cursor to continue._`);
+        lines.push('\n_More results available — pass cursor to continue._');
       }
-      return [{ type: 'text', text: lines.join('\n') }];
+    } else {
+      if (result.pagination?.count != null) {
+        lines.push(`**${result.pagination.count.toLocaleString()} aggregate rows**\n`);
+      }
+      for (const r of result.results) {
+        lines.push(renderRecord(r));
+      }
+      if (result.pagination && result.pagination.page < result.pagination.pages) {
+        lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
+      }
     }
 
-    // Aggregate
-    const lines: string[] = [
-      `**${result.pagination?.count?.toLocaleString() ?? '?'} aggregate rows**\n`,
-    ];
-    for (const r of result.results) {
-      const dimension =
-        r.size ?? r.state ?? r.employer ?? r.occupation ?? r.state_full ?? 'Unknown';
-      const total = fmt$(r.total);
-      const count =
-        typeof r.count === 'number' ? ` (${r.count.toLocaleString()} contributions)` : '';
-      lines.push(`- **${dimension}**: ${total}${count}`);
-    }
-    if (result.pagination && result.pagination.page < result.pagination.pages) {
-      lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
-    }
-    return [{ type: 'text', text: lines.join('\n') }];
+    return [{ type: 'text', text: lines.join('\n\n') }];
   },
 });

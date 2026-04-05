@@ -7,6 +7,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { renderRecord } from './utils/format-helpers.js';
 
 export const lookupCalendar = tool('openfec_lookup_calendar', {
   description: 'Look up FEC calendar events, filing deadlines, and election dates.',
@@ -129,43 +130,10 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
     }
 
     const lines = result.results.map((r) => {
-      /**
-       * Unified formatting across all three modes. Each mode returns different
-       * field names; we pull from whichever fields are present.
-       */
-      const summary = r.summary ?? r.report_type ?? r.election_type_full ?? '';
-      const description = r.description ?? '';
-      const date = r.start_date ?? r.due_date ?? r.election_date ?? r.event_date ?? '';
-      const endDate = r.end_date ?? '';
-      const state = r.election_state ?? r.state ?? '';
-      const office = r.office_sought ?? '';
-      const year = r.report_year ?? r.election_year ?? '';
-      const category = r.category ?? '';
-      const location = r.location ?? '';
-      const url = r.url ?? '';
-
-      const parts: string[] = [];
-
-      if (summary) parts.push(`**${summary}**`);
-      if (description && description !== summary) parts.push(String(description));
-
-      const meta: string[] = [];
-      if (date) meta.push(`Date: ${date}${endDate && endDate !== date ? ` to ${endDate}` : ''}`);
-      if (state) meta.push(`State: ${state}`);
-      if (office) meta.push(`Office: ${office}`);
-      if (year) meta.push(`Year: ${year}`);
-      if (category) meta.push(`Category: ${category}`);
-      if (location) meta.push(`Location: ${location}`);
-      if (meta.length > 0) parts.push(meta.join(' | '));
-
-      if (url) parts.push(`[Link](${url})`);
-
-      /** Coverage period for filing deadlines. */
-      const covStart = r.coverage_start_date;
-      const covEnd = r.coverage_end_date;
-      if (covStart && covEnd) parts.push(`Coverage: ${covStart} to ${covEnd}`);
-
-      return parts.join('\n  ');
+      const summary = String(r.summary ?? r.report_type ?? r.election_type_full ?? 'Event');
+      const header = `**${summary}**`;
+      const fields = renderRecord(r, new Set(['summary']));
+      return fields ? `${header}\n${fields}` : header;
     });
 
     const { page, pages, count } = result.pagination;

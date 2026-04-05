@@ -8,7 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$ } from './utils/format-helpers.js';
+import { renderRecord } from './utils/format-helpers.js';
 
 export const lookupElections = tool('openfec_lookup_elections', {
   description:
@@ -30,11 +30,15 @@ export const lookupElections = tool('openfec_lookup_elections', {
     state: z
       .string()
       .optional()
-      .describe('Two-letter US state code (e.g., AZ, CA). Required for senate and house races.'),
+      .describe(
+        'Two-letter US state code (e.g., AZ, CA). Required for senate/house unless zip is provided.',
+      ),
     district: z
       .string()
       .optional()
-      .describe('Two-digit district number (e.g. "07"). Required for house races.'),
+      .describe(
+        'Two-digit district number (e.g. "07"). Required for house unless zip is provided.',
+      ),
     zip: z
       .string()
       .optional()
@@ -43,7 +47,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .boolean()
       .default(true)
       .describe(
-        'Expand to full election period (4yr president, 6yr senate, 2yr house). Default true.',
+        'Expand to full election period (4yr president, 6yr senate, 2yr house). Default true. Ignored for ZIP-based searches.',
       ),
   }),
 
@@ -65,11 +69,16 @@ export const lookupElections = tool('openfec_lookup_elections', {
     if (input.cycle % 2 !== 0) {
       throw invalidParams('Election cycles are even years (e.g., 2024, 2026).');
     }
-    if ((input.office === 'senate' || input.office === 'house') && !input.state) {
-      throw invalidParams('Senate and House election lookups require a state.');
-    }
-    if (input.office === 'house' && !input.district) {
-      throw invalidParams('House election lookups require a district number.');
+    // ZIP resolves geography on its own — only require state/district when no zip
+    if (!input.zip) {
+      if ((input.office === 'senate' || input.office === 'house') && !input.state) {
+        throw invalidParams(
+          'Senate and House election lookups require a state (or provide a zip).',
+        );
+      }
+      if (input.office === 'house' && !input.district) {
+        throw invalidParams('House election lookups require a district number (or provide a zip).');
+      }
     }
 
     const fec = getOpenFecService();
@@ -77,13 +86,16 @@ export const lookupElections = tool('openfec_lookup_elections', {
     const params: FecParams = {
       office: input.office,
       cycle: input.cycle,
-      election_full: input.election_full,
     };
     if (input.state) params.state = input.state;
     if (input.district) params.district = input.district;
     if (input.zip) params.zip = input.zip;
 
     if (input.mode === 'summary') {
+      if (input.zip) {
+        throw invalidParams('Summary mode does not support ZIP lookups. Use search mode with zip.');
+      }
+      params.election_full = input.election_full;
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });
       const summary = await fec.getElectionSummary(params, ctx);
       return {
@@ -92,7 +104,17 @@ export const lookupElections = tool('openfec_lookup_elections', {
       };
     }
 
-    ctx.log.info('Searching elections', { office: input.office, cycle: input.cycle });
+    // /elections/search/ supports zip but not election_full; /elections/ supports election_full
+    ctx.log.info('Searching elections', {
+      office: input.office,
+      cycle: input.cycle,
+      zip: input.zip,
+    });
+    if (input.zip) {
+      const data = await fec.searchElectionsByZip(params, ctx);
+      return { results: data.results, pagination: data.pagination };
+    }
+    params.election_full = input.election_full;
     const data = await fec.searchElections(params, ctx);
     return { results: data.results, pagination: data.pagination };
   },
@@ -115,33 +137,17 @@ export const lookupElections = tool('openfec_lookup_elections', {
       'disbursements' in first &&
       'independent_expenditures' in first
     ) {
-      const lines = [
-        '**Election Summary**',
-        `Candidates: ${first.count ?? 'N/A'}`,
-        `Total Raised: ${fmt$(first.receipts)}`,
-        `Total Spent: ${fmt$(first.disbursements)}`,
-        `Independent Expenditures: ${fmt$(first.independent_expenditures)}`,
-      ];
-      return [{ type: 'text', text: lines.join('\n') }];
+      return [{ type: 'text', text: `**Election Summary**\n${renderRecord(first)}` }];
     }
 
+    const headerKeys = new Set(['candidate_name', 'candidate_id']);
+
     const lines = result.results.map((r) => {
-      const name = r.candidate_name ?? r.candidate_id ?? 'Unknown';
-      const party = r.party_full ?? r.party ?? '';
-      const status = r.incumbent_challenge_full ?? '';
-      const receipts = fmt$(r.total_receipts);
-      const disbursements = fmt$(r.total_disbursements);
-      const cash = fmt$(r.cash_on_hand_end_period);
-
-      const parts = [`**${name}**`];
-      if (party) parts.push(`(${party})`);
-      if (status) parts.push(`— ${status}`);
-      parts.push(`\n  Raised: ${receipts} | Spent: ${disbursements} | Cash on hand: ${cash}`);
-
-      const coverage = r.coverage_end_date;
-      if (coverage) parts.push(`| Through: ${coverage}`);
-
-      return parts.join(' ');
+      const name = String(r.candidate_name ?? 'Unknown');
+      const id = r.candidate_id ? String(r.candidate_id) : '';
+      const header = id ? `**${name}** (${id})` : `**${name}**`;
+      const fields = renderRecord(r, headerKeys);
+      return fields ? `${header}\n${fields}` : header;
     });
 
     const { page, pages, count } = result.pagination;

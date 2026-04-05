@@ -7,7 +7,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$ } from './utils/format-helpers.js';
+import { renderRecord } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
 
 const modes = ['itemized', 'by_purpose', 'by_recipient', 'by_recipient_id'] as const;
@@ -151,6 +151,8 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     const params: FecParams = {
       committee_id: input.committee_id,
       per_page: input.per_page,
+      sort: '-total',
+      sort_hide_null: true,
     };
     if (input.cycle) params.cycle = input.cycle;
 
@@ -179,52 +181,31 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;
+    const lines: string[] = [];
 
     if (isItemized) {
-      const lines: string[] = [
-        `**${result.count?.toLocaleString() ?? '?'} total disbursements**\n`,
-      ];
+      if (result.count != null) {
+        lines.push(`**${result.count.toLocaleString()} total disbursements**\n`);
+      }
       for (const r of result.results) {
-        const recipient = r.recipient_name ?? 'Unknown';
-        const amount = fmt$(r.disbursement_amount);
-        const date = r.disbursement_date ?? '';
-        const desc = r.disbursement_description ?? '';
-        const purpose = r.disbursement_purpose_category ?? '';
-        const committee = r.committee_name ?? r.committee_id ?? '';
-        const city = r.recipient_city ?? '';
-        const state = r.recipient_state ?? '';
-        const location = [city, state].filter(Boolean).join(', ');
-
-        lines.push(`- **${recipient}** ${location ? `(${location})` : ''}`);
-        lines.push(`  ${amount} on ${date} from ${committee}`);
-        if (desc) lines.push(`  ${desc}`);
-        if (purpose && purpose !== desc) lines.push(`  Purpose: ${purpose}`);
+        const name = String(r.recipient_name ?? 'Unknown');
+        lines.push(`**${name}**\n${renderRecord(r, new Set(['recipient_name']))}`);
       }
       if (result.next_cursor) {
-        lines.push(`\n_More results available — pass cursor to continue._`);
+        lines.push('\n_More results available — pass cursor to continue._');
       }
-      return [{ type: 'text', text: lines.join('\n') }];
+    } else {
+      if (result.pagination?.count != null) {
+        lines.push(`**${result.pagination.count.toLocaleString()} aggregate rows**\n`);
+      }
+      for (const r of result.results) {
+        lines.push(renderRecord(r));
+      }
+      if (result.pagination && result.pagination.page < result.pagination.pages) {
+        lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
+      }
     }
 
-    // Aggregate
-    const lines: string[] = [
-      `**${result.pagination?.count?.toLocaleString() ?? '?'} aggregate rows**\n`,
-    ];
-    for (const r of result.results) {
-      const dimension =
-        r.purpose ?? r.recipient_name ?? r.recipient_id ?? r.committee_name ?? 'Unknown';
-      const total = fmt$(r.total);
-      const count =
-        typeof r.count === 'number' ? ` (${r.count.toLocaleString()} transactions)` : '';
-      const pct =
-        typeof r.recipient_disbursement_percent === 'number'
-          ? ` — ${r.recipient_disbursement_percent.toFixed(1)}%`
-          : '';
-      lines.push(`- **${dimension}**: ${total}${count}${pct}`);
-    }
-    if (result.pagination && result.pagination.page < result.pagination.pages) {
-      lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
-    }
-    return [{ type: 'text', text: lines.join('\n') }];
+    return [{ type: 'text', text: lines.join('\n\n') }];
   },
 });

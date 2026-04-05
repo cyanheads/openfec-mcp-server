@@ -9,7 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$ } from './utils/format-helpers.js';
+import { renderRecord } from './utils/format-helpers.js';
 
 /** Human-readable labels for document type discriminators. */
 const typeLabels: Record<string, string> = {
@@ -31,7 +31,9 @@ export const searchLegal = tool('openfec_search_legal', {
     type: z
       .enum(['advisory_opinions', 'murs', 'adrs', 'admin_fines', 'statutes'])
       .optional()
-      .describe('Document type filter. Omit to search all types.'),
+      .describe(
+        'Document type filter. Omit to search all types. admin_fines is slow without a query or respondent filter.',
+      ),
     ao_number: z.string().optional().describe('Specific advisory opinion number (e.g. "2024-01").'),
     case_number: z.string().optional().describe('Specific MUR or ADR case number.'),
     respondent: z.string().optional().describe('Respondent name (enforcement cases).'),
@@ -149,7 +151,6 @@ export const searchLegal = tool('openfec_search_legal', {
       ];
     }
 
-    /** Group results by document_type for readable output. */
     const grouped = new Map<string, Array<Record<string, unknown>>>();
     for (const doc of result.results) {
       const docType = String(doc.document_type ?? 'unknown');
@@ -161,32 +162,26 @@ export const searchLegal = tool('openfec_search_legal', {
       group.push(doc);
     }
 
+    const headerKeys = new Set(['ao_no', 'case_no', 'no', 'name', 'document_type']);
     const sections: string[] = [];
 
     for (const [docType, docs] of grouped) {
       const label = typeLabels[docType] ?? docType;
-      const lines = docs.map((doc) => {
-        const id = doc.ao_no ?? doc.case_no ?? doc.no ?? '';
-        const name = doc.name ?? '';
-        const summary =
-          doc.summary ??
-          (Array.isArray(doc.highlights) && doc.highlights.length > 0
-            ? (doc.highlights as string[]).join(' ... ')
-            : '');
-        const date = doc.issue_date ?? doc.open_date ?? doc.close_date ?? doc.date ?? '';
-        const penalty = doc.penalty_amount != null ? ` | Penalty: ${fmt$(doc.penalty_amount)}` : '';
-
-        const parts: string[] = [];
-        if (id) parts.push(`**${id}**`);
-        if (name) parts.push(String(name));
-        if (date) parts.push(`(${date})`);
-        if (penalty) parts.push(penalty);
-        if (summary) parts.push(`\n  ${String(summary).slice(0, 300)}`);
-
-        return parts.join(' ');
+      const items = docs.map((doc) => {
+        const id = String(doc.ao_no ?? doc.case_no ?? doc.no ?? '');
+        const name = doc.name ? String(doc.name) : '';
+        const header = id
+          ? name
+            ? `**${id}** — ${name}`
+            : `**${id}**`
+          : name
+            ? `**${name}**`
+            : '**Document**';
+        const fields = renderRecord(doc, headerKeys);
+        return fields ? `${header}\n${fields}` : header;
       });
 
-      sections.push(`### ${label}\n${lines.join('\n\n')}`);
+      sections.push(`### ${label}\n${items.join('\n\n')}`);
     }
 
     sections.push(`\n_${result.total_count} total matching document(s)_`);

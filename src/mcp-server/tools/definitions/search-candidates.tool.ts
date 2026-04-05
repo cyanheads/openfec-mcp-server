@@ -9,7 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$, PaginationSchema, str } from './utils/format-helpers.js';
+import { PaginationSchema, renderRecord, str } from './utils/format-helpers.js';
 import { validateCandidateId } from './utils/id-validators.js';
 
 export const searchCandidates = tool('openfec_search_candidates', {
@@ -52,7 +52,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .boolean()
       .optional()
       .describe(
-        'Include financial totals (receipts, disbursements, cash on hand). Defaults to true when fetching by candidate_id. Adds a second API call.',
+        'Include financial totals (receipts, disbursements, cash on hand). Defaults to true when fetching by candidate_id.',
       ),
     page: z.number().optional().describe('Page number (1-indexed). Default 1.'),
     per_page: z.number().optional().describe('Results per page. Default 20, max 100.'),
@@ -154,7 +154,6 @@ export const searchCandidates = tool('openfec_search_candidates', {
       ];
     }
 
-    // Build a lookup of totals by candidate_id for merging
     const totalsMap = new Map<string, Record<string, unknown>>();
     if (result.totals) {
       for (const t of result.totals) {
@@ -163,30 +162,23 @@ export const searchCandidates = tool('openfec_search_candidates', {
       }
     }
 
+    const headerKeys = new Set(['candidate_id', 'name']);
+
     const lines = result.candidates.map((c) => {
       const id = str(c, 'candidate_id');
       const name = str(c, 'name');
-      const party = str(c, 'party_full') || str(c, 'party');
-      const state = str(c, 'state');
-      const office = str(c, 'office_full') || str(c, 'office');
-      const status = str(c, 'incumbent_challenge_full') || str(c, 'incumbent_challenge');
-      const district =
-        typeof c.district_number === 'number'
-          ? `-${String(c.district_number).padStart(2, '0')}`
-          : '';
-
-      let line = `**${name}** (${id})\n  ${party} | ${office}${district ? ` ${district}` : ''} | ${state} | ${status}`;
+      let block = `**${name || id}**${name && id ? ` (${id})` : ''}`;
+      const fields = renderRecord(c, headerKeys);
+      if (fields) block += `\n${fields}`;
 
       const t = totalsMap.get(id);
       if (t) {
-        line +=
-          `\n  Receipts: ${fmt$(t.receipts)} | Disbursements: ${fmt$(t.disbursements)}` +
-          `\n  Cash on Hand: ${fmt$(t.cash_on_hand_end_period)} | Debt: ${fmt$(t.debts_owed_by_committee)}`;
-        const coverageEnd = str(t, 'coverage_end_date');
-        if (coverageEnd) line += ` | Through: ${coverageEnd}`;
+        block += '\n  — Financial Totals —';
+        const totalsFields = renderRecord(t, new Set(['candidate_id']));
+        if (totalsFields) block += `\n${totalsFields}`;
       }
 
-      return line;
+      return block;
     });
 
     const { page, pages, count } = result.pagination;

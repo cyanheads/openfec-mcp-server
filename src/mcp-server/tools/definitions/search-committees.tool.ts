@@ -9,7 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { PaginationSchema, str } from './utils/format-helpers.js';
+import { PaginationSchema, renderRecord, str } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 export const searchCommittees = tool('openfec_search_committees', {
@@ -110,26 +110,14 @@ export const searchCommittees = tool('openfec_search_committees', {
       ];
     }
 
+    const headerKeys = new Set(['committee_id', 'name']);
+
     const lines = result.committees.map((c) => {
       const id = str(c, 'committee_id');
       const name = str(c, 'name');
-      const type = str(c, 'committee_type_full') || str(c, 'committee_type');
-      const designation = str(c, 'designation_full') || str(c, 'designation');
-      const party = str(c, 'party_full') || str(c, 'party');
-      const state = str(c, 'state');
-      const treasurer = str(c, 'treasurer_name');
-
-      let line = `**${name}** (${id})\n  Type: ${type} | Designation: ${designation}`;
-      if (party) line += ` | ${party}`;
-      if (state) line += ` | ${state}`;
-      if (treasurer) line += `\n  Treasurer: ${treasurer}`;
-
-      const candidateIds = c.candidate_ids;
-      if (Array.isArray(candidateIds) && candidateIds.length > 0) {
-        line += `\n  Candidates: ${candidateIds.join(', ')}`;
-      }
-
-      return line;
+      const header = `**${name || id}**${name && id ? ` (${id})` : ''}`;
+      const fields = renderRecord(c, headerKeys);
+      return fields ? `${header}\n${fields}` : header;
     });
 
     const { page, pages, count } = result.pagination;

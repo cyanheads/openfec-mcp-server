@@ -8,10 +8,7 @@
 import { prompt, z } from '@cyanheads/mcp-ts-core';
 
 export const moneyTrailPrompt = prompt('openfec_money_trail', {
-  description:
-    'Framework for tracing the flow of money around a candidate or race — ' +
-    'direct fundraising, PAC support, independent expenditures, and party spending. ' +
-    'Guides the agent through a multi-tool investigation.',
+  description: `Framework for tracing the flow of money around a candidate or race — direct fundraising, PAC support, independent expenditures, and party spending. Guides the agent through a multi-tool investigation.`,
   args: z.object({
     candidate_name: z
       .string()

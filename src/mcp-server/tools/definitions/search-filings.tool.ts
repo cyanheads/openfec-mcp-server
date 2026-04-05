@@ -8,7 +8,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$, PaginationSchema, str } from './utils/format-helpers.js';
+import { PaginationSchema, renderRecord, str } from './utils/format-helpers.js';
 
 export const searchFilings = tool('openfec_search_filings', {
   description:
@@ -100,39 +100,15 @@ export const searchFilings = tool('openfec_search_filings', {
       ];
     }
 
+    const headerKeys = new Set(['form_type', 'committee_name', 'committee_id']);
+
     const lines = result.filings.map((f) => {
       const formType = str(f, 'form_type');
       const committeeName = str(f, 'committee_name');
       const committeeId = str(f, 'committee_id');
-      const reportType = str(f, 'report_type_full') || str(f, 'report_type');
-      const receiptDate = str(f, 'receipt_date');
-      const coverageStart = str(f, 'coverage_start_date');
-      const coverageEnd = str(f, 'coverage_end_date');
-      const candidateName = str(f, 'candidate_name');
-      const pdfUrl = str(f, 'pdf_url');
-
-      let line = `**${formType}** — ${committeeName} (${committeeId})`;
-      if (reportType) line += `\n  Report: ${reportType}`;
-      if (f.report_year) line += ` (${f.report_year})`;
-      if (receiptDate) line += ` | Filed: ${receiptDate}`;
-      if (candidateName) line += `\n  Candidate: ${candidateName}`;
-
-      // Financial totals
-      const hasFinancials =
-        typeof f.total_receipts === 'number' || typeof f.total_disbursements === 'number';
-      if (hasFinancials) {
-        line += `\n  Receipts: ${fmt$(f.total_receipts)} | Disbursements: ${fmt$(f.total_disbursements)}`;
-        line += ` | Cash: ${fmt$(f.cash_on_hand_end_period)} | Debt: ${fmt$(f.debts_owed_by_committee)}`;
-      }
-
-      if (coverageStart && coverageEnd) {
-        line += `\n  Coverage: ${coverageStart} to ${coverageEnd}`;
-      }
-
-      if (f.is_amended === true) line += ' | AMENDED';
-      if (pdfUrl) line += `\n  PDF: ${pdfUrl}`;
-
-      return line;
+      const header = `**${formType}** — ${committeeName} (${committeeId})`;
+      const fields = renderRecord(f, headerKeys);
+      return fields ? `${header}\n${fields}` : header;
     });
 
     const { page, pages, count } = result.pagination;

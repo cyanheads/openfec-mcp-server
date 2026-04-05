@@ -9,7 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { fmt$ } from './utils/format-helpers.js';
+import { renderRecord } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 /** Expand S/O indicator to a readable label. */
@@ -210,54 +210,38 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;
+    const lines: string[] = [];
 
     if (isItemized) {
-      const lines: string[] = [
-        `**${result.count?.toLocaleString() ?? '?'} total independent expenditures**\n`,
-      ];
+      if (result.count != null) {
+        lines.push(`**${result.count.toLocaleString()} total independent expenditures**\n`);
+      }
       for (const r of result.results) {
         const indicator = supportOpposeLabel(r.support_oppose_indicator);
-        const amount = fmt$(r.expenditure_amount);
-        const date = r.expenditure_date ?? '';
-        const committee = r.committee_name ?? r.committee_id ?? '';
-        const candidate = r.candidate_name ?? r.candidate_id ?? '';
-        const office = r.candidate_office ?? '';
-        const state = r.candidate_office_state ?? '';
-        const payee = r.payee_name ?? '';
-        const desc = r.expenditure_description ?? '';
-        const notice = r.is_notice ? ' [24/48h NOTICE]' : '';
-
+        const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
         lines.push(
-          `- **[${indicator}]** ${amount} — ${candidate} (${office}${state ? `-${state}` : ''})${notice}`,
+          `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']))}`,
         );
-        lines.push(`  By: ${committee} on ${date}`);
-        if (payee) lines.push(`  Payee: ${payee}`);
-        if (desc) lines.push(`  ${desc}`);
       }
       if (result.next_cursor) {
-        lines.push(`\n_More results available — pass cursor to continue._`);
+        lines.push('\n_More results available — pass cursor to continue._');
       }
-      return [{ type: 'text', text: lines.join('\n') }];
+    } else {
+      if (result.pagination?.count != null) {
+        lines.push(`**${result.pagination.count.toLocaleString()} candidate-committee pairs**\n`);
+      }
+      for (const r of result.results) {
+        const indicator = supportOpposeLabel(r.support_oppose_indicator);
+        const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
+        lines.push(
+          `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']))}`,
+        );
+      }
+      if (result.pagination && result.pagination.page < result.pagination.pages) {
+        lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
+      }
     }
 
-    // By candidate aggregate
-    const lines: string[] = [
-      `**${result.pagination?.count?.toLocaleString() ?? '?'} candidate-committee pairs**\n`,
-    ];
-    for (const r of result.results) {
-      const indicator = supportOpposeLabel(r.support_oppose_indicator);
-      const candidate = r.candidate_name ?? r.candidate_id ?? 'Unknown';
-      const committee = r.committee_name ?? r.committee_id ?? 'Unknown';
-      const total = fmt$(r.total);
-      const count =
-        typeof r.count === 'number' ? ` (${r.count.toLocaleString()} expenditures)` : '';
-
-      lines.push(`- **[${indicator}]** ${candidate}`);
-      lines.push(`  ${total}${count} from ${committee}`);
-    }
-    if (result.pagination && result.pagination.page < result.pagination.pages) {
-      lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
-    }
-    return [{ type: 'text', text: lines.join('\n') }];
+    return [{ type: 'text', text: lines.join('\n\n') }];
   },
 });

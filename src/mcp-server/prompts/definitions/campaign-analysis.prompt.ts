@@ -8,9 +8,7 @@
 import { prompt, z } from '@cyanheads/mcp-ts-core';
 
 export const campaignAnalysisPrompt = prompt('openfec_campaign_analysis', {
-  description:
-    "Structured analysis of a candidate's financial position — fundraising trajectory, " +
-    'burn rate, cash reserves, donor composition, and opponent comparison.',
+  description: `Structured analysis of a candidate's financial position — fundraising trajectory, burn rate, cash reserves, donor composition, and opponent comparison.`,
   args: z.object({
     candidate_name: z
       .string()
