@@ -178,7 +178,8 @@ describe('searchContributions', () => {
 
       const text = blocks[0]!.text;
       expect(text).toContain('DOE, JANE');
-      expect(text).toContain('SEATTLE, WA');
+      expect(text).toContain('contributor_city: SEATTLE');
+      expect(text).toContain('contributor_state: WA');
       expect(text).toContain('BIDEN FOR PRESIDENT');
       expect(text).toContain('ACME CORP');
       expect(text).toContain('2024-03-15');
@@ -191,8 +192,8 @@ describe('searchContributions', () => {
       });
 
       const text = blocks[0]!.text;
-      expect(text).toContain('**200**');
-      expect(text).toContain('25,000 contributions');
+      expect(text).toContain('size: 200');
+      expect(text).toContain('count: 25000');
       expect(text).toContain('1 aggregate rows');
     });
 

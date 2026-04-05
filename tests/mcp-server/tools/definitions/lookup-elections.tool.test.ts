@@ -174,10 +174,10 @@ describe('lookupElectionsTool', () => {
       expect(text).toContain('**SMITH, JANE**');
       expect(text).toContain('Democratic Party');
       expect(text).toContain('Incumbent');
-      expect(text).toContain('Raised:');
-      expect(text).toContain('Spent:');
-      expect(text).toContain('Cash on hand:');
-      expect(text).toContain('Through: 2024-06-30');
+      expect(text).toContain('total_receipts:');
+      expect(text).toContain('total_disbursements:');
+      expect(text).toContain('cash_on_hand_end_period:');
+      expect(text).toContain('coverage_end_date: 2024-06-30');
     });
 
     it('renders empty state', () => {

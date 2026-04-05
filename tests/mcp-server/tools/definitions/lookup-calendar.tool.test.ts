@@ -171,9 +171,10 @@ describe('lookupCalendarTool', () => {
       expect(text).toContain('FEC Meetings');
       expect(text).toContain('Washington, DC');
       expect(text).toContain('**Q2**');
-      expect(text).toContain('Coverage: 2024-04-01 to 2024-06-30');
+      expect(text).toContain('coverage_start_date: 2024-04-01');
+      expect(text).toContain('coverage_end_date: 2024-06-30');
       expect(text).toContain('**General Election**');
-      expect(text).toContain('State: AZ');
+      expect(text).toContain('election_state: AZ');
       expect(text).toContain('3 result(s)');
     });
 

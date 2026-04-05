@@ -157,7 +157,8 @@ describe('searchDisbursements', () => {
 
       const text = blocks[0]!.text;
       expect(text).toContain('MEDIA STRATEGIES INC');
-      expect(text).toContain('WASHINGTON, DC');
+      expect(text).toContain('recipient_city: WASHINGTON');
+      expect(text).toContain('recipient_state: DC');
       expect(text).toContain('BIDEN FOR PRESIDENT');
       expect(text).toContain('MEDIA BUY - TV');
       expect(text).toContain('2024-05-10');
@@ -170,8 +171,8 @@ describe('searchDisbursements', () => {
       });
 
       const text = blocks[0]!.text;
-      expect(text).toContain('**ADVERTISING**');
-      expect(text).toContain('120 transactions');
+      expect(text).toContain('purpose: ADVERTISING');
+      expect(text).toContain('count: 120');
       expect(text).toContain('1 aggregate rows');
     });
 

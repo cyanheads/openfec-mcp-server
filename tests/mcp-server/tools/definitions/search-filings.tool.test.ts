@@ -149,12 +149,13 @@ describe('searchFilings', () => {
       expect(text).toContain('BIDEN FOR PRESIDENT');
       expect(text).toContain('C00703975');
       expect(text).toContain('YEAR-END');
-      expect(text).toContain('Receipts:');
-      expect(text).toContain('Disbursements:');
-      expect(text).toContain('Cash:');
-      expect(text).toContain('Debt:');
+      expect(text).toContain('total_receipts:');
+      expect(text).toContain('total_disbursements:');
+      expect(text).toContain('cash_on_hand_end_period:');
+      expect(text).toContain('debts_owed_by_committee:');
       expect(text).toContain('BIDEN, JOSEPH R JR');
-      expect(text).toContain('Coverage: 2024-01-01 to 2024-06-30');
+      expect(text).toContain('coverage_start_date: 2024-01-01');
+      expect(text).toContain('coverage_end_date: 2024-06-30');
     });
 
     it('renders amended indicator and PDF link', () => {
@@ -172,8 +173,8 @@ describe('searchFilings', () => {
       });
 
       const text = blocks[0]!.text;
-      expect(text).toContain('AMENDED');
-      expect(text).toContain('PDF: https://docquery.fec.gov/pdf/123/202401019999.pdf');
+      expect(text).toContain('is_amended: true');
+      expect(text).toContain('pdf_url: https://docquery.fec.gov/pdf/123/202401019999.pdf');
     });
 
     it('renders empty state', () => {

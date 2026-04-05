@@ -110,11 +110,11 @@ describe('searchCommittees', () => {
 
       const text = blocks[0]!.text;
       expect(text).toContain('**BIDEN FOR PRESIDENT** (C00703975)');
-      expect(text).toContain('Type: Presidential');
-      expect(text).toContain('Designation: Principal campaign committee');
-      expect(text).toContain('DEMOCRATIC PARTY');
-      expect(text).toContain('DE');
-      expect(text).toContain('Treasurer: DILLON, JENNIFER OHARA');
+      expect(text).toContain('committee_type_full: Presidential');
+      expect(text).toContain('designation_full: Principal campaign committee');
+      expect(text).toContain('party_full: DEMOCRATIC PARTY');
+      expect(text).toContain('state: DE');
+      expect(text).toContain('treasurer_name: DILLON, JENNIFER OHARA');
       expect(text).toContain('Page 1 of 1 (1 total)');
     });
 
@@ -134,7 +134,7 @@ describe('searchCommittees', () => {
       });
 
       const text = blocks[0]!.text;
-      expect(text).toContain('Candidates: P00003392, P00004455');
+      expect(text).toContain('candidate_ids: P00003392, P00004455');
     });
   });
 });

@@ -136,7 +136,7 @@ describe('searchLegalTool', () => {
 
       const text = blocks[0]!.text;
       expect(text).toContain('### Administrative Fine');
-      expect(text).toContain('Penalty: $25,000');
+      expect(text).toContain('penalty_amount: 25000');
     });
 
     it('renders empty state', () => {

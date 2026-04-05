@@ -180,11 +180,11 @@ describe('searchCandidates', () => {
       });
 
       const text = blocks[0]!.text;
-      expect(text).toContain('Receipts:');
-      expect(text).toContain('Disbursements:');
-      expect(text).toContain('Cash on Hand:');
-      expect(text).toContain('Debt:');
-      expect(text).toContain('Through: 2024-06-30');
+      expect(text).toContain('receipts:');
+      expect(text).toContain('disbursements:');
+      expect(text).toContain('cash_on_hand_end_period:');
+      expect(text).toContain('debts_owed_by_committee:');
+      expect(text).toContain('coverage_end_date: 2024-06-30');
     });
   });
 });
