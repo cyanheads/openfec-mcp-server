@@ -1,12 +1,12 @@
 <div align="center">
   <h1>@cyanheads/openfec-mcp-server</h1>
-  <p><b>MCP server for the OpenFEC API — query federal election campaign finance data from the FEC. STDIO & Streamable HTTP</b></p>
-  <p><b>9 Tools · 3 Resources · 2 Prompts</b></p>
+  <p><b>Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.</b></p>
+  <p><b>9 Tools · 5 Resources · 2 Prompts</b></p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-259?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.2.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-259?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.2.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -134,7 +134,9 @@ Look up FEC dates and deadlines.
 |:------------|:------------|
 | `openfec://candidate/{candidate_id}` | Federal candidate profile with current financial totals. |
 | `openfec://committee/{committee_id}` | Political committee profile with type, designation, and financial summary. |
-| `openfec://election/{cycle}/{office}` | Election race summary with candidate financial totals. |
+| `openfec://election/{cycle}/{office}` | Presidential or at-large election race with candidate financial totals. |
+| `openfec://election/{cycle}/{office}/{state}` | Senate or state-level election race with candidate financial totals. |
+| `openfec://election/{cycle}/{office}/{state}/{district}` | House district election race with candidate financial totals. |
 
 ## Prompts
 
@@ -160,6 +162,7 @@ OpenFEC-specific:
 - Multi-mode tools supporting both itemized records and aggregate breakdowns
 - Keyset cursor pagination for high-volume Schedule A/B/E data
 - Automatic retry with configurable timeout and max retries
+- Error sanitization strips API keys from error messages; HTTP status errors enriched with actionable hints
 - Two guided investigation prompts for campaign finance analysis workflows
 
 ## Getting Started
@@ -201,12 +204,11 @@ Add to your MCP client config (e.g., `claude_desktop_config.json`):
   "mcpServers": {
     "openfec": {
       "type": "stdio",
-      "command": "node",
-      "args": ["dist/index.js"],
+      "command": "bun",
+      "args": ["run", "start:stdio"],
       "cwd": "/path/to/openfec-mcp-server",
       "env": {
-        "FEC_API_KEY": "your-api-key",
-        "MCP_TRANSPORT_TYPE": "stdio"
+        "FEC_API_KEY": "your-api-key"
       }
     }
   }

@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core)
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -210,9 +210,9 @@ src/
       search-legal.tool.ts
       lookup-calendar.tool.ts
     resources/definitions/
-      candidate.resource.ts             # 3 resource definitions (*.resource.ts)
+      candidate.resource.ts             # 5 resource definitions (*.resource.ts)
       committee.resource.ts
-      election.resource.ts
+      election.resource.ts              # 3 election resources (base, state, district)
     prompts/definitions/
       campaign-analysis.prompt.ts       # 2 prompt definitions (*.prompt.ts)
       money-trail.prompt.ts
