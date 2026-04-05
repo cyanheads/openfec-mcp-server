@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1 — 2026-04-04
+
+### Changed
+
+- Renamed tool exports for consistency: `lookupCalendarTool` → `lookupCalendar`, `lookupElectionsTool` → `lookupElections`, `searchLegalTool` → `searchLegal`
+- `FecParams` type now supports `string[]` values for repeated query parameters (e.g., multiple `candidate_id` values)
+- `search-candidates` tool sends multi-candidate totals lookups as repeated query params instead of comma-separated strings
+- Calendar tool `report_type` parameter scoped to filing deadlines mode only; added dedicated `category` parameter for calendar category filtering in events mode
+- Disbursements tool `committee_id` enforced as required via `.min(1)` schema constraint instead of runtime guard
+
+### Added
+
+- Shared `utils/format-helpers.ts` — extracted `fmt$`, `str`, and `PaginationSchema` from duplicated inline definitions across tools
+- Shared `utils/id-validators.ts` — extracted `validateCandidateId` and `validateCommitteeId` with consistent error messages
+- Contributions tool now validates `candidate_id` and `committee_id` format before API calls
+
+---
+
 ## 0.2.0 — 2026-04-04
 
 ### Changed

@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-04-05 00:52:40
+Generated on: 2026-04-05 01:55:05
 
 ```text
 openfec-mcp-server/
@@ -98,6 +98,9 @@ openfec-mcp-server/
 │   │   │       └── index.ts
 │   │   └── tools/
 │   │       └── definitions/
+│   │           ├── utils/
+│   │           │   ├── format-helpers.ts
+│   │           │   └── id-validators.ts
 │   │           ├── index.ts
 │   │           ├── lookup-calendar.tool.ts
 │   │           ├── lookup-elections.tool.ts
