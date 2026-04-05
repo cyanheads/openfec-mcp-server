@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3 — 2026-04-04
+
+### Added
+
+- Public hosted instance at `https://openfec.caseyjhand.com/mcp` — no API key or installation required
+- `remotes` field in `server.json` advertising the Streamable HTTP endpoint for MCP client discovery
+- "Public Hosted Instance" section in README Getting Started with connection config example
+
+---
+
 ## 0.2.2 — 2026-04-04
 
 ### Fixed

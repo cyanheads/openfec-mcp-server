@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/openfec-mcp-server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "mcpName": "io.github.cyanheads/openfec-mcp-server",
   "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
   "type": "module",
