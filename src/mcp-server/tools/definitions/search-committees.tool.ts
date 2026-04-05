@@ -6,22 +6,11 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
+import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-const COMMITTEE_ID_RE = /^C\d+$/i;
-
-/** Safely read a string field from a record. */
-const str = (rec: Record<string, unknown>, key: string): string =>
-  typeof rec[key] === 'string' ? (rec[key] as string) : '';
-
-const PaginationSchema = z.object({
-  page: z.number().describe('Current page number (1-indexed).'),
-  pages: z.number().describe('Total number of pages.'),
-  count: z.number().describe('Total result count.'),
-  per_page: z.number().describe('Results per page.'),
-});
+import { PaginationSchema, str } from './utils/format-helpers.js';
+import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 export const searchCommittees = tool('openfec_search_committees', {
   description:
@@ -74,12 +63,8 @@ export const searchCommittees = tool('openfec_search_committees', {
   async handler(input, ctx) {
     const fec = getOpenFecService();
 
-    if (input.committee_id && !COMMITTEE_ID_RE.test(input.committee_id)) {
-      throw invalidParams(
-        "Invalid committee ID format. FEC committee IDs start with 'C' followed by digits (e.g., 'C00358796').",
-        { committee_id: input.committee_id },
-      );
-    }
+    if (input.committee_id) validateCommitteeId(input.committee_id);
+    if (input.candidate_id) validateCandidateId(input.candidate_id);
 
     let result: Awaited<ReturnType<typeof fec.getCommittee>>;
 

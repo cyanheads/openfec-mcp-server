@@ -9,8 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-const fmt$ = (n: unknown) => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
+import { fmt$ } from './utils/format-helpers.js';
 
 /** Human-readable labels for document type discriminators. */
 const typeLabels: Record<string, string> = {
@@ -21,7 +20,7 @@ const typeLabels: Record<string, string> = {
   statute: 'Statute',
 };
 
-export const searchLegalTool = tool('openfec_search_legal', {
+export const searchLegal = tool('openfec_search_legal', {
   description:
     'Search FEC legal documents: advisory opinions, enforcement cases (MURs), ' +
     'alternative dispute resolutions, and administrative fines.',

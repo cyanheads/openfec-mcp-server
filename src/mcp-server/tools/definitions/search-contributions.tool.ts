@@ -9,9 +9,8 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-/** Format a number as USD or 'N/A' for non-numeric values. */
-const fmt$ = (n: unknown) => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
+import { fmt$ } from './utils/format-helpers.js';
+import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 /** Derive the current two-year election cycle (always even). */
 const currentCycle = () => {
@@ -130,6 +129,9 @@ export const searchContributions = tool('openfec_search_contributions', {
   async handler(input, ctx) {
     const fec = getOpenFecService();
     const mode = input.mode;
+
+    if (input.committee_id) validateCommitteeId(input.committee_id);
+    if (input.candidate_id) validateCandidateId(input.candidate_id);
 
     /* ---------------------------------------------------------------- */
     /*  Itemized contributions (keyset/SEEK)                            */

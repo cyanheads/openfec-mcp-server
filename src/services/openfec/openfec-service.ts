@@ -72,7 +72,10 @@ export class OpenFecService {
     const url = new URL(`${base}${path}`);
     url.searchParams.set('api_key', this.config.fecApiKey);
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== '') {
+      if (value === undefined || value === '') continue;
+      if (Array.isArray(value)) {
+        for (const v of value) url.searchParams.append(key, v);
+      } else {
         url.searchParams.set(key, String(value));
       }
     }

@@ -9,12 +9,8 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-const CANDIDATE_ID_RE = /^[HSP][0-9A-Z]+$/i;
-const COMMITTEE_ID_RE = /^C\d+$/i;
-
-/** Format a number as USD or 'N/A' for non-numeric values. */
-const fmt$ = (n: unknown) => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
+import { fmt$ } from './utils/format-helpers.js';
+import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 /** Expand S/O indicator to a readable label. */
 const supportOpposeLabel = (code: unknown) =>
@@ -123,18 +119,8 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     const fec = getOpenFecService();
     const mode = input.mode;
 
-    if (input.candidate_id && !CANDIDATE_ID_RE.test(input.candidate_id)) {
-      throw invalidParams(
-        "Invalid candidate ID format. FEC candidate IDs start with H (House), S (Senate), or P (President) followed by digits (e.g., 'P00003392').",
-        { candidate_id: input.candidate_id },
-      );
-    }
-    if (input.committee_id && !COMMITTEE_ID_RE.test(input.committee_id)) {
-      throw invalidParams(
-        "Invalid committee ID format. FEC committee IDs start with 'C' followed by digits (e.g., 'C00703975').",
-        { committee_id: input.committee_id },
-      );
-    }
+    if (input.candidate_id) validateCandidateId(input.candidate_id);
+    if (input.committee_id) validateCommitteeId(input.committee_id);
 
     /* ---------------------------------------------------------------- */
     /*  Itemized expenditures (keyset/SEEK)                             */

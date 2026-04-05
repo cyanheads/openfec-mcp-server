@@ -8,20 +8,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-/** Format a number as USD or return 'N/A'. */
-const fmt$ = (n: unknown): string => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
-
-/** Safely read a string field from a record. */
-const str = (rec: Record<string, unknown>, key: string): string =>
-  typeof rec[key] === 'string' ? (rec[key] as string) : '';
-
-const PaginationSchema = z.object({
-  page: z.number().describe('Current page number (1-indexed).'),
-  pages: z.number().describe('Total number of pages.'),
-  count: z.number().describe('Total result count.'),
-  per_page: z.number().describe('Results per page.'),
-});
+import { fmt$, PaginationSchema, str } from './utils/format-helpers.js';
 
 export const searchFilings = tool('openfec_search_filings', {
   description:

@@ -8,7 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 
-export const lookupCalendarTool = tool('openfec_lookup_calendar', {
+export const lookupCalendar = tool('openfec_lookup_calendar', {
   description: 'Look up FEC calendar events, filing deadlines, and election dates.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
@@ -30,8 +30,14 @@ export const lookupCalendarTool = tool('openfec_lookup_calendar', {
     report_type: z
       .string()
       .optional()
-      .describe('Report type code (e.g. "Q1", "Q2"). Filing deadlines and events modes.'),
+      .describe('Report type code (e.g. "Q1", "Q2"). Filing deadlines mode only.'),
     report_year: z.number().int().optional().describe('Report year. Filing deadlines mode.'),
+    category: z
+      .string()
+      .optional()
+      .describe(
+        'Calendar category ID for events mode. Common values: "32" (reporting deadlines), "33" (election dates), "34" (quarterly filings). Events mode only.',
+      ),
     election_year: z.number().int().optional().describe('Election year. Election dates mode.'),
     description: z.string().optional().describe('Full-text event description search. Events mode.'),
     min_date: z.string().optional().describe('Earliest date (YYYY-MM-DD).'),
@@ -105,7 +111,7 @@ export const lookupCalendarTool = tool('openfec_lookup_calendar', {
     if (input.min_date) params.min_start_date = input.min_date;
     if (input.max_date) params.max_start_date = input.max_date;
     if (input.description) params.description = input.description;
-    if (input.report_type) params.calendar_category_id = input.report_type;
+    if (input.category) params.calendar_category_id = input.category;
 
     ctx.log.info('Fetching calendar events', { description: input.description });
     const data = await fec.getCalendarDates(params, ctx);

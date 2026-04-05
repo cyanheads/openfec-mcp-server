@@ -8,10 +8,9 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { fmt$ } from './utils/format-helpers.js';
 
-const fmt$ = (n: unknown) => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
-
-export const lookupElectionsTool = tool('openfec_lookup_elections', {
+export const lookupElections = tool('openfec_lookup_elections', {
   description:
     'Look up federal election races and candidate financial summaries. ' +
     "Find who's running in a race with fundraising totals, or get an aggregate race summary.",

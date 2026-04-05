@@ -5,12 +5,10 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-/** Format a number as USD or 'N/A' for non-numeric values. */
-const fmt$ = (n: unknown) => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
+import { fmt$ } from './utils/format-helpers.js';
+import { validateCommitteeId } from './utils/id-validators.js';
 
 const modes = ['itemized', 'by_purpose', 'by_recipient', 'by_recipient_id'] as const;
 
@@ -32,6 +30,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       ),
     committee_id: z
       .string()
+      .min(1)
       .describe('Spending committee ID (e.g., C00703975). Required for all modes.'),
     recipient_name: z.string().optional().describe('Full-text payee name search. Itemized only.'),
     recipient_state: z.string().optional().describe('Recipient state. Itemized only.'),
@@ -99,11 +98,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     const fec = getOpenFecService();
     const mode = input.mode;
 
-    if (!input.committee_id) {
-      throw invalidParams(
-        "Disbursement search requires a committee_id. Use openfec_search_committees to find a committee's ID.",
-      );
-    }
+    validateCommitteeId(input.committee_id);
 
     /* ---------------------------------------------------------------- */
     /*  Itemized disbursements (keyset/SEEK)                            */

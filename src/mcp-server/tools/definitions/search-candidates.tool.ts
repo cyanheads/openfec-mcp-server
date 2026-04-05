@@ -6,25 +6,11 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
+import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-
-const CANDIDATE_ID_RE = /^[HSP][0-9A-Z]+$/i;
-
-/** Format a number as USD or return 'N/A'. */
-const fmt$ = (n: unknown): string => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
-
-/** Safely read a string field from a record. */
-const str = (rec: Record<string, unknown>, key: string): string =>
-  typeof rec[key] === 'string' ? (rec[key] as string) : '';
-
-const PaginationSchema = z.object({
-  page: z.number().describe('Current page number (1-indexed).'),
-  pages: z.number().describe('Total number of pages.'),
-  count: z.number().describe('Total result count.'),
-  per_page: z.number().describe('Results per page.'),
-});
+import { fmt$, PaginationSchema, str } from './utils/format-helpers.js';
+import { validateCandidateId } from './utils/id-validators.js';
 
 export const searchCandidates = tool('openfec_search_candidates', {
   description:
@@ -88,13 +74,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
   async handler(input, ctx) {
     const fec = getOpenFecService();
 
-    // Validate candidate_id format when provided
-    if (input.candidate_id && !CANDIDATE_ID_RE.test(input.candidate_id)) {
-      throw invalidParams(
-        "Invalid candidate ID format. FEC candidate IDs start with H (House), S (Senate), or P (President) followed by digits (e.g., 'P00003392').",
-        { candidate_id: input.candidate_id },
-      );
-    }
+    if (input.candidate_id) validateCandidateId(input.candidate_id);
 
     const shouldIncludeTotals = input.include_totals ?? !!input.candidate_id;
 
@@ -147,8 +127,8 @@ export const searchCandidates = tool('openfec_search_candidates', {
       if (!input.candidate_id) {
         const ids = candidates.map((c) => str(c, 'candidate_id')).filter(Boolean);
         if (ids.length > 0) {
-          // The API accepts multiple candidate_id values — pass the first page's IDs
-          totalsParams.candidate_id = ids.join(',');
+          // The API accepts repeated candidate_id params (?candidate_id=X&candidate_id=Y)
+          totalsParams.candidate_id = ids;
         }
       }
 

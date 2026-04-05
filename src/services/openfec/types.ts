@@ -101,5 +101,5 @@ export interface ElectionSummary {
 /*  Query parameter types                                             */
 /* ------------------------------------------------------------------ */
 
-/** Query params passed to FEC API methods. Undefined values are stripped. */
-export type FecParams = Record<string, string | number | boolean | undefined>;
+/** Query params passed to FEC API methods. Undefined values are stripped. Arrays serialize as repeated query params. */
+export type FecParams = Record<string, string | number | boolean | string[] | undefined>;
