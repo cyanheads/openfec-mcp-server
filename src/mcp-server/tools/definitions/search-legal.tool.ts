@@ -86,7 +86,7 @@ export const searchLegal = tool('openfec_search_legal', {
     if (input.type) params.type = input.type;
     if (input.ao_number) params.ao_no = input.ao_number;
     if (input.case_number) params.case_no = input.case_number;
-    if (input.respondent) params.respondent = input.respondent;
+    if (input.respondent) params.case_respondents = input.respondent;
     if (input.regulatory_citation) params.ao_regulatory_citation = input.regulatory_citation;
     if (input.statutory_citation) params.ao_statutory_citation = input.statutory_citation;
     if (input.min_penalty_amount !== undefined)

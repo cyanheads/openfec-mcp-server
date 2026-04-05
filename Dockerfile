@@ -38,7 +38,7 @@ ENV NODE_ENV=production
 
 # OCI image metadata (https://github.com/opencontainers/image-spec/blob/main/annotations.md)
 LABEL org.opencontainers.image.title="openfec-mcp-server"
-LABEL org.opencontainers.image.description="MCP server for the OpenFEC API — query federal election campaign finance data from the FEC."
+LABEL org.opencontainers.image.description="Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP."
 LABEL org.opencontainers.image.source="https://github.com/cyanheads/openfec-mcp-server"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
