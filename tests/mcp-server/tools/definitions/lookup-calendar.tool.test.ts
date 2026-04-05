@@ -35,7 +35,7 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
   decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
-import { lookupCalendarTool } from '@/mcp-server/tools/definitions/lookup-calendar.tool.js';
+import { lookupCalendar as lookupCalendarTool } from '@/mcp-server/tools/definitions/lookup-calendar.tool.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 

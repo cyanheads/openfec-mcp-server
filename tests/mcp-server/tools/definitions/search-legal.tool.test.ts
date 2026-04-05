@@ -36,7 +36,7 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
   decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
-import { searchLegalTool } from '@/mcp-server/tools/definitions/search-legal.tool.js';
+import { searchLegal as searchLegalTool } from '@/mcp-server/tools/definitions/search-legal.tool.js';
 
 describe('searchLegalTool', () => {
   let ctx: ReturnType<typeof createMockContext>;

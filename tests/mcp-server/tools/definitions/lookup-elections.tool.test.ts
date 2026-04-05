@@ -36,7 +36,7 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
   decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
-import { lookupElectionsTool } from '@/mcp-server/tools/definitions/lookup-elections.tool.js';
+import { lookupElections as lookupElectionsTool } from '@/mcp-server/tools/definitions/lookup-elections.tool.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
