@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2 — 2026-04-04
+
+### Fixed
+
+- Legal search `respondent` parameter now maps to the correct API field (`case_respondents` instead of `respondent`)
+
+### Changed
+
+- Server description updated to mention STDIO & Streamable HTTP transport support (server.json, Dockerfile OCI label)
+- Removed stale `ctx.elicit`/`ctx.sample` guidance from CLAUDE.md
+
+---
+
 ## 0.2.1 — 2026-04-04
 
 ### Changed
