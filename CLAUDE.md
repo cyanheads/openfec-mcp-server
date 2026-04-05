@@ -278,7 +278,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting |
 | `bun run lint:mcp` | Validate MCP tool/resource/prompt definitions |
-| `bun test` | Run tests |
+| `bun run test` | Run tests |
 | `bun run dev:stdio` | Dev mode (stdio) |
 | `bun run dev:http` | Dev mode (HTTP) |
 | `bun run start:stdio` | Production mode (stdio) |

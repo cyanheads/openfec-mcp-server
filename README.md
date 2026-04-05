@@ -247,7 +247,7 @@ Add to your MCP client config (e.g., `claude_desktop_config.json`):
 - **Run checks and tests:**
   ```sh
   bun run devcheck     # Lints, formats, type-checks
-  bun test             # Runs test suite
+  bun run test         # Runs test suite
   ```
 
 ### Docker
@@ -284,7 +284,7 @@ Issues and pull requests are welcome. Run checks before submitting:
 
 ```sh
 bun run devcheck
-bun test
+bun run test
 ```
 
 ## License
