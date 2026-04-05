@@ -7,7 +7,12 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { renderRecord } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  renderRecord,
+  SearchCriteriaSchema,
+} from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
 
 const modes = ['itemized', 'by_purpose', 'by_recipient', 'by_recipient_id'] as const;
@@ -92,6 +97,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       })
       .optional()
       .describe('Page-based pagination info (aggregate modes only).'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -142,6 +148,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         results: result.results,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
+        search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
       };
     }
 
@@ -167,17 +174,16 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     return {
       results: result.results,
       pagination: result.pagination,
+      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No disbursements found. Try a different cycle, broaden name/description filters, or verify the committee_id is correct.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try a different cycle, broaden name/description filters, or verify the committee_id is correct.',
+      );
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;

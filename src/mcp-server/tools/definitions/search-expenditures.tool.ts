@@ -9,7 +9,12 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { renderRecord } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  renderRecord,
+  SearchCriteriaSchema,
+} from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 /** Expand S/O indicator to a readable label. */
@@ -113,6 +118,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       })
       .optional()
       .describe('Page-based pagination info (by_candidate mode only).'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -164,6 +170,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         results: result.results,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
+        search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
       };
     }
 
@@ -196,17 +203,16 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     return {
       results: result.results,
       pagination: result.pagination,
+      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No independent expenditures found. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+      );
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;

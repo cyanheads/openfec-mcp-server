@@ -9,7 +9,14 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { PaginationSchema, renderRecord, str } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  PaginationSchema,
+  renderRecord,
+  SearchCriteriaSchema,
+  str,
+} from './utils/format-helpers.js';
 import { validateCandidateId } from './utils/id-validators.js';
 
 export const searchCandidates = tool('openfec_search_candidates', {
@@ -69,6 +76,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
         'Financial totals (receipts, disbursements, cash_on_hand) when include_totals is true.',
       ),
     pagination: PaginationSchema.describe('Page-based pagination metadata.'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -141,17 +149,16 @@ export const searchCandidates = tool('openfec_search_candidates', {
       candidates,
       totals,
       pagination: candidateResult.pagination,
+      search_criteria: candidates.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format(result) {
     if (result.candidates.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No candidates found. Try broadening your search — use a partial name, remove filters like state or office, or check a different election cycle.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try broadening your search — use a partial name, remove filters like state or office, or check a different election cycle.',
+      );
     }
 
     const totalsMap = new Map<string, Record<string, unknown>>();

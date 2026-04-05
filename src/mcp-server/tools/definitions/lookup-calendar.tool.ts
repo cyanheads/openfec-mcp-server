@@ -7,7 +7,12 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { renderRecord } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  renderRecord,
+  SearchCriteriaSchema,
+} from './utils/format-helpers.js';
 
 export const lookupCalendar = tool('openfec_lookup_calendar', {
   description: 'Look up FEC calendar events, filing deadlines, and election dates.',
@@ -67,6 +72,7 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         per_page: z.number().describe('Results per page.'),
       })
       .describe('Page-based pagination metadata.'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -76,6 +82,8 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       page: input.page,
       per_page: input.per_page,
     };
+
+    const criteria = buildSearchCriteria(input);
 
     if (input.mode === 'filing_deadlines') {
       // /reporting-dates/ uses min_due_date / max_due_date
@@ -89,7 +97,11 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         report_year: input.report_year,
       });
       const data = await fec.getReportingDates(params, ctx);
-      return { results: data.results, pagination: data.pagination };
+      return {
+        results: data.results,
+        pagination: data.pagination,
+        search_criteria: data.results.length === 0 ? criteria : undefined,
+      };
     }
 
     if (input.mode === 'election_dates') {
@@ -105,7 +117,11 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         election_year: input.election_year,
       });
       const data = await fec.getElectionDates(params, ctx);
-      return { results: data.results, pagination: data.pagination };
+      return {
+        results: data.results,
+        pagination: data.pagination,
+        search_criteria: data.results.length === 0 ? criteria : undefined,
+      };
     }
 
     /* Default: events mode — /calendar-dates/ uses min_start_date / max_start_date */
@@ -116,17 +132,19 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
 
     ctx.log.info('Fetching calendar events', { description: input.description });
     const data = await fec.getCalendarDates(params, ctx);
-    return { results: data.results, pagination: data.pagination };
+    return {
+      results: data.results,
+      pagination: data.pagination,
+      search_criteria: data.results.length === 0 ? criteria : undefined,
+    };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No calendar entries found. Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
+      );
     }
 
     const lines = result.results.map((r) => {

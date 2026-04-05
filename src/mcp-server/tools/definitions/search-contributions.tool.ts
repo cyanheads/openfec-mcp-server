@@ -9,7 +9,12 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { renderRecord } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  renderRecord,
+  SearchCriteriaSchema,
+} from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 /** Derive the current two-year election cycle (always even). */
@@ -121,6 +126,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       })
       .optional()
       .describe('Page-based pagination info (aggregate modes only).'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -180,6 +186,7 @@ export const searchContributions = tool('openfec_search_contributions', {
         results: result.results,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
+        search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
       };
     }
 
@@ -213,17 +220,16 @@ export const searchContributions = tool('openfec_search_contributions', {
     return {
       results: result.results,
       pagination: result.pagination,
+      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No contributions found. For itemized mode, try a different cycle or broaden name/employer filters. For aggregates, verify the committee_id or candidate_id is correct.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'For itemized mode, try a different cycle or broaden name/employer filters. For aggregates, verify the committee_id or candidate_id is correct.',
+      );
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;

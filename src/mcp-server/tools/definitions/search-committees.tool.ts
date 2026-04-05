@@ -9,7 +9,14 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { PaginationSchema, renderRecord, str } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  PaginationSchema,
+  renderRecord,
+  SearchCriteriaSchema,
+  str,
+} from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 export const searchCommittees = tool('openfec_search_committees', {
@@ -58,6 +65,7 @@ export const searchCommittees = tool('openfec_search_committees', {
       .array(z.record(z.string(), z.unknown()))
       .describe('Committee records with committee_id, name, type, designation, party, state, etc.'),
     pagination: PaginationSchema.describe('Page-based pagination metadata.'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -97,17 +105,16 @@ export const searchCommittees = tool('openfec_search_committees', {
     return {
       committees: result.results,
       pagination: result.pagination,
+      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format(result) {
     if (result.committees.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No committees found. Try a partial name, remove type/designation filters, or search by candidate_id to find linked committees.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try a partial name, remove type/designation filters, or search by candidate_id to find linked committees.',
+      );
     }
 
     const headerKeys = new Set(['committee_id', 'name']);

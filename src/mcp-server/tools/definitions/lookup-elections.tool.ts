@@ -8,7 +8,12 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { renderRecord } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  renderRecord,
+  SearchCriteriaSchema,
+} from './utils/format-helpers.js';
 
 export const lookupElections = tool('openfec_lookup_elections', {
   description:
@@ -63,6 +68,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
         per_page: z.number().describe('Results per page.'),
       })
       .describe('Page-based pagination metadata.'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -112,21 +118,27 @@ export const lookupElections = tool('openfec_lookup_elections', {
     });
     if (input.zip) {
       const data = await fec.searchElectionsByZip(params, ctx);
-      return { results: data.results, pagination: data.pagination };
+      return {
+        results: data.results,
+        pagination: data.pagination,
+        search_criteria: data.results.length === 0 ? buildSearchCriteria(input) : undefined,
+      };
     }
     params.election_full = input.election_full;
     const data = await fec.searchElections(params, ctx);
-    return { results: data.results, pagination: data.pagination };
+    return {
+      results: data.results,
+      pagination: data.pagination,
+      search_criteria: data.results.length === 0 ? buildSearchCriteria(input) : undefined,
+    };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No election results found. Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
+      );
     }
 
     // Summary mode returns a single flat object with aggregate totals

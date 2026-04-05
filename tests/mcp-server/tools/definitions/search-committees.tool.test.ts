@@ -124,7 +124,7 @@ describe('searchCommittees', () => {
         pagination: PAGE,
       });
 
-      expect(blocks[0]!.text).toContain('No committees found');
+      expect(blocks[0]!.text).toContain('No results found');
     });
 
     it('includes candidate_ids when present', () => {

@@ -9,7 +9,12 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { renderRecord } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  renderRecord,
+  SearchCriteriaSchema,
+} from './utils/format-helpers.js';
 
 /** Human-readable labels for document type discriminators. */
 const typeLabels: Record<string, string> = {
@@ -68,6 +73,7 @@ export const searchLegal = tool('openfec_search_legal', {
         'Legal documents with a document_type discriminator (advisory_opinion, mur, adr, admin_fine, statute).',
       ),
     total_count: z.number().describe('Total matching documents across all types.'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -138,17 +144,19 @@ export const searchLegal = tool('openfec_search_legal', {
       return d;
     });
 
-    return { results: trimmed, total_count: data.totalCount };
+    return {
+      results: trimmed,
+      total_count: data.totalCount,
+      search_criteria: trimmed.length === 0 ? buildSearchCriteria(input) : undefined,
+    };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No legal documents found. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
+      );
     }
 
     const grouped = new Map<string, Array<Record<string, unknown>>>();

@@ -184,7 +184,7 @@ describe('lookupCalendarTool', () => {
         pagination: PAGE,
       });
 
-      expect(blocks[0]!.text).toContain('No calendar entries found');
+      expect(blocks[0]!.text).toContain('No results found');
     });
   });
 });

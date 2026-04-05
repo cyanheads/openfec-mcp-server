@@ -182,7 +182,7 @@ describe('searchDisbursements', () => {
         count: 0,
       });
 
-      expect(blocks[0]!.text).toContain('No disbursements found');
+      expect(blocks[0]!.text).toContain('No results found');
     });
   });
 });

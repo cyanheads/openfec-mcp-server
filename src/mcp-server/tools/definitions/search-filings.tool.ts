@@ -8,7 +8,14 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
-import { PaginationSchema, renderRecord, str } from './utils/format-helpers.js';
+import {
+  buildSearchCriteria,
+  formatEmptyResult,
+  PaginationSchema,
+  renderRecord,
+  SearchCriteriaSchema,
+  str,
+} from './utils/format-helpers.js';
 
 export const searchFilings = tool('openfec_search_filings', {
   description:
@@ -56,6 +63,7 @@ export const searchFilings = tool('openfec_search_filings', {
         'Filing records with form_type, committee, report_type, financial totals, pdf_url, etc.',
       ),
     pagination: PaginationSchema.describe('Page-based pagination metadata.'),
+    search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
@@ -87,17 +95,16 @@ export const searchFilings = tool('openfec_search_filings', {
     return {
       filings: result.results,
       pagination: result.pagination,
+      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format(result) {
     if (result.filings.length === 0) {
-      return [
-        {
-          type: 'text',
-          text: 'No filings found. Try removing the form_type or report_type filter, broadening the date range, or verifying the committee_id.',
-        },
-      ];
+      return formatEmptyResult(
+        result.search_criteria,
+        'Try removing the form_type or report_type filter, broadening the date range, or verifying the committee_id.',
+      );
     }
 
     const headerKeys = new Set(['form_type', 'committee_name', 'committee_id']);

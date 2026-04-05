@@ -7,6 +7,63 @@
 
 import { z } from '@cyanheads/mcp-ts-core';
 
+/** Pagination and internal params excluded from search criteria echo. */
+const PAGINATION_KEYS = new Set([
+  'page',
+  'per_page',
+  'cursor',
+  'from_hit',
+  'hits_returned',
+  'most_recent',
+  'election_full',
+]);
+
+/**
+ * Build a search criteria summary from tool input.
+ * Strips undefined/null, empty strings, and pagination params so only
+ * meaningful search filters remain.
+ */
+export function buildSearchCriteria(input: Record<string, unknown>): Record<string, unknown> {
+  const criteria: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === null || value === '') continue;
+    if (PAGINATION_KEYS.has(key)) continue;
+    criteria[key] = value;
+  }
+  return criteria;
+}
+
+/**
+ * Render an empty-result format block with echoed search criteria and a
+ * domain-specific suggestion. Used by all tool format() functions.
+ */
+export function formatEmptyResult(
+  criteria: Record<string, unknown> | undefined,
+  hint: string,
+): { type: 'text'; text: string }[] {
+  const lines: string[] = ['No results found.'];
+
+  if (criteria && Object.keys(criteria).length > 0) {
+    lines.push('', '**Search criteria used:**');
+    for (const [key, value] of Object.entries(criteria)) {
+      const display = typeof value === 'object' ? JSON.stringify(value) : String(value);
+      lines.push(`  ${key}: ${display}`);
+    }
+  }
+
+  lines.push('', hint);
+  return [{ type: 'text', text: lines.join('\n') }];
+}
+
+/** Reusable optional search_criteria output field schema. */
+export const SearchCriteriaSchema = z
+  .record(z.string(), z.unknown())
+  .optional()
+  .describe(
+    'Echo of the search filters that produced this result set. ' +
+      'Populated when results are empty to help diagnose why nothing matched.',
+  );
+
 /** Format a number as USD or return 'N/A' for non-numeric values. */
 export const fmt$ = (n: unknown): string =>
   typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A';

@@ -183,7 +183,7 @@ describe('searchFilings', () => {
         pagination: PAGE,
       });
 
-      expect(blocks[0]!.text).toContain('No filings found');
+      expect(blocks[0]!.text).toContain('No results found');
     });
   });
 });

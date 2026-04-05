@@ -199,7 +199,7 @@ describe('searchExpenditures', () => {
         count: 0,
       });
 
-      expect(blocks[0]!.text).toContain('No independent expenditures found');
+      expect(blocks[0]!.text).toContain('No results found');
     });
   });
 });
