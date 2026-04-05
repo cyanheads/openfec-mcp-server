@@ -319,6 +319,11 @@ export class OpenFecService {
     return this.fetchPage('/elections/', params, ctx);
   }
 
+  /** Search elections with ZIP support — uses /elections/search/ which accepts zip. */
+  searchElectionsByZip(params: FecParams, ctx: Context): Promise<PageResult> {
+    return this.fetchPage('/elections/search/', params, ctx);
+  }
+
   /** Fetch election summary — flat response (no pagination wrapper). */
   async getElectionSummary(params: FecParams, ctx: Context): Promise<ElectionSummary> {
     const url = this.buildUrl('/elections/summary/', params);
@@ -385,8 +390,9 @@ function sanitizeErrorMessage(msg: string): string {
 
 /** Map HTTP status codes from upstream FEC API to actionable messages. */
 function enrichStatusError(msg: string): string {
-  const statusMatch = msg.match(/Status:\s*(\d{3})/);
-  if (!statusMatch) return msg;
+  const sanitized = sanitizeErrorMessage(msg);
+  const statusMatch = sanitized.match(/Status:\s*(\d{3})/);
+  if (!statusMatch) return sanitized;
   const status = Number(statusMatch[1]);
   const hints: Record<number, string> = {
     400: 'Bad request — check parameter names and types.',
@@ -399,7 +405,7 @@ function enrichStatusError(msg: string): string {
     503: 'FEC API is temporarily unavailable. Retry shortly.',
   };
   const hint = hints[status];
-  return hint ? `${sanitizeErrorMessage(msg)} — ${hint}` : sanitizeErrorMessage(msg);
+  return hint ? `${sanitized} — ${hint}` : sanitized;
 }
 
 /**
@@ -429,7 +435,12 @@ function isTransientFecError(error: unknown): boolean {
     return true;
   }
   if (msg.includes('unexpected response') || msg.includes('HTML error page')) return true;
-  if (msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') || msg.includes('fetch failed')) {
+  if (
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('FETCH_TIMEOUT') ||
+    msg.includes('fetch failed')
+  ) {
     return true;
   }
   return false;

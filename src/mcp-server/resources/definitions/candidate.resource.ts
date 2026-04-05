@@ -18,6 +18,12 @@ export const candidateResource = resource('openfec://candidate/{candidate_id}', 
   }),
 
   async handler(params, ctx) {
+    if (!/^[HSP][0-9A-Z]+$/i.test(params.candidate_id)) {
+      throw new Error(
+        "Invalid candidate ID format. FEC candidate IDs start with H (House), S (Senate), or P (President) followed by digits (e.g., 'P00003392').",
+      );
+    }
+
     const fec = getOpenFecService();
     const candidateResult = await fec.getCandidate(params.candidate_id, ctx);
     const candidate = candidateResult.results[0];
