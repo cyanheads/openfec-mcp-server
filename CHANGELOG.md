@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0 — 2026-04-04
+
+### Changed
+
+- **Format output overhaul:** All tool `format()` functions now use a shared `renderRecord()` helper instead of bespoke field-by-field rendering — text output shows raw field names (`total_receipts:`) instead of human-readable labels (`Receipts:`)
+- Prompt descriptions switched from `+` string concatenation to template literals
+- Contribution aggregates now default to `sort: '-total', sort_hide_null: true` for more useful ordering
+- Disbursement aggregates likewise default to descending-total sort
+- Legal search `type` description warns that `admin_fines` is slow without a query or respondent filter
+- Elections tool relaxes state/district requirements when a ZIP code is provided; summary mode rejects ZIP lookups with an explicit error
+- `enrichStatusError()` now sanitizes the error message before pattern-matching HTTP status codes (avoids double-sanitization)
+
+### Added
+
+- `renderRecord()` in `utils/format-helpers.ts` — generic key/value renderer with skip-set for header fields
+- `searchElectionsByZip()` service method using the `/elections/search/` endpoint which accepts ZIP parameters
+- Candidate resource handler validates candidate ID format before API call
+- `FETCH_TIMEOUT` recognized as transient error for retry logic
+
+### Fixed
+
+- `enrichStatusError()` was sanitizing twice in the hint branch; now sanitizes once upfront
+
+---
+
 ## 0.2.3 — 2026-04-04
 
 ### Added
