@@ -219,7 +219,12 @@ export const searchContributions = tool('openfec_search_contributions', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: 'No contributions found matching the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No contributions found. For itemized mode, try a different cycle or broaden name/employer filters. For aggregates, verify the committee_id or candidate_id is correct.',
+        },
+      ];
     }
 
     // Detect itemized vs aggregate by presence of next_cursor key

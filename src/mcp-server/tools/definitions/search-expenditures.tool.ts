@@ -6,8 +6,12 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+
+const CANDIDATE_ID_RE = /^[HSP][0-9A-Z]+$/i;
+const COMMITTEE_ID_RE = /^C\d+$/i;
 
 /** Format a number as USD or 'N/A' for non-numeric values. */
 const fmt$ = (n: unknown) => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
@@ -119,6 +123,19 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     const fec = getOpenFecService();
     const mode = input.mode;
 
+    if (input.candidate_id && !CANDIDATE_ID_RE.test(input.candidate_id)) {
+      throw invalidParams(
+        "Invalid candidate ID format. FEC candidate IDs start with H (House), S (Senate), or P (President) followed by digits (e.g., 'P00003392').",
+        { candidate_id: input.candidate_id },
+      );
+    }
+    if (input.committee_id && !COMMITTEE_ID_RE.test(input.committee_id)) {
+      throw invalidParams(
+        "Invalid committee ID format. FEC committee IDs start with 'C' followed by digits (e.g., 'C00703975').",
+        { committee_id: input.committee_id },
+      );
+    }
+
     /* ---------------------------------------------------------------- */
     /*  Itemized expenditures (keyset/SEEK)                             */
     /* ---------------------------------------------------------------- */
@@ -167,6 +184,13 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     /* ---------------------------------------------------------------- */
     /*  By candidate (page-based)                                       */
     /* ---------------------------------------------------------------- */
+    if (!input.candidate_id) {
+      throw invalidParams(
+        'by_candidate mode requires a candidate_id. Use openfec_search_candidates to find the ID, then pass it here to see independent expenditures supporting or opposing that candidate.',
+        { mode: input.mode },
+      );
+    }
+
     const params: FecParams = { per_page: input.per_page };
 
     if (input.committee_id) params.committee_id = input.committee_id;
@@ -192,7 +216,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
   format: (result) => {
     if (result.results.length === 0) {
       return [
-        { type: 'text', text: 'No independent expenditures found matching the given criteria.' },
+        {
+          type: 'text',
+          text: 'No independent expenditures found. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+        },
       ];
     }
 

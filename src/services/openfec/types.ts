@@ -89,6 +89,14 @@ export interface LegalResult {
   totalCount: number;
 }
 
+/** Flat response from the /elections/summary/ endpoint (no pagination wrapper). */
+export interface ElectionSummary {
+  count: number;
+  disbursements: number;
+  independent_expenditures: number;
+  receipts: number;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Query parameter types                                             */
 /* ------------------------------------------------------------------ */

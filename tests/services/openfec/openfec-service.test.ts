@@ -270,10 +270,20 @@ describe('OpenFecService', () => {
 
   describe('getElectionSummary', () => {
     it('calls the /elections/summary/ endpoint', async () => {
-      mockFetch.mockResolvedValueOnce(pageEnvelope([]) as never);
-      await svc.getElectionSummary({ office: 'president', cycle: 2024 }, ctx);
+      mockFetch.mockResolvedValueOnce({
+        json: () =>
+          Promise.resolve({
+            count: 50,
+            receipts: 500_000_000,
+            disbursements: 400_000_000,
+            independent_expenditures: 100_000_000,
+          }),
+      } as never);
+      const result = await svc.getElectionSummary({ office: 'president', cycle: 2024 }, ctx);
       const url = mockFetch.mock.calls[0]![0] as string;
       expect(url).toContain('/elections/summary/');
+      expect(result.count).toBe(50);
+      expect(result.receipts).toBe(500_000_000);
     });
   });
 

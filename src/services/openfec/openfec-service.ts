@@ -9,6 +9,7 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import { fetchWithTimeout, type RequestContext, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import type {
+  ElectionSummary,
   FecLegalEnvelope,
   FecPageEnvelope,
   FecParams,
@@ -82,121 +83,133 @@ export class OpenFecService {
    * Fetch JSON from a page-based endpoint with retry.
    * Wraps the full pipeline (fetch + JSON parse) in the retry boundary.
    */
-  private fetchPage<T = Record<string, unknown>>(
+  private async fetchPage<T = Record<string, unknown>>(
     path: string,
     params: FecParams,
     ctx: Context,
   ): Promise<PageResult<T>> {
     const url = this.buildUrl(path, params);
     const reqCtx = toRequestContext(ctx);
-    return withRetry(
-      async () => {
-        const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+    try {
+      return await withRetry(
+        async () => {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+            signal: ctx.signal,
+          });
+          const body = (await response.json()) as FecPageEnvelope<T>;
+          this.validateEnvelope(body);
+          return {
+            pagination: {
+              page: body.pagination?.page ?? 1,
+              pages: body.pagination?.pages ?? 1,
+              count: body.pagination?.count ?? body.results?.length ?? 0,
+              per_page: body.pagination?.per_page ?? 20,
+            },
+            results: body.results,
+          };
+        },
+        {
+          maxRetries: this.config.fecMaxRetries,
+          baseDelayMs: 1_000,
+          operation: `FEC ${path}`,
+          context: reqCtx,
           signal: ctx.signal,
-        });
-        const body = (await response.json()) as FecPageEnvelope<T>;
-        this.validateEnvelope(body);
-        return {
-          pagination: {
-            page: body.pagination.page,
-            pages: body.pagination.pages,
-            count: body.pagination.count,
-            per_page: body.pagination.per_page,
-          },
-          results: body.results,
-        };
-      },
-      {
-        maxRetries: this.config.fecMaxRetries,
-        baseDelayMs: 1_000,
-        operation: `FEC ${path}`,
-        context: reqCtx,
-        signal: ctx.signal,
-        isTransient: isTransientFecError,
-      },
-    );
+          isTransient: isTransientFecError,
+        },
+      );
+    } catch (err) {
+      rethrowSanitized(err);
+    }
   }
 
   /**
    * Fetch JSON from a keyset (SEEK) endpoint with retry.
    * Returns a `nextCursor` from `last_indexes` when more results exist.
    */
-  private fetchSeek<T = Record<string, unknown>>(
+  private async fetchSeek<T = Record<string, unknown>>(
     path: string,
     params: FecParams,
     ctx: Context,
   ): Promise<SeekResult<T>> {
     const url = this.buildUrl(path, params);
     const reqCtx = toRequestContext(ctx);
-    return withRetry(
-      async () => {
-        const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+    try {
+      return await withRetry(
+        async () => {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+            signal: ctx.signal,
+          });
+          const body = (await response.json()) as FecSeekEnvelope<T>;
+          this.validateEnvelope(body);
+          const lastIndexes = body.pagination.last_indexes;
+          const hasMore =
+            lastIndexes && Object.keys(lastIndexes).length > 0 && body.results.length > 0;
+          return {
+            pagination: {
+              count: body.pagination.count,
+              per_page: body.pagination.per_page,
+            },
+            results: body.results,
+            nextCursor: hasMore ? encodeCursor(lastIndexes) : null,
+          };
+        },
+        {
+          maxRetries: this.config.fecMaxRetries,
+          baseDelayMs: 1_000,
+          operation: `FEC ${path}`,
+          context: reqCtx,
           signal: ctx.signal,
-        });
-        const body = (await response.json()) as FecSeekEnvelope<T>;
-        this.validateEnvelope(body);
-        const lastIndexes = body.pagination.last_indexes;
-        const hasMore =
-          lastIndexes && Object.keys(lastIndexes).length > 0 && body.results.length > 0;
-        return {
-          pagination: {
-            count: body.pagination.count,
-            per_page: body.pagination.per_page,
-          },
-          results: body.results,
-          nextCursor: hasMore ? encodeCursor(lastIndexes) : null,
-        };
-      },
-      {
-        maxRetries: this.config.fecMaxRetries,
-        baseDelayMs: 1_000,
-        operation: `FEC ${path}`,
-        context: reqCtx,
-        signal: ctx.signal,
-        isTransient: isTransientFecError,
-      },
-    );
+          isTransient: isTransientFecError,
+        },
+      );
+    } catch (err) {
+      rethrowSanitized(err);
+    }
   }
 
   /** Fetch legal search results with retry. Normalizes type-keyed arrays. */
-  private fetchLegalSearch(params: FecParams, ctx: Context): Promise<LegalResult> {
+  private async fetchLegalSearch(params: FecParams, ctx: Context): Promise<LegalResult> {
     const url = this.buildUrl('/legal/search/', params);
     const reqCtx = toRequestContext(ctx);
-    return withRetry(
-      async () => {
-        const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+    try {
+      return await withRetry(
+        async () => {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+            signal: ctx.signal,
+          });
+          const body = (await response.json()) as FecLegalEnvelope;
+          const results: LegalResult['results'] = [];
+
+          for (const ao of body.advisory_opinions ?? []) {
+            results.push({ ...ao, document_type: 'advisory_opinion' });
+          }
+          for (const mur of body.murs ?? []) {
+            results.push({ ...mur, document_type: 'mur' });
+          }
+          for (const adr of body.adrs ?? []) {
+            results.push({ ...adr, document_type: 'adr' });
+          }
+          for (const fine of body.admin_fines ?? []) {
+            results.push({ ...fine, document_type: 'admin_fine' });
+          }
+          for (const statute of body.statutes ?? []) {
+            results.push({ ...statute, document_type: 'statute' });
+          }
+
+          return { results, totalCount: body.total_all ?? results.length };
+        },
+        {
+          maxRetries: this.config.fecMaxRetries,
+          baseDelayMs: 1_000,
+          operation: 'FEC /legal/search/',
+          context: reqCtx,
           signal: ctx.signal,
-        });
-        const body = (await response.json()) as FecLegalEnvelope;
-        const results: LegalResult['results'] = [];
-
-        for (const ao of body.advisory_opinions ?? []) {
-          results.push({ ...ao, document_type: 'advisory_opinion' });
-        }
-        for (const mur of body.murs ?? []) {
-          results.push({ ...mur, document_type: 'mur' });
-        }
-        for (const adr of body.adrs ?? []) {
-          results.push({ ...adr, document_type: 'adr' });
-        }
-        for (const fine of body.admin_fines ?? []) {
-          results.push({ ...fine, document_type: 'admin_fine' });
-        }
-        for (const statute of body.statutes ?? []) {
-          results.push({ ...statute, document_type: 'statute' });
-        }
-
-        return { results, totalCount: body.total_all ?? results.length };
-      },
-      {
-        maxRetries: this.config.fecMaxRetries,
-        baseDelayMs: 1_000,
-        operation: 'FEC /legal/search/',
-        context: reqCtx,
-        signal: ctx.signal,
-        isTransient: isTransientFecError,
-      },
-    );
+          isTransient: isTransientFecError,
+        },
+      );
+    } catch (err) {
+      rethrowSanitized(err);
+    }
   }
 
   /** Validate that the API returned a recognizable envelope, not an HTML error page. */
@@ -303,8 +316,34 @@ export class OpenFecService {
     return this.fetchPage('/elections/', params, ctx);
   }
 
-  getElectionSummary(params: FecParams, ctx: Context): Promise<PageResult> {
-    return this.fetchPage('/elections/summary/', params, ctx);
+  /** Fetch election summary — flat response (no pagination wrapper). */
+  async getElectionSummary(params: FecParams, ctx: Context): Promise<ElectionSummary> {
+    const url = this.buildUrl('/elections/summary/', params);
+    const reqCtx = toRequestContext(ctx);
+    try {
+      return await withRetry(
+        async () => {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+            signal: ctx.signal,
+          });
+          const body = (await response.json()) as ElectionSummary;
+          if (typeof body?.count !== 'number') {
+            throw new Error('FEC API returned an unexpected response (possible HTML error page)');
+          }
+          return body;
+        },
+        {
+          maxRetries: this.config.fecMaxRetries,
+          baseDelayMs: 1_000,
+          operation: 'FEC /elections/summary/',
+          context: reqCtx,
+          signal: ctx.signal,
+          isTransient: isTransientFecError,
+        },
+      );
+    } catch (err) {
+      rethrowSanitized(err);
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -330,6 +369,48 @@ export class OpenFecService {
   getElectionDates(params: FecParams, ctx: Context): Promise<PageResult> {
     return this.fetchPage('/election-dates/', params, ctx);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Error sanitization                                                */
+/* ------------------------------------------------------------------ */
+
+/** Strip API key values from error messages to prevent leaking secrets in tool output. */
+function sanitizeErrorMessage(msg: string): string {
+  return msg.replace(/api_key=[^&\s"')]+/g, 'api_key=REDACTED');
+}
+
+/** Map HTTP status codes from upstream FEC API to actionable messages. */
+function enrichStatusError(msg: string): string {
+  const statusMatch = msg.match(/Status:\s*(\d{3})/);
+  if (!statusMatch) return msg;
+  const status = Number(statusMatch[1]);
+  const hints: Record<number, string> = {
+    400: 'Bad request — check parameter names and types.',
+    403: 'Forbidden — the API key may be invalid or expired.',
+    404: 'Endpoint not found — verify the API path.',
+    422: 'The FEC API rejected the request parameters. Check required fields and value formats for this endpoint.',
+    429: 'FEC API rate limit exceeded. Wait a moment and retry.',
+    500: 'FEC API internal error. Retry shortly.',
+    502: 'FEC API is temporarily unreachable. Retry shortly.',
+    503: 'FEC API is temporarily unavailable. Retry shortly.',
+  };
+  const hint = hints[status];
+  return hint ? `${sanitizeErrorMessage(msg)} — ${hint}` : sanitizeErrorMessage(msg);
+}
+
+/**
+ * Re-throw an error with its message sanitized (API key stripped)
+ * and enriched with actionable context for HTTP status errors.
+ * Preserves the original error as `cause` for internal debugging.
+ */
+function rethrowSanitized(err: unknown): never {
+  if (err instanceof Error) {
+    const clean = new Error(enrichStatusError(err.message), { cause: err });
+    clean.name = err.name;
+    throw clean;
+  }
+  throw err;
 }
 
 /* ------------------------------------------------------------------ */

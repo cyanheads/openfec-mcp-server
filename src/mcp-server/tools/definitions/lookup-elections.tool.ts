@@ -86,8 +86,11 @@ export const lookupElectionsTool = tool('openfec_lookup_elections', {
 
     if (input.mode === 'summary') {
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });
-      const data = await fec.getElectionSummary(params, ctx);
-      return { results: data.results, pagination: data.pagination };
+      const summary = await fec.getElectionSummary(params, ctx);
+      return {
+        results: [summary as unknown as Record<string, unknown>],
+        pagination: { page: 1, pages: 1, count: 1, per_page: 1 },
+      };
     }
 
     ctx.log.info('Searching elections', { office: input.office, cycle: input.cycle });
@@ -97,7 +100,30 @@ export const lookupElectionsTool = tool('openfec_lookup_elections', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: 'No election results found for the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No election results found. Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
+        },
+      ];
+    }
+
+    // Summary mode returns a single flat object with aggregate totals
+    const first = result.results[0];
+    if (
+      first &&
+      'receipts' in first &&
+      'disbursements' in first &&
+      'independent_expenditures' in first
+    ) {
+      const lines = [
+        '**Election Summary**',
+        `Candidates: ${first.count ?? 'N/A'}`,
+        `Total Raised: ${fmt$(first.receipts)}`,
+        `Total Spent: ${fmt$(first.disbursements)}`,
+        `Independent Expenditures: ${fmt$(first.independent_expenditures)}`,
+      ];
+      return [{ type: 'text', text: lines.join('\n') }];
     }
 
     const lines = result.results.map((r) => {

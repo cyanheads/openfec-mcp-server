@@ -202,7 +202,7 @@ describe('searchContributions', () => {
         count: 0,
       });
 
-      expect(blocks[0]!.text).toBe('No contributions found matching the given criteria.');
+      expect(blocks[0]!.text).toContain('No contributions found');
     });
   });
 });

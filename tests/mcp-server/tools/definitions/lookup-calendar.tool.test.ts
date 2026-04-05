@@ -130,8 +130,8 @@ describe('lookupCalendarTool', () => {
       await lookupCalendarTool.handler(input, ctx as unknown as Context);
 
       const callArgs = mockService.getCalendarDates.mock.calls[0]![0];
-      expect(callArgs.min_date).toBe('2024-01-01');
-      expect(callArgs.max_date).toBe('2024-12-31');
+      expect(callArgs.min_start_date).toBe('2024-01-01');
+      expect(callArgs.max_start_date).toBe('2024-12-31');
     });
   });
 
@@ -183,7 +183,7 @@ describe('lookupCalendarTool', () => {
         pagination: PAGE,
       });
 
-      expect(blocks[0]!.text).toBe('No calendar entries found for the given criteria.');
+      expect(blocks[0]!.text).toContain('No calendar entries found');
     });
   });
 });

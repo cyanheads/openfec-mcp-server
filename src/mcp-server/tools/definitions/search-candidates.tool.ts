@@ -6,11 +6,11 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 
-const CANDIDATE_ID_RE = /^[HSP]\d+$/i;
+const CANDIDATE_ID_RE = /^[HSP][0-9A-Z]+$/i;
 
 /** Format a number as USD or return 'N/A'. */
 const fmt$ = (n: unknown): string => (typeof n === 'number' ? `$${n.toLocaleString()}` : 'N/A');
@@ -126,6 +126,12 @@ export const searchCandidates = tool('openfec_search_candidates', {
 
     const candidates = candidateResult.results as Record<string, unknown>[];
 
+    if (input.candidate_id && candidates.length === 0) {
+      throw notFound(`Candidate ${input.candidate_id} not found.`, {
+        candidate_id: input.candidate_id,
+      });
+    }
+
     // Fetch financial totals if requested
     let totals: Record<string, unknown>[] | undefined;
     if (shouldIncludeTotals && candidates.length > 0) {
@@ -160,7 +166,12 @@ export const searchCandidates = tool('openfec_search_candidates', {
 
   format(result) {
     if (result.candidates.length === 0) {
-      return [{ type: 'text', text: 'No candidates found matching the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No candidates found. Try broadening your search — use a partial name, remove filters like state or office, or check a different election cycle.',
+        },
+      ];
     }
 
     // Build a lookup of totals by candidate_id for merging

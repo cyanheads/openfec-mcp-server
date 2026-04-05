@@ -75,11 +75,13 @@ describe('lookupElectionsTool', () => {
     });
 
     it('summary mode calls getElectionSummary', async () => {
-      const summary = [{ total_receipts: 500_000_000, total_disbursements: 400_000_000 }];
-      mockService.getElectionSummary.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 1 },
-        results: summary,
-      });
+      const summary = {
+        count: 50,
+        receipts: 500_000_000,
+        disbursements: 400_000_000,
+        independent_expenditures: 100_000_000,
+      };
+      mockService.getElectionSummary.mockResolvedValueOnce(summary);
 
       const input = lookupElectionsTool.input.parse({
         mode: 'summary',
@@ -88,7 +90,8 @@ describe('lookupElectionsTool', () => {
       });
       const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
 
-      expect(result.results).toEqual(summary);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0]).toMatchObject({ count: 50, receipts: 500_000_000 });
       expect(mockService.getElectionSummary).toHaveBeenCalledOnce();
       expect(mockService.searchElections).not.toHaveBeenCalled();
     });
@@ -183,7 +186,7 @@ describe('lookupElectionsTool', () => {
         pagination: PAGE,
       });
 
-      expect(blocks[0]!.text).toBe('No election results found for the given criteria.');
+      expect(blocks[0]!.text).toContain('No election results found');
     });
   });
 });

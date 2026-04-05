@@ -169,7 +169,7 @@ describe('searchCandidates', () => {
         pagination: PAGE,
       });
 
-      expect(blocks[0]!.text).toBe('No candidates found matching the given criteria.');
+      expect(blocks[0]!.text).toContain('No candidates found');
     });
 
     it('merges financial totals into candidate lines', () => {

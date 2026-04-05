@@ -175,7 +175,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: 'No disbursements found matching the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No disbursements found. Try a different cycle, broaden name/description filters, or verify the committee_id is correct.',
+        },
+      ];
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;

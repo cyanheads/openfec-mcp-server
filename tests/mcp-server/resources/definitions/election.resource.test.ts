@@ -32,7 +32,11 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
   getOpenFecService: () => mockService,
 }));
 
-import { electionResource } from '@/mcp-server/resources/definitions/election.resource.js';
+import {
+  electionDistrictResource,
+  electionResource,
+  electionStateResource,
+} from '@/mcp-server/resources/definitions/election.resource.js';
 
 describe('electionResource', () => {
   beforeEach(() => {
@@ -55,7 +59,6 @@ describe('electionResource', () => {
     ];
     mockService.searchElections.mockResolvedValueOnce(pageResult(candidates));
 
-    // Triple-slash keeps 'election' in pathname (index 0) so handler indices align
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/president') });
     const params = electionResource.params.parse({ cycle: '2024', office: 'president' });
     const result = await electionResource.handler(params, ctx);
@@ -73,12 +76,16 @@ describe('electionResource', () => {
     );
   });
 
-  it('passes state from URI path when present', async () => {
+  it('passes state via electionStateResource', async () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/senate/AZ') });
-    const params = electionResource.params.parse({ cycle: '2024', office: 'senate' });
-    await electionResource.handler(params, ctx);
+    const params = electionStateResource.params.parse({
+      cycle: '2024',
+      office: 'senate',
+      state: 'AZ',
+    });
+    await electionStateResource.handler(params, ctx);
 
     expect(mockService.searchElections).toHaveBeenCalledWith(
       { cycle: '2024', office: 'senate', state: 'AZ', election_full: true },
@@ -86,12 +93,17 @@ describe('electionResource', () => {
     );
   });
 
-  it('passes district from URI path for house race', async () => {
+  it('passes district via electionDistrictResource', async () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/house/CA/12') });
-    const params = electionResource.params.parse({ cycle: '2024', office: 'house' });
-    const result = await electionResource.handler(params, ctx);
+    const params = electionDistrictResource.params.parse({
+      cycle: '2024',
+      office: 'house',
+      state: 'CA',
+      district: '12',
+    });
+    const result = await electionDistrictResource.handler(params, ctx);
 
     expect(mockService.searchElections).toHaveBeenCalledWith(
       { cycle: '2024', office: 'house', state: 'CA', district: '12', election_full: true },

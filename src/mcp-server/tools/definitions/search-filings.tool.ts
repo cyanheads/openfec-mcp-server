@@ -105,7 +105,12 @@ export const searchFilings = tool('openfec_search_filings', {
 
   format(result) {
     if (result.filings.length === 0) {
-      return [{ type: 'text', text: 'No filings found matching the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No filings found. Try removing the form_type or report_type filter, broadening the date range, or verifying the committee_id.',
+        },
+      ];
     }
 
     const lines = result.filings.map((f) => {

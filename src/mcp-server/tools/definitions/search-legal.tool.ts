@@ -105,12 +105,49 @@ export const searchLegalTool = tool('openfec_search_legal', {
 
     const data = await fec.searchLegal(params, ctx);
 
-    return { results: data.results, total_count: data.totalCount };
+    // Trim bulky fields to keep payloads manageable for LLM context windows.
+    // Full document lists and verbose highlights can easily exceed 100KB per result.
+    const trimmed = data.results.map((doc) => {
+      const d = { ...doc };
+
+      // Keep only the first 3 highlights and drop per-document highlight maps
+      if (Array.isArray(d.highlights) && d.highlights.length > 3) {
+        d.highlights = d.highlights.slice(0, 3);
+      }
+      delete d.document_highlights;
+
+      // Summarize documents as a count + categories instead of full arrays
+      if (Array.isArray(d.documents) && d.documents.length > 0) {
+        const docs = d.documents as Array<Record<string, unknown>>;
+        const categories = [...new Set(docs.map((dd) => dd.category).filter(Boolean))];
+        d.document_count = docs.length;
+        d.document_categories = categories;
+        delete d.documents;
+      }
+
+      // Trim verbose commission_votes to just the vote dates
+      if (Array.isArray(d.commission_votes) && d.commission_votes.length > 0) {
+        const votes = d.commission_votes as Array<Record<string, unknown>>;
+        d.commission_votes = votes.map((v) => ({
+          vote_date: v.vote_date,
+          action: typeof v.action === 'string' ? v.action.slice(0, 200) : v.action,
+        }));
+      }
+
+      return d;
+    });
+
+    return { results: trimmed, total_count: data.totalCount };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: 'No legal documents found matching the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No legal documents found. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
+        },
+      ];
     }
 
     /** Group results by document_type for readable output. */

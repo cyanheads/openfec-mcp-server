@@ -6,7 +6,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { invalidParams, notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 
@@ -103,6 +103,12 @@ export const searchCommittees = tool('openfec_search_committees', {
       result = await fec.searchCommittees(params, ctx);
     }
 
+    if (input.committee_id && result.results.length === 0) {
+      throw notFound(`Committee ${input.committee_id} not found.`, {
+        committee_id: input.committee_id,
+      });
+    }
+
     return {
       committees: result.results,
       pagination: result.pagination,
@@ -111,7 +117,12 @@ export const searchCommittees = tool('openfec_search_committees', {
 
   format(result) {
     if (result.committees.length === 0) {
-      return [{ type: 'text', text: 'No committees found matching the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No committees found. Try a partial name, remove type/designation filters, or search by candidate_id to find linked committees.',
+        },
+      ];
     }
 
     const lines = result.committees.map((c) => {

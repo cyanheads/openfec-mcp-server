@@ -69,10 +69,11 @@ export const lookupCalendarTool = tool('openfec_lookup_calendar', {
       page: input.page,
       per_page: input.per_page,
     };
-    if (input.min_date) params.min_date = input.min_date;
-    if (input.max_date) params.max_date = input.max_date;
 
     if (input.mode === 'filing_deadlines') {
+      // /reporting-dates/ uses min_due_date / max_due_date
+      if (input.min_date) params.min_due_date = input.min_date;
+      if (input.max_date) params.max_due_date = input.max_date;
       if (input.report_type) params.report_type = input.report_type;
       if (input.report_year) params.report_year = input.report_year;
 
@@ -85,6 +86,9 @@ export const lookupCalendarTool = tool('openfec_lookup_calendar', {
     }
 
     if (input.mode === 'election_dates') {
+      // /election-dates/ uses min_election_date / max_election_date
+      if (input.min_date) params.min_election_date = input.min_date;
+      if (input.max_date) params.max_election_date = input.max_date;
       if (input.state) params.election_state = input.state;
       if (input.office) params.office_sought = input.office;
       if (input.election_year) params.election_year = input.election_year;
@@ -97,7 +101,9 @@ export const lookupCalendarTool = tool('openfec_lookup_calendar', {
       return { results: data.results, pagination: data.pagination };
     }
 
-    /* Default: events mode */
+    /* Default: events mode — /calendar-dates/ uses min_start_date / max_start_date */
+    if (input.min_date) params.min_start_date = input.min_date;
+    if (input.max_date) params.max_start_date = input.max_date;
     if (input.description) params.description = input.description;
     if (input.report_type) params.calendar_category_id = input.report_type;
 
@@ -108,7 +114,12 @@ export const lookupCalendarTool = tool('openfec_lookup_calendar', {
 
   format: (result) => {
     if (result.results.length === 0) {
-      return [{ type: 'text', text: 'No calendar entries found for the given criteria.' }];
+      return [
+        {
+          type: 'text',
+          text: 'No calendar entries found. Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
+        },
+      ];
     }
 
     const lines = result.results.map((r) => {

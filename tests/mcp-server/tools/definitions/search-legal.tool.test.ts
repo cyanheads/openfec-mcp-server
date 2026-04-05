@@ -145,7 +145,7 @@ describe('searchLegalTool', () => {
         total_count: 0,
       });
 
-      expect(blocks[0]!.text).toBe('No legal documents found matching the given criteria.');
+      expect(blocks[0]!.text).toContain('No legal documents found');
     });
   });
 });
