@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "cyanheads/openfec-mcp-server",
+  "name": "io.github.cyanheads/openfec-mcp-server",
   "description": "MCP server for the OpenFEC API — query federal election campaign finance data from the FEC.",
   "repository": {
     "url": "https://github.com/cyanheads/openfec-mcp-server",
@@ -11,20 +11,20 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "openfec-mcp-server",
-      "runtimeHint": "node",
+      "identifier": "@cyanheads/openfec-mcp-server",
+      "runtimeHint": "bun",
       "version": "0.1.0",
       "packageArguments": [
-        {
-          "type": "positional",
-          "value": "run"
-        },
-        {
-          "type": "positional",
-          "value": "start:stdio"
-        }
+        { "type": "positional", "value": "run" },
+        { "type": "positional", "value": "start:stdio" }
       ],
       "environmentVariables": [
+        {
+          "name": "FEC_API_KEY",
+          "description": "OpenFEC API key. Get a free key at https://api.data.gov/signup/",
+          "format": "string",
+          "isRequired": true
+        },
         {
           "name": "MCP_LOG_LEVEL",
           "description": "Sets the minimum log level for output (e.g., 'debug', 'info', 'warn').",
@@ -33,27 +33,25 @@
           "default": "info"
         }
       ],
-      "transport": {
-        "type": "stdio"
-      }
+      "transport": { "type": "stdio" }
     },
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "openfec-mcp-server",
-      "runtimeHint": "node",
+      "identifier": "@cyanheads/openfec-mcp-server",
+      "runtimeHint": "bun",
       "version": "0.1.0",
       "packageArguments": [
-        {
-          "type": "positional",
-          "value": "run"
-        },
-        {
-          "type": "positional",
-          "value": "start:http"
-        }
+        { "type": "positional", "value": "run" },
+        { "type": "positional", "value": "start:http" }
       ],
       "environmentVariables": [
+        {
+          "name": "FEC_API_KEY",
+          "description": "OpenFEC API key. Get a free key at https://api.data.gov/signup/",
+          "format": "string",
+          "isRequired": true
+        },
         {
           "name": "MCP_HTTP_HOST",
           "description": "The hostname for the HTTP server.",
