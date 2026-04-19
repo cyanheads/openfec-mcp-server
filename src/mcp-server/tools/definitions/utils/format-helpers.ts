@@ -60,8 +60,7 @@ export const SearchCriteriaSchema = z
   .record(z.string(), z.unknown())
   .optional()
   .describe(
-    'Echo of the search filters that produced this result set. ' +
-      'Populated when results are empty to help diagnose why nothing matched.',
+    'Echo of the search filters that produced this result set. Populated when results are empty to help diagnose why nothing matched.',
   );
 
 /** Format a number as USD or return 'N/A' for non-numeric values. */

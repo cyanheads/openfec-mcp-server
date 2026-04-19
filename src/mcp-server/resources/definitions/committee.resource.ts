@@ -10,8 +10,7 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 export const committeeResource = resource('openfec://committee/{committee_id}', {
   name: 'FEC Committee Profile',
   description:
-    'Fetch a political committee profile with type, designation, and financial summary. ' +
-    'Committee IDs start with C followed by digits (e.g., C00358796).',
+    'Fetch a political committee profile with type, designation, and financial summary. Committee IDs start with C followed by digits (e.g., C00358796).',
   mimeType: 'application/json',
   params: z.object({
     committee_id: z.string().describe('FEC committee ID (e.g., C00358796)'),

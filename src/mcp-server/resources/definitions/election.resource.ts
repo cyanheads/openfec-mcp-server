@@ -43,9 +43,7 @@ async function fetchElection(
 export const electionResource = resource('openfec://election/{cycle}/{office}', {
   name: 'FEC Election Race',
   description:
-    'Fetch an election race with candidate financial totals. ' +
-    'For senate races use openfec://election/{cycle}/senate/{state}. ' +
-    'For house races use openfec://election/{cycle}/house/{state}/{district}.',
+    'Fetch an election race with candidate financial totals. For senate races use openfec://election/{cycle}/senate/{state}. For house races use openfec://election/{cycle}/house/{state}/{district}.',
   mimeType: 'application/json',
   params: z.object({
     cycle: z.string().describe('Election cycle year (e.g., 2024)'),

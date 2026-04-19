@@ -21,9 +21,7 @@ import { validateCandidateId } from './utils/id-validators.js';
 
 export const searchCandidates = tool('openfec_search_candidates', {
   description:
-    'Find federal candidates by name, state, office, party, or cycle. ' +
-    'Retrieve a specific candidate by FEC ID with financial totals. ' +
-    'Candidate IDs start with H (House), S (Senate), or P (President) followed by digits.',
+    'Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. Candidate IDs start with H (House), S (Senate), or P (President) followed by digits.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({

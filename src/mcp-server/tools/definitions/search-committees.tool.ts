@@ -21,9 +21,7 @@ import { validateCandidateId, validateCommitteeId } from './utils/id-validators.
 
 export const searchCommittees = tool('openfec_search_committees', {
   description:
-    'Find political committees (campaign, PAC, Super PAC, party) by name, type, ' +
-    'candidate affiliation, or state. Retrieve a specific committee by FEC ID. ' +
-    'Committee IDs start with C followed by digits (e.g., C00358796).',
+    'Find political committees (campaign, PAC, Super PAC, party) by name, type, candidate affiliation, or state. Retrieve a specific committee by FEC ID. Committee IDs start with C followed by digits (e.g., C00358796).',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({

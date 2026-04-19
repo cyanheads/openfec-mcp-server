@@ -27,9 +27,7 @@ const modes = ['itemized', 'by_size', 'by_state', 'by_employer', 'by_occupation'
 
 export const searchContributions = tool('openfec_search_contributions', {
   description:
-    'Search itemized individual contributions (Schedule A) or get aggregate breakdowns ' +
-    'by size, state, employer, or occupation. Use to answer "who is funding this committee?" ' +
-    'Itemized mode requires a committee_id. Aggregate by_size/by_state can use candidate_id instead.',
+    'Search itemized individual contributions (Schedule A) or get aggregate breakdowns by size, state, employer, or occupation. Use to answer "who is funding this committee?" Itemized mode requires a committee_id. Aggregate by_size/by_state can use candidate_id instead.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({
@@ -37,9 +35,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       .enum(modes)
       .default('itemized')
       .describe(
-        'Query mode. "itemized" returns individual contribution records (keyset pagination). ' +
-          '"by_size" aggregates by contribution size bucket. "by_state" aggregates by contributor state. ' +
-          '"by_employer" aggregates by employer. "by_occupation" aggregates by occupation.',
+        'Query mode. "itemized" returns individual contribution records (keyset pagination). "by_size" aggregates by contribution size bucket. "by_state" aggregates by contributor state. "by_employer" aggregates by employer. "by_occupation" aggregates by occupation.',
       ),
     committee_id: z.string().optional().describe('Receiving committee ID (e.g., C00703975).'),
     candidate_id: z
@@ -142,9 +138,7 @@ export const searchContributions = tool('openfec_search_contributions', {
     if (mode === 'itemized') {
       if (!input.committee_id) {
         throw invalidParams(
-          'Itemized contribution search requires a committee_id. To search contributions ' +
-            'by candidate, use a "by_size" or "by_state" aggregate mode with candidate_id, ' +
-            "or first look up the candidate's committee with openfec_search_committees.",
+          'Itemized contribution search requires a committee_id. To search contributions by candidate, use a "by_size" or "by_state" aggregate mode with candidate_id, or first look up the candidate\'s committee with openfec_search_committees.',
         );
       }
 

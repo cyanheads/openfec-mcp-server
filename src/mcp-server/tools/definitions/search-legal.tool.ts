@@ -27,8 +27,7 @@ const typeLabels: Record<string, string> = {
 
 export const searchLegal = tool('openfec_search_legal', {
   description:
-    'Search FEC legal documents: advisory opinions, enforcement cases (MURs), ' +
-    'alternative dispute resolutions, and administrative fines.',
+    'Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, and administrative fines.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({

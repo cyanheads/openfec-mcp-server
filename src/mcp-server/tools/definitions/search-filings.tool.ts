@@ -19,9 +19,7 @@ import {
 
 export const searchFilings = tool('openfec_search_filings', {
   description:
-    'Search FEC filings and reports by committee, candidate, form type, or date range. ' +
-    'Covers financial reports (F3/F3P/F3X), statements of candidacy (F2), ' +
-    'organizational filings (F1), 24-hour IE notices (F24), and amendments.',
+    'Search FEC filings and reports by committee, candidate, form type, or date range. Covers financial reports (F3/F3P/F3X), statements of candidacy (F2), organizational filings (F1), 24-hour IE notices (F24), and amendments.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({

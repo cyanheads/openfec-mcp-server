@@ -17,8 +17,7 @@ import {
 
 export const lookupElections = tool('openfec_lookup_elections', {
   description:
-    'Look up federal election races and candidate financial summaries. ' +
-    "Find who's running in a race with fundraising totals, or get an aggregate race summary.",
+    "Look up federal election races and candidate financial summaries. Find who's running in a race with fundraising totals, or get an aggregate race summary.",
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({

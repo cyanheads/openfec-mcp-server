@@ -19,9 +19,7 @@ const modes = ['itemized', 'by_purpose', 'by_recipient', 'by_recipient_id'] as c
 
 export const searchDisbursements = tool('openfec_search_disbursements', {
   description:
-    'Search itemized committee spending (Schedule B) or get aggregate breakdowns by purpose ' +
-    'or recipient. All modes require a committee_id. Use to answer "what is this committee ' +
-    'spending money on?" or "who is receiving payments from this committee?"',
+    'Search itemized committee spending (Schedule B) or get aggregate breakdowns by purpose or recipient. All modes require a committee_id. Use to answer "what is this committee spending money on?" or "who is receiving payments from this committee?"',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({
@@ -29,9 +27,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .enum(modes)
       .default('itemized')
       .describe(
-        'Query mode. "itemized" returns individual disbursement records (keyset pagination). ' +
-          '"by_purpose" aggregates by purpose category. "by_recipient" aggregates by recipient name. ' +
-          '"by_recipient_id" aggregates by recipient committee ID (committee-to-committee transfers).',
+        'Query mode. "itemized" returns individual disbursement records (keyset pagination). "by_purpose" aggregates by purpose category. "by_recipient" aggregates by recipient name. "by_recipient_id" aggregates by recipient committee ID (committee-to-committee transfers).',
       ),
     committee_id: z
       .string()

@@ -25,9 +25,7 @@ const modes = ['itemized', 'by_candidate'] as const;
 
 export const searchExpenditures = tool('openfec_search_expenditures', {
   description:
-    'Search independent expenditures (Schedule E) — outside spending supporting or opposing ' +
-    'federal candidates. Covers Super PACs, party committees, and other groups. Use itemized ' +
-    'mode for individual expenditure records, or by_candidate for aggregated totals per candidate.',
+    'Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. Covers Super PACs, party committees, and other groups. Use itemized mode for individual expenditure records, or by_candidate for aggregated totals per candidate.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({
@@ -35,8 +33,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .enum(modes)
       .default('itemized')
       .describe(
-        'Query mode. "itemized" returns individual expenditure records (keyset pagination). ' +
-          '"by_candidate" returns aggregated totals per candidate by committee (page-based).',
+        'Query mode. "itemized" returns individual expenditure records (keyset pagination). "by_candidate" returns aggregated totals per candidate by committee (page-based).',
       ),
     committee_id: z.string().optional().describe('Spending committee ID (e.g., C00703975).'),
     candidate_id: z.string().optional().describe('Targeted candidate ID (e.g., P00003392).'),
