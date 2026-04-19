@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-04-05 01:55:05
+Generated on: 2026-04-19 23:02:39
 
 ```text
 openfec-mcp-server/
@@ -24,6 +24,8 @@ openfec-mcp-server/
 │   ├── lint-mcp.ts
 │   └── tree.ts
 ├── skills/
+│   ├── add-app-tool/
+│   │   └── SKILL.md
 │   ├── add-prompt/
 │   │   └── SKILL.md
 │   ├── add-resource/

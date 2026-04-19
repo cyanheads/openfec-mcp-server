@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2 — 2026-04-19
+
+### Changed
+
+- Upgraded `@cyanheads/mcp-ts-core` from 0.2.12 to 0.3.8 and synced 15 project skills; added new `add-app-tool` skill
+- Bumped devDependencies to latest: `@biomejs/biome` 2.4.12, `@types/node` 25.6.0, `typescript` 6.0.3, `vitest` 4.1.4
+- Collapsed `+` string concatenations in all tool and resource descriptions, enum `.describe()` calls, and the itemized-contribution error message to single string literals — aligns with the project's CLAUDE.md convention and the updated `design-mcp-server` skill guidance
+- `candidate.resource.ts` now uses the shared `validateCandidateId()` helper instead of an inline regex check, so invalid candidate IDs surface as `invalidParams` (MCP error `-32602`) instead of a generic `Error`, matching the tool-side behavior
+
+---
+
 ## 0.3.1 — 2026-04-04
 
 ### Added
