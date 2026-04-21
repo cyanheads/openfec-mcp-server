@@ -115,7 +115,9 @@ describe('searchCommittees', () => {
       expect(text).toContain('party_full: DEMOCRATIC PARTY');
       expect(text).toContain('state: DE');
       expect(text).toContain('treasurer_name: DILLON, JENNIFER OHARA');
-      expect(text).toContain('Page 1 of 1 (1 total)');
+      expect(text).toContain('Page 1 of 1');
+      expect(text).toContain('1 total');
+      expect(text).toContain('per page');
     });
 
     it('renders empty state', () => {

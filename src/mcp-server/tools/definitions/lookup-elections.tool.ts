@@ -57,7 +57,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
 
   output: z.object({
     results: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe('Election race records — candidates with financial data, or aggregate summary.'),
     pagination: z
       .object({
@@ -161,8 +161,8 @@ export const lookupElections = tool('openfec_lookup_elections', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count } = result.pagination;
-    lines.push(`\n_${count} result(s) — page ${page}/${pages}_`);
+    const { page, pages, count, per_page } = result.pagination;
+    lines.push(`\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

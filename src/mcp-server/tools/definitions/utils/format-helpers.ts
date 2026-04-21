@@ -57,7 +57,7 @@ export function formatEmptyResult(
 
 /** Reusable optional search_criteria output field schema. */
 export const SearchCriteriaSchema = z
-  .record(z.string(), z.unknown())
+  .looseObject({})
   .optional()
   .describe(
     'Echo of the search filters that produced this result set. Populated when results are empty to help diagnose why nothing matched.',

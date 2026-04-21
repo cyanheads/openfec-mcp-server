@@ -67,7 +67,7 @@ export const searchLegal = tool('openfec_search_legal', {
 
   output: z.object({
     results: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe(
         'Legal documents with a document_type discriminator (advisory_opinion, mur, adr, admin_fine, statute).',
       ),

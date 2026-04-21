@@ -194,7 +194,7 @@ describe('searchContributions', () => {
       const text = blocks[0]!.text;
       expect(text).toContain('size: 200');
       expect(text).toContain('count: 25000');
-      expect(text).toContain('1 aggregate rows');
+      expect(text).toContain('Page 1 of 1');
     });
 
     it('renders empty results message', () => {

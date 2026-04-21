@@ -96,7 +96,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
   output: z.object({
     results: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe('Expenditure records (itemized) or per-candidate aggregate rows.'),
     next_cursor: z
       .string()
@@ -217,32 +217,23 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
     if (isItemized) {
       if (result.count != null) {
-        lines.push(`**${result.count.toLocaleString()} total independent expenditures**\n`);
+        lines.push(`**${result.count} total independent expenditures**\n`);
       }
-      for (const r of result.results) {
-        const indicator = supportOpposeLabel(r.support_oppose_indicator);
-        const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
-        lines.push(
-          `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']))}`,
-        );
-      }
-      if (result.next_cursor) {
-        lines.push('\n_More results available — pass cursor to continue._');
-      }
-    } else {
-      if (result.pagination?.count != null) {
-        lines.push(`**${result.pagination.count.toLocaleString()} candidate-committee pairs**\n`);
-      }
-      for (const r of result.results) {
-        const indicator = supportOpposeLabel(r.support_oppose_indicator);
-        const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
-        lines.push(
-          `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']))}`,
-        );
-      }
-      if (result.pagination && result.pagination.page < result.pagination.pages) {
-        lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
-      }
+    }
+    for (const r of result.results) {
+      const indicator = supportOpposeLabel(r.support_oppose_indicator);
+      const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
+      lines.push(
+        `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']))}`,
+      );
+    }
+    if (isItemized && result.next_cursor) {
+      lines.push(`\n_More results available — next_cursor: ${result.next_cursor}_`);
+    }
+
+    if (result.pagination) {
+      const p = result.pagination;
+      lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
     }
 
     return [{ type: 'text', text: lines.join('\n\n') }];

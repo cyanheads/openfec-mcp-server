@@ -65,10 +65,10 @@ export const searchCandidates = tool('openfec_search_candidates', {
 
   output: z.object({
     candidates: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe('Candidate records with candidate_id, name, party, state, office, cycles, etc.'),
     totals: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .optional()
       .describe(
         'Financial totals (receipts, disbursements, cash_on_hand) when include_totals is true.',
@@ -186,8 +186,8 @@ export const searchCandidates = tool('openfec_search_candidates', {
       return block;
     });
 
-    const { page, pages, count } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} (${count} total)`);
+    const { page, pages, count, per_page } = result.pagination;
+    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

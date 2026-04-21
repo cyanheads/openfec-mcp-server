@@ -60,7 +60,7 @@ export const searchCommittees = tool('openfec_search_committees', {
 
   output: z.object({
     committees: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe('Committee records with committee_id, name, type, designation, party, state, etc.'),
     pagination: PaginationSchema.describe('Page-based pagination metadata.'),
     search_criteria: SearchCriteriaSchema,
@@ -125,8 +125,8 @@ export const searchCommittees = tool('openfec_search_committees', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} (${count} total)`);
+    const { page, pages, count, per_page } = result.pagination;
+    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

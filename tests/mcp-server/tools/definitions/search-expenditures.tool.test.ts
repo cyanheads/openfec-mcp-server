@@ -190,7 +190,7 @@ describe('searchExpenditures', () => {
       expect(text).toContain('JONES, ALICE');
       expect(text).toContain('CITIZENS UNITED PAC');
       expect(text).toContain('count: 45');
-      expect(text).toContain('1 candidate-committee pairs');
+      expect(text).toContain('Page 1 of 1');
     });
 
     it('renders empty state', () => {

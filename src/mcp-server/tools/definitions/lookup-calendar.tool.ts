@@ -60,7 +60,7 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
 
   output: z.object({
     results: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe(
         'Calendar records — events, filing deadlines, or election dates depending on mode.',
       ),
@@ -154,8 +154,8 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count } = result.pagination;
-    lines.push(`\n_${count} result(s) — page ${page}/${pages}_`);
+    const { page, pages, count, per_page } = result.pagination;
+    lines.push(`\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

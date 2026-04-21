@@ -173,7 +173,7 @@ describe('searchDisbursements', () => {
       const text = blocks[0]!.text;
       expect(text).toContain('purpose: ADVERTISING');
       expect(text).toContain('count: 120');
-      expect(text).toContain('1 aggregate rows');
+      expect(text).toContain('Page 1 of 1');
     });
 
     it('renders empty state', () => {

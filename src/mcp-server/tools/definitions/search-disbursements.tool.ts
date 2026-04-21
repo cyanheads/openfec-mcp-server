@@ -74,7 +74,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
   output: z.object({
     results: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe('Disbursement records (itemized) or aggregate rows.'),
     next_cursor: z
       .string()
@@ -187,25 +187,24 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
     if (isItemized) {
       if (result.count != null) {
-        lines.push(`**${result.count.toLocaleString()} total disbursements**\n`);
+        lines.push(`**${result.count} total disbursements**\n`);
       }
       for (const r of result.results) {
         const name = String(r.recipient_name ?? 'Unknown');
         lines.push(`**${name}**\n${renderRecord(r, new Set(['recipient_name']))}`);
       }
       if (result.next_cursor) {
-        lines.push('\n_More results available — pass cursor to continue._');
+        lines.push(`\n_More results available — next_cursor: ${result.next_cursor}_`);
       }
     } else {
-      if (result.pagination?.count != null) {
-        lines.push(`**${result.pagination.count.toLocaleString()} aggregate rows**\n`);
-      }
       for (const r of result.results) {
         lines.push(renderRecord(r));
       }
-      if (result.pagination && result.pagination.page < result.pagination.pages) {
-        lines.push(`\n_Page ${result.pagination.page} of ${result.pagination.pages}_`);
-      }
+    }
+
+    if (result.pagination) {
+      const p = result.pagination;
+      lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
     }
 
     return [{ type: 'text', text: lines.join('\n\n') }];

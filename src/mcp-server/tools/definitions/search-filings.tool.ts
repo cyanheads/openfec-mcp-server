@@ -56,7 +56,7 @@ export const searchFilings = tool('openfec_search_filings', {
 
   output: z.object({
     filings: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(z.looseObject({}))
       .describe(
         'Filing records with form_type, committee, report_type, financial totals, pdf_url, etc.',
       ),
@@ -116,8 +116,8 @@ export const searchFilings = tool('openfec_search_filings', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} (${count} total)`);
+    const { page, pages, count, per_page } = result.pagination;
+    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

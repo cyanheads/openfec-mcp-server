@@ -160,7 +160,9 @@ describe('searchCandidates', () => {
       expect(text).toContain('DEMOCRATIC PARTY');
       expect(text).toContain('President');
       expect(text).toContain('DE');
-      expect(text).toContain('Page 1 of 1 (1 total)');
+      expect(text).toContain('Page 1 of 1');
+      expect(text).toContain('1 total');
+      expect(text).toContain('per page');
     });
 
     it('renders "No candidates found" for empty results', () => {
