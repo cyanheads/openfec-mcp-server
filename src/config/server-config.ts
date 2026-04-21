@@ -5,6 +5,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
 const ServerConfigSchema = z.object({
   fecApiKey: z
@@ -26,11 +27,11 @@ let _config: ServerConfig | undefined;
 
 /** Returns validated server config, lazily parsed from env vars. */
 export function getServerConfig(): ServerConfig {
-  _config ??= ServerConfigSchema.parse({
-    fecApiKey: process.env.FEC_API_KEY,
-    fecBaseUrl: process.env.FEC_BASE_URL,
-    fecMaxRetries: process.env.FEC_MAX_RETRIES,
-    fecRequestTimeout: process.env.FEC_REQUEST_TIMEOUT,
+  _config ??= parseEnvConfig(ServerConfigSchema, {
+    fecApiKey: 'FEC_API_KEY',
+    fecBaseUrl: 'FEC_BASE_URL',
+    fecMaxRetries: 'FEC_MAX_RETRIES',
+    fecRequestTimeout: 'FEC_REQUEST_TIMEOUT',
   });
   return _config;
 }

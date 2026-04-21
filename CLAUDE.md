@@ -129,6 +129,8 @@ export const moneyTrailPrompt = prompt('openfec_money_trail', {
 
 ```ts
 // src/config/server-config.ts — lazy-parsed, separate from framework config
+import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
+
 const ServerConfigSchema = z.object({
   fecApiKey: z.string().min(1, 'FEC_API_KEY is required.'),
   fecBaseUrl: z.string().default('https://api.open.fec.gov/v1').describe('OpenFEC API base URL'),
@@ -137,11 +139,11 @@ const ServerConfigSchema = z.object({
 });
 let _config: z.infer<typeof ServerConfigSchema> | undefined;
 export function getServerConfig() {
-  _config ??= ServerConfigSchema.parse({
-    fecApiKey: process.env.FEC_API_KEY,
-    fecBaseUrl: process.env.FEC_BASE_URL,
-    fecMaxRetries: process.env.FEC_MAX_RETRIES,
-    fecRequestTimeout: process.env.FEC_REQUEST_TIMEOUT,
+  _config ??= parseEnvConfig(ServerConfigSchema, {
+    fecApiKey: 'FEC_API_KEY',
+    fecBaseUrl: 'FEC_BASE_URL',
+    fecMaxRetries: 'FEC_MAX_RETRIES',
+    fecRequestTimeout: 'FEC_REQUEST_TIMEOUT',
   });
   return _config;
 }
