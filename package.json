@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/openfec-mcp-server",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "mcpName": "io.github.cyanheads/openfec-mcp-server",
   "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
   "type": "module",
@@ -68,14 +68,16 @@
   "overrides": {
     "brace-expansion": ">=2.0.3",
     "express-rate-limit": ">=8.2.2",
-    "hono": ">=4.12.7",
+    "hono": ">=4.12.14",
+    "@hono/node-server": ">=1.19.13",
     "path-to-regexp": ">=8.4.0",
     "picomatch": ">=4.0.4",
+    "vite": ">=8.0.5",
     "yaml": ">=2.8.3",
     "lodash": ">=4.17.24"
   },
   "dependencies": {
-    "@cyanheads/mcp-ts-core": "^0.3.8",
+    "@cyanheads/mcp-ts-core": "^0.5.3",
     "@opentelemetry/api": "^1.9.1",
     "pino-pretty": "^13.1.3"
   },
