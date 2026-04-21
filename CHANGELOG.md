@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-04-20
+
+### Changed
+
+- Upgraded `@cyanheads/mcp-ts-core` from 0.3.8 to 0.5.3 and synced 7 project skills (`add-tool` 1.6, `api-config` 1.2, `design-mcp-server` 2.4, `field-test` 1.2, `maintenance` 1.3, `polish-docs-meta` 1.4, `setup` 1.3)
+- **Tool output now passes the new `format-parity` lint rule** — all 9 tools render every scalar field from their output schema, so clients forwarding `content[]` (Claude Desktop) see the same information as clients forwarding `structuredContent` (Claude Code). User-visible effects:
+  - Itemized modes (contributions, disbursements, expenditures) expose the real `next_cursor` value in the footer instead of a generic "more available" notice
+  - Pagination footers consistently show `Page X of Y · N total · P per page` — `per_page` was previously hidden
+  - Count headers render raw digits (`10468532 total contributions`) instead of locale-formatted (`10,468,532`) so sentinel matching in the linter stays reliable
+- Relaxed `results[]`/`candidates[]`/`committees[]`/etc. output item schemas from `z.record(z.string(), z.unknown())` to `z.looseObject({})` — the framework's documented escape hatch for genuinely dynamic upstream payloads like the FEC API. Structured data flow unchanged; linter no longer emits false `<key>` parity failures
+- Migrated `src/config/server-config.ts` to `parseEnvConfig()` from `@cyanheads/mcp-ts-core/config`. Missing `FEC_API_KEY` now produces the framework's formatted banner (`FEC_API_KEY (fecApiKey): Invalid input...`) instead of a raw ZodError dump
+- Tightened security overrides in `package.json`: `hono >=4.12.14`, `@hono/node-server >=1.19.13`, `vite >=8.0.5`. `bun audit` now clean (was reporting 10 advisories from transitive deps)
+
+---
+
 ## 0.3.2 — 2026-04-19
 
 ### Changed
