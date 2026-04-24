@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest a new feature or improvement for openfec-mcp-server
+description: Suggest a new feature or improvement for @cyanheads/openfec-mcp-server
 labels: ["enhancement"]
 body:
   - type: textarea
