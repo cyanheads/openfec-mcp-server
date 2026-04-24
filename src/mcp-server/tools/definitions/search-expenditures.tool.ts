@@ -96,7 +96,11 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
   output: z.object({
     results: z
-      .array(z.looseObject({}))
+      .array(
+        z
+          .looseObject({})
+          .describe('An expenditure record (itemized entry) or a per-candidate aggregate row.'),
+      )
       .describe('Expenditure records (itemized) or per-candidate aggregate rows.'),
     next_cursor: z
       .string()

@@ -60,7 +60,13 @@ export const searchCommittees = tool('openfec_search_committees', {
 
   output: z.object({
     committees: z
-      .array(z.looseObject({}))
+      .array(
+        z
+          .looseObject({})
+          .describe(
+            'A committee record (committee_id, name, type, designation, party, state, ...).',
+          ),
+      )
       .describe('Committee records with committee_id, name, type, designation, party, state, etc.'),
     pagination: PaginationSchema.describe('Page-based pagination metadata.'),
     search_criteria: SearchCriteriaSchema,

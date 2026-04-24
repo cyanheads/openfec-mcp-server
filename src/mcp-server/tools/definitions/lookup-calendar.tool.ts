@@ -60,7 +60,13 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
 
   output: z.object({
     results: z
-      .array(z.looseObject({}))
+      .array(
+        z
+          .looseObject({})
+          .describe(
+            'A calendar record (event, filing deadline, or election date depending on mode).',
+          ),
+      )
       .describe(
         'Calendar records — events, filing deadlines, or election dates depending on mode.',
       ),

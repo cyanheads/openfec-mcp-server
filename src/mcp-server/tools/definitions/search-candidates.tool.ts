@@ -65,10 +65,16 @@ export const searchCandidates = tool('openfec_search_candidates', {
 
   output: z.object({
     candidates: z
-      .array(z.looseObject({}))
+      .array(
+        z
+          .looseObject({})
+          .describe('A candidate record (candidate_id, name, party, state, office, cycles, ...).'),
+      )
       .describe('Candidate records with candidate_id, name, party, state, office, cycles, etc.'),
     totals: z
-      .array(z.looseObject({}))
+      .array(
+        z.looseObject({}).describe('A per-cycle financial totals row for a candidate committee.'),
+      )
       .optional()
       .describe(
         'Financial totals (receipts, disbursements, cash_on_hand) when include_totals is true.',

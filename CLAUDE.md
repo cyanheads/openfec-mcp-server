@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.3.1
+**Version:** 0.4.1
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core)
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -14,13 +14,14 @@ When the user asks what to do next, what's left, or needs direction, suggest rel
 
 1. **Re-run the `setup` skill** — ensures CLAUDE.md, skills, structure, and metadata are populated and up to date with the current codebase
 2. **Run the `design-mcp-server` skill** — if the tool/resource surface hasn't been mapped yet, work through domain design
-3. **Add tools/resources/prompts** — scaffold new definitions using the `add-tool`, `add-resource`, `add-prompt` skills
+3. **Add tools/resources/prompts** — scaffold new definitions using the `add-tool`, `add-app-tool`, `add-resource`, `add-prompt` skills
 4. **Add services** — scaffold domain service integrations using the `add-service` skill
 5. **Add tests** — scaffold tests for existing definitions using the `add-test` skill
 6. **Field-test definitions** — exercise tools/resources/prompts with real inputs using the `field-test` skill, get a report of issues and pain points
 7. **Run `devcheck`** — lint, format, typecheck, and security audit
-8. **Run the `polish-docs-meta` skill** — finalize README, CHANGELOG, metadata, and agent protocol for shipping
-9. **Run the `maintenance` skill** — sync skills and dependencies after framework updates
+8. **Run the `security-pass` skill** — audit handlers for MCP-specific security gaps: output injection, scope blast radius, input sinks, tenant isolation
+9. **Run the `polish-docs-meta` skill** — finalize README, CHANGELOG, metadata, and agent protocol for shipping
+10. **Run the `maintenance` skill** — investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest`
 
 Tailor suggestions to what's actually missing or stale — don't recite the full list every time.
 
@@ -37,6 +38,7 @@ The OpenFEC OpenAPI spec (Swagger 2.0) is at `docs/openapi-spec.json` — 100 pa
 - **Logic throws, framework catches.** Tool/resource handlers are pure — throw on failure, no `try/catch`. Plain `Error` is fine; the framework catches, classifies, and formats. Use error factories (`notFound()`, `validationError()`, etc.) when the error code matters.
 - **Use `ctx.log`** for request-scoped logging. No `console` calls.
 - **Use `ctx.state`** for tenant-scoped storage. Never access persistence directly.
+- **Check `ctx.elicit` / `ctx.sample`** for presence before calling.
 - **Secrets in env vars only** — never hardcoded.
 
 ---
@@ -236,7 +238,7 @@ src/
 
 Skills are modular instructions in `skills/` at the project root. Read them directly when a task matches — e.g., `skills/add-tool/SKILL.md` when adding a tool.
 
-**Agent skill directory:** Copy skills into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). This makes skills available as context without needing to reference `skills/` paths manually. After framework updates, re-copy to pick up changes.
+**Agent skill directory:** Copy skills into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). This makes skills available as context without needing to reference `skills/` paths manually. After framework updates, run the `maintenance` skill — it re-syncs the agent directory automatically (Phase B).
 
 Available skills:
 
@@ -251,15 +253,19 @@ Available skills:
 | `add-service` | Scaffold a new service integration |
 | `add-test` | Scaffold test file for a tool, resource, or service |
 | `field-test` | Exercise tools/resources/prompts with real inputs, verify behavior, report issues |
+| `security-pass` | Audit server for MCP-flavored security gaps: output injection, scope blast radius, input sinks, tenant isolation |
 | `devcheck` | Lint, format, typecheck, audit |
 | `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
-| `maintenance` | Sync skills and dependencies after updates |
+| `release-and-publish` | Post-wrapup ship workflow: verification gate, push commits/tags, publish to npm + MCP Registry + GHCR |
+| `maintenance` | Investigate changelogs, adopt upstream changes, sync skills and framework scripts |
+| `migrate-mcp-ts-template` | Migrate a legacy template fork to use `@cyanheads/mcp-ts-core` as a package dependency |
 | `report-issue-framework` | File a bug or feature request against `@cyanheads/mcp-ts-core` via `gh` CLI |
 | `report-issue-local` | File a bug or feature request against this server's own repo via `gh` CLI |
 | `api-auth` | Auth modes, scopes, JWT/OAuth |
 | `api-config` | AppConfig, parseConfig, env vars |
 | `api-context` | Context interface, logger, state, progress |
 | `api-errors` | McpError, JsonRpcErrorCode, error patterns |
+| `api-linter` | MCP definition lint rules reference — look here when devcheck flags `format-parity`, `schema-*`, `name-*`, `server-json-*`, etc. |
 | `api-services` | LLM, Speech, Graph services |
 | `api-testing` | createMockContext, test patterns |
 | `api-utils` | Formatting, parsing, security, pagination, scheduling |
@@ -290,7 +296,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Publishing
 
-After a version bump and final commit, publish to both npm and GHCR:
+Run the `release-and-publish` skill for the full flow (verification gate, push, npm + MCP Registry + GHCR). Reference commands:
 
 ```bash
 bun publish --access public
@@ -300,8 +306,6 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t ghcr.io/cyanheads/openfec-mcp-server:latest \
   --push .
 ```
-
-Remind the user to run these after completing a release flow.
 
 ---
 
@@ -320,12 +324,12 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 
 ## Checklist
 
-- [ ] Zod schemas: all fields have `.describe()`, only JSON-Schema-serializable types (no `z.custom()`, `z.date()`, `z.transform()`, etc.)
+- [ ] Zod schemas: all fields have `.describe()` (including nested object fields and array element types), only JSON-Schema-serializable types (no `z.custom()`, `z.date()`, `z.transform()`, `z.bigint()`, `z.symbol()`, `z.void()`, `z.map()`, `z.set()`, `z.function()`, `z.nan()`)
 - [ ] Optional nested objects: handler guards for empty inner values from form-based clients (`if (input.obj?.field && ...)`, not just `if (input.obj)`)
 - [ ] JSDoc `@fileoverview` + `@module` on every file
 - [ ] `ctx.log` for logging, `ctx.state` for storage
 - [ ] Handlers throw on failure — error factories or plain `Error`, no try/catch
-- [ ] `format()` renders all data the LLM needs — `content[]` is the only field most clients forward to the model
+- [ ] `format()` renders all data the LLM needs — different clients forward different surfaces (Claude Code → `structuredContent`, Claude Desktop → `content[]`); both must carry the same data
 - [ ] Registered in `createApp()` arrays (directly or via barrel exports)
 - [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
 - [ ] `bun run devcheck` passes

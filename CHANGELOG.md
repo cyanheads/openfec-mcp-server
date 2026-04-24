@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1 — 2026-04-24
+
+### Changed
+
+- Upgraded `@cyanheads/mcp-ts-core` from 0.5.3 to 0.7.0 (skipping the 0.6.x series). Notable consumer-facing upgrades now live alongside this release:
+  - **Directory-based changelog format** is shipped by the framework (opt-in); this server stays on the monolithic `CHANGELOG.md` for now
+  - **`/` landing page + `/.well-known/mcp.json` SEP-1649 Server Card** appear in HTTP mode with zero config
+  - **`MCP_PUBLIC_URL`** env var now available for TLS-terminating reverse-proxy deployments
+  - **`security-pass`**, **`release-and-publish`**, and **`api-linter`** skills added; `field-test` rewritten to drive a live HTTP server over JSON-RPC
+  - **ZodError** now surfaces a flat `<message> at <path> (+N more)` string plus structured `data.issues`, so validation failures read as prose in logs and tool error payloads
+- Fixed 10 new `describe-on-fields` lint warnings surfaced by framework 0.6.16's recursive walk into array element types — every `z.looseObject({})` inside `z.array(...)` output now carries its own `.describe()` across all 9 tool definitions
+- Patch bumps: `@biomejs/biome` 2.4.12 → 2.4.13, `vitest` 4.1.4 → 4.1.5
+- Synced 15 project skills to their new package versions; added 3 new skills (`api-linter` 1.1, `release-and-publish` 2.1, `security-pass` 1.1)
+- Synced framework scripts via the new `maintenance` skill Phase C: added `build-changelog.ts`, `check-docs-sync.ts`, `check-skills-sync.ts`; refreshed `devcheck.ts` and `tree.ts`
+- `CLAUDE.md` refreshed against the upstream consumer template: `security-pass` inserted in "What's Next?", skills table picks up `api-linter` / `release-and-publish` / `security-pass` / `migrate-mcp-ts-template`, Core Rules gained the `ctx.elicit` / `ctx.sample` presence-check rule, Publishing section now points at the `release-and-publish` skill
+
+---
+
 ## 0.4.0 — 2026-04-20
 
 ### Changed

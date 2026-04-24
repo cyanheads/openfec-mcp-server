@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-04-19 23:02:39
+Generated on: 2026-04-24 19:08:22
 
 ```text
 openfec-mcp-server/
@@ -18,7 +18,10 @@ openfec-mcp-server/
 │   ├── design.md
 │   └── openapi-spec.json
 ├── scripts/
+│   ├── build-changelog.ts
 │   ├── build.ts
+│   ├── check-docs-sync.ts
+│   ├── check-skills-sync.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
@@ -43,6 +46,8 @@ openfec-mcp-server/
 │   ├── api-context/
 │   │   └── SKILL.md
 │   ├── api-errors/
+│   │   └── SKILL.md
+│   ├── api-linter/
 │   │   └── SKILL.md
 │   ├── api-services/
 │   │   ├── references/
@@ -77,9 +82,13 @@ openfec-mcp-server/
 │   │   │   ├── readme.md
 │   │   │   └── server-json.md
 │   │   └── SKILL.md
+│   ├── release-and-publish/
+│   │   └── SKILL.md
 │   ├── report-issue-framework/
 │   │   └── SKILL.md
 │   ├── report-issue-local/
+│   │   └── SKILL.md
+│   ├── security-pass/
 │   │   └── SKILL.md
 │   └── setup/
 │       └── SKILL.md

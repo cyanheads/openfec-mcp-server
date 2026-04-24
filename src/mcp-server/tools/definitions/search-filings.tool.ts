@@ -56,7 +56,13 @@ export const searchFilings = tool('openfec_search_filings', {
 
   output: z.object({
     filings: z
-      .array(z.looseObject({}))
+      .array(
+        z
+          .looseObject({})
+          .describe(
+            'A filing record (form_type, committee, report_type, financial totals, pdf_url, ...).',
+          ),
+      )
       .describe(
         'Filing records with form_type, committee, report_type, financial totals, pdf_url, etc.',
       ),

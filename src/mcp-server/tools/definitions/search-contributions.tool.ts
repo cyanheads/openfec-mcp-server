@@ -103,7 +103,9 @@ export const searchContributions = tool('openfec_search_contributions', {
 
   output: z.object({
     results: z
-      .array(z.looseObject({}))
+      .array(
+        z.looseObject({}).describe('A contribution record (itemized entry) or an aggregate row.'),
+      )
       .describe('Contribution records (itemized) or aggregate rows.'),
     next_cursor: z
       .string()

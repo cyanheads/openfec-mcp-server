@@ -74,7 +74,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
   output: z.object({
     results: z
-      .array(z.looseObject({}))
+      .array(
+        z.looseObject({}).describe('A disbursement record (itemized entry) or an aggregate row.'),
+      )
       .describe('Disbursement records (itemized) or aggregate rows.'),
     next_cursor: z
       .string()

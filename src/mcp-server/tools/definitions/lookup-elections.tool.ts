@@ -57,7 +57,11 @@ export const lookupElections = tool('openfec_lookup_elections', {
 
   output: z.object({
     results: z
-      .array(z.looseObject({}))
+      .array(
+        z
+          .looseObject({})
+          .describe('An election race record (candidate financial row or aggregate summary).'),
+      )
       .describe('Election race records — candidates with financial data, or aggregate summary.'),
     pagination: z
       .object({
