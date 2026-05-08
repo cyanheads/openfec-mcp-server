@@ -81,11 +81,11 @@ export const searchLegal = tool('openfec_search_legal', {
         z
           .looseObject({})
           .describe(
-            'A legal document record with a document_type discriminator (advisory_opinion, mur, adr, admin_fine, statute).',
+            'Legal document record. The document_type field discriminates among advisory_opinion, mur, adr, admin_fine, and statute. Common fields include ao_no/case_no/no (identifier), name, document_type, document_count, and document_categories summarizing the related filings.',
           ),
       )
       .describe(
-        'Legal documents with a document_type discriminator (advisory_opinion, mur, adr, admin_fine, statute).',
+        'Legal document result set spanning advisory opinions, MURs, ADRs, admin fines, and statutes.',
       ),
     total_count: z.number().describe('Total matching documents across all types.'),
     search_criteria: SearchCriteriaSchema,

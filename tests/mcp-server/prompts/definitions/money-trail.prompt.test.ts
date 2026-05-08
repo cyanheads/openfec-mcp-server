@@ -61,7 +61,13 @@ describe('moneyTrailPrompt', () => {
   });
 
   it('args parsing validates schema', () => {
-    expect(moneyTrailPrompt.args.parse({})).toEqual({});
+    expect(() => moneyTrailPrompt.args.parse({})).toThrow(/candidate_id or candidate_name/);
+    expect(moneyTrailPrompt.args.parse({ candidate_id: 'P00003392' })).toEqual({
+      candidate_id: 'P00003392',
+    });
+    expect(moneyTrailPrompt.args.parse({ candidate_name: 'Test' })).toEqual({
+      candidate_name: 'Test',
+    });
     expect(
       moneyTrailPrompt.args.parse({
         candidate_name: 'Test',

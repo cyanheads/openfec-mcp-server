@@ -11,9 +11,12 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
+
+const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
 
 export const lookupElections = tool('openfec_lookup_elections', {
   description:
@@ -58,9 +61,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .describe(
         'search = candidates in a race with financial totals. summary = aggregate race financial summary.',
       ),
-    office: z
-      .enum(['president', 'senate', 'house'])
-      .describe('Office sought: president, senate, or house.'),
+    office: z.enum(['H', 'S', 'P']).describe('Office sought: H=House, S=Senate, P=President.'),
     cycle: z.number().int().describe('Election cycle year (even years only, e.g. 2024).'),
     state: z
       .string()
@@ -91,17 +92,14 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .array(
         z
           .looseObject({})
-          .describe('An election race record (candidate financial row or aggregate summary).'),
+          .describe(
+            'Candidate financial row (search mode) or aggregate race summary (summary mode).',
+          ),
       )
-      .describe('Election race records — candidates with financial data, or aggregate summary.'),
-    pagination: z
-      .object({
-        page: z.number().describe('Current page number.'),
-        pages: z.number().describe('Total pages available.'),
-        count: z.number().describe('Total result count.'),
-        per_page: z.number().describe('Results per page.'),
-      })
-      .describe('Page-based pagination metadata.'),
+      .describe(
+        'Election race result set; candidate financial rows in search mode, a single aggregate summary row in summary mode.',
+      ),
+    pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
 
@@ -114,13 +112,13 @@ export const lookupElections = tool('openfec_lookup_elections', {
     }
     // ZIP resolves geography on its own — only require state/district when no zip
     if (!input.zip) {
-      if ((input.office === 'senate' || input.office === 'house') && !input.state) {
+      if ((input.office === 'S' || input.office === 'H') && !input.state) {
         throw ctx.fail('missing_state_for_office', undefined, {
           office: input.office,
           ...ctx.recoveryFor('missing_state_for_office'),
         });
       }
-      if (input.office === 'house' && !input.district) {
+      if (input.office === 'H' && !input.district) {
         throw ctx.fail('missing_district_for_house', undefined, {
           office: input.office,
           state: input.state,
@@ -132,7 +130,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
     const fec = getOpenFecService();
 
     const params: FecParams = {
-      office: input.office,
+      office: OFFICE_API_FORM[input.office],
       cycle: input.cycle,
     };
     if (input.state) params.state = input.state;

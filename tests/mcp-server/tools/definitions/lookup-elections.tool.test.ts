@@ -65,7 +65,7 @@ describe('lookupElectionsTool', () => {
       });
 
       const input = lookupElectionsTool.input.parse({
-        office: 'president',
+        office: 'P',
         cycle: 2024,
       });
       const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
@@ -85,7 +85,7 @@ describe('lookupElectionsTool', () => {
 
       const input = lookupElectionsTool.input.parse({
         mode: 'summary',
-        office: 'president',
+        office: 'P',
         cycle: 2024,
       });
       const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
@@ -98,7 +98,7 @@ describe('lookupElectionsTool', () => {
 
     it('throws on odd cycle year', async () => {
       const input = lookupElectionsTool.input.parse({
-        office: 'president',
+        office: 'P',
         cycle: 2025,
       });
 
@@ -111,7 +111,7 @@ describe('lookupElectionsTool', () => {
 
     it('throws when senate lookup missing state', async () => {
       const input = lookupElectionsTool.input.parse({
-        office: 'senate',
+        office: 'S',
         cycle: 2024,
       });
 
@@ -124,7 +124,7 @@ describe('lookupElectionsTool', () => {
 
     it('throws when house lookup missing district', async () => {
       const input = lookupElectionsTool.input.parse({
-        office: 'house',
+        office: 'H',
         cycle: 2024,
         state: 'CA',
       });
@@ -143,7 +143,7 @@ describe('lookupElectionsTool', () => {
       });
 
       const input = lookupElectionsTool.input.parse({
-        office: 'president',
+        office: 'P',
         cycle: 2024,
       });
 

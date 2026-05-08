@@ -32,8 +32,15 @@ export const committeeResource = resource('openfec://committee/{committee_id}', 
     validateCommitteeId(params.committee_id);
 
     const fec = getOpenFecService();
-    const result = await fec.getCommittee(params.committee_id, ctx);
-    const committee = result.results[0];
+    // Totals 404 for committees that don't file Form 3/3X/3P — treat any
+    // totals failure as "no totals" while letting the base fetch surface
+    // the committee_not_found contract.
+    const [committeeResult, totalsResult] = await Promise.all([
+      fec.getCommittee(params.committee_id, ctx),
+      fec.getCommitteeTotals(params.committee_id, { per_page: 1 }, ctx).catch(() => null),
+    ]);
+
+    const committee = committeeResult.results[0];
     if (!committee) {
       throw ctx.fail('committee_not_found', `Committee ${params.committee_id} not found.`, {
         committee_id: params.committee_id,
@@ -41,7 +48,9 @@ export const committeeResource = resource('openfec://committee/{committee_id}', 
       });
     }
 
+    const totals = totalsResult?.results[0];
+
     ctx.log.info('Committee resource fetched', { committee_id: params.committee_id });
-    return committee;
+    return { ...committee, ...(totals ?? {}) };
   },
 });

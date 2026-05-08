@@ -59,13 +59,13 @@ describe('electionResource', () => {
     ];
     mockService.searchElections.mockResolvedValueOnce(pageResult(candidates));
 
-    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/president') });
-    const params = electionResource.params.parse({ cycle: '2024', office: 'president' });
+    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/P') });
+    const params = electionResource.params.parse({ cycle: '2024', office: 'P' });
     const result = await electionResource.handler(params, ctx);
 
     expect(result).toEqual({
       cycle: '2024',
-      office: 'president',
+      office: 'P',
       state: undefined,
       district: undefined,
       candidates,
@@ -79,10 +79,10 @@ describe('electionResource', () => {
   it('passes state via electionStateResource', async () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult([]));
 
-    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/senate/AZ') });
+    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/S/AZ') });
     const params = electionStateResource.params.parse({
       cycle: '2024',
-      office: 'senate',
+      office: 'S',
       state: 'AZ',
     });
     await electionStateResource.handler(params, ctx);
@@ -96,10 +96,10 @@ describe('electionResource', () => {
   it('passes district via electionDistrictResource', async () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult([]));
 
-    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/house/CA/12') });
+    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/H/CA/12') });
     const params = electionDistrictResource.params.parse({
       cycle: '2024',
-      office: 'house',
+      office: 'H',
       state: 'CA',
       district: '12',
     });
@@ -116,10 +116,10 @@ describe('electionResource', () => {
   it('validates cycle and office params', () => {
     expect(() => electionResource.params.parse({})).toThrow();
     expect(() => electionResource.params.parse({ cycle: '2024' })).toThrow();
-    expect(() => electionResource.params.parse({ office: 'president' })).toThrow();
-    expect(electionResource.params.parse({ cycle: '2024', office: 'senate' })).toEqual({
-      cycle: '2024',
-      office: 'senate',
-    });
+    expect(() => electionResource.params.parse({ office: 'P' })).toThrow();
+    expect(() => electionResource.params.parse({ cycle: '2024', office: 'S' })).toThrow();
+    expect(electionStateResource.params.parse({ cycle: '2024', office: 'S', state: 'VT' })).toEqual(
+      { cycle: '2024', office: 'S', state: 'VT' },
+    );
   });
 });

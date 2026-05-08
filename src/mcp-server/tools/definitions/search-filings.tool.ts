@@ -16,6 +16,7 @@ import {
   SearchCriteriaSchema,
   str,
 } from './utils/format-helpers.js';
+import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
 export const searchFilings = tool('openfec_search_filings', {
   description:
@@ -43,34 +44,35 @@ export const searchFilings = tool('openfec_search_filings', {
     is_amended: z.boolean().optional().describe('Filter to original or amended filings only.'),
     most_recent: z
       .boolean()
-      .optional()
-      .describe('Only the most recent version (filters out superseded amendments). Default true.'),
+      .default(true)
+      .describe('Only the most recent version (filters out superseded amendments).'),
     min_receipt_date: z
       .string()
       .optional()
       .describe('Earliest date FEC received the filing (YYYY-MM-DD).'),
     max_receipt_date: z.string().optional().describe('Latest FEC receipt date (YYYY-MM-DD).'),
-    page: z.number().optional().describe('Page number (1-indexed). Default 1.'),
-    per_page: z.number().optional().describe('Results per page. Default 20, max 100.'),
+    page: z.number().int().min(1).default(1).describe('Page number (1-indexed).'),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
   }),
 
   output: z.object({
-    filings: z
+    results: z
       .array(
         z
           .looseObject({})
           .describe(
-            'A filing record (form_type, committee, report_type, financial totals, pdf_url, ...).',
+            'Filing record; common keys include form_type, committee_id, committee_name, report_type, financial totals, and pdf_url.',
           ),
       )
-      .describe(
-        'Filing records with form_type, committee, report_type, financial totals, pdf_url, etc.',
-      ),
-    pagination: PaginationSchema.describe('Page-based pagination metadata.'),
+      .describe('Filing result set; one record per match.'),
+    pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
 
   async handler(input, ctx) {
+    if (input.committee_id) validateCommitteeId(input.committee_id);
+    if (input.candidate_id) validateCandidateId(input.candidate_id);
+
     const fec = getOpenFecService();
 
     const params: FecParams = {
@@ -82,7 +84,7 @@ export const searchFilings = tool('openfec_search_filings', {
       report_year: input.report_year,
       cycle: input.cycle,
       is_amended: input.is_amended,
-      most_recent: input.most_recent ?? true,
+      most_recent: input.most_recent,
       min_receipt_date: input.min_receipt_date,
       max_receipt_date: input.max_receipt_date,
       page: input.page,
@@ -97,23 +99,23 @@ export const searchFilings = tool('openfec_search_filings', {
     const result = await fec.searchFilings(params, ctx);
 
     return {
-      filings: result.results,
+      results: result.results,
       pagination: result.pagination,
       search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
     };
   },
 
   format(result) {
-    if (result.filings.length === 0) {
+    if (result.results.length === 0) {
       return formatEmptyResult(
         result.search_criteria,
-        'Try removing the form_type or report_type filter, broadening the date range, or verifying the committee_id.',
+        'Try removing the form_type or report_type filter, broadening the date range, or looking up the committee by name with openfec_search_committees.',
       );
     }
 
     const headerKeys = new Set(['form_type', 'committee_name', 'committee_id']);
 
-    const lines = result.filings.map((f) => {
+    const lines = result.results.map((f) => {
       const formType = str(f, 'form_type');
       const committeeName = str(f, 'committee_name');
       const committeeId = str(f, 'committee_id');

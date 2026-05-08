@@ -61,7 +61,13 @@ describe('campaignAnalysisPrompt', () => {
   });
 
   it('args parsing validates schema', () => {
-    expect(campaignAnalysisPrompt.args.parse({})).toEqual({});
+    expect(() => campaignAnalysisPrompt.args.parse({})).toThrow(/candidate_id or candidate_name/);
+    expect(campaignAnalysisPrompt.args.parse({ candidate_id: 'P00003392' })).toEqual({
+      candidate_id: 'P00003392',
+    });
+    expect(campaignAnalysisPrompt.args.parse({ candidate_name: 'Test' })).toEqual({
+      candidate_name: 'Test',
+    });
     expect(
       campaignAnalysisPrompt.args.parse({
         candidate_name: 'Test',

@@ -10,6 +10,7 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
@@ -63,7 +64,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .enum(['disbursement_date', 'disbursement_amount'])
       .optional()
       .describe('Sort field. Itemized only.'),
-    per_page: z.number().default(20).describe('Results per page (max 100).'),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
@@ -75,9 +76,15 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
   output: z.object({
     results: z
       .array(
-        z.looseObject({}).describe('A disbursement record (itemized entry) or an aggregate row.'),
+        z
+          .looseObject({})
+          .describe(
+            'Itemized disbursement record (mode=itemized) or aggregate row (mode=by_purpose, by_recipient, by_recipient_id).',
+          ),
       )
-      .describe('Disbursement records (itemized) or aggregate rows.'),
+      .describe(
+        'Disbursement result set; itemized records or aggregate buckets depending on mode.',
+      ),
     next_cursor: z
       .string()
       .nullable()
@@ -86,15 +93,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         'Pagination cursor for the next page of itemized results. Null when no more pages.',
       ),
     count: z.number().optional().describe('Total result count (may be approximate for itemized).'),
-    pagination: z
-      .object({
-        page: z.number().describe('Current page number.'),
-        pages: z.number().describe('Total pages.'),
-        count: z.number().describe('Total results.'),
-        per_page: z.number().describe('Results per page.'),
-      })
-      .optional()
-      .describe('Page-based pagination info (aggregate modes only).'),
+    pagination: PaginationSchema.optional().describe(
+      'Page-based pagination info (aggregate modes only).',
+    ),
     search_criteria: SearchCriteriaSchema,
   }),
 
@@ -180,7 +181,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     if (result.results.length === 0) {
       return formatEmptyResult(
         result.search_criteria,
-        'Try a different cycle, broaden name/description filters, or verify the committee_id is correct.',
+        'Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
       );
     }
 

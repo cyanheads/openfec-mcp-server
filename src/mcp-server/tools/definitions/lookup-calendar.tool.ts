@@ -10,12 +10,14 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 
 export const lookupCalendar = tool('openfec_lookup_calendar', {
-  description: 'Look up FEC calendar events, filing deadlines, and election dates.',
+  description:
+    'Look up FEC calendar events, filing deadlines, and election dates. Use to find upcoming filing windows for a committee, locate when a federal election occurred, or scope FEC events by date range and category.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   input: z.object({
@@ -39,10 +41,29 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       .describe('Report type code (e.g. "Q1", "Q2"). Filing deadlines mode only.'),
     report_year: z.number().int().optional().describe('Report year. Filing deadlines mode.'),
     category: z
-      .string()
+      .enum([
+        '20',
+        '21',
+        '22',
+        '23',
+        '24',
+        '25',
+        '26',
+        '27',
+        '28',
+        '29',
+        '32',
+        '33',
+        '34',
+        '36',
+        '37',
+        '38',
+        '39',
+        '40',
+      ])
       .optional()
       .describe(
-        'Calendar category ID for events mode. Common values: "32" (reporting deadlines), "33" (election dates), "34" (quarterly filings). Events mode only.',
+        'Calendar category ID. 20=Commission Meetings, 21=Reporting Deadlines, 22=Conferences and Outreach, 23=AOs and Rules, 24=Other, 25=Quarterly, 26=Monthly, 27=Pre and Post-Elections, 28=EC Periods, 29=IE Periods, 32=Open Meetings, 33=Conferences, 34=Roundtables, 36=Election Dates, 37=Federal Holidays, 38=FEA Periods, 39=Executive Sessions, 40=Public Hearings. Events mode only.',
       ),
     election_year: z.number().int().optional().describe('Election year. Election dates mode.'),
     description: z.string().optional().describe('Full-text event description search. Events mode.'),
@@ -64,20 +85,13 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         z
           .looseObject({})
           .describe(
-            'A calendar record (event, filing deadline, or election date depending on mode).',
+            'Event record (mode=events), filing deadline record (mode=filing_deadlines), or election date record (mode=election_dates).',
           ),
       )
       .describe(
-        'Calendar records — events, filing deadlines, or election dates depending on mode.',
+        'Calendar result set; events, filing deadlines, or election dates depending on mode.',
       ),
-    pagination: z
-      .object({
-        page: z.number().describe('Current page number.'),
-        pages: z.number().describe('Total pages available.'),
-        count: z.number().describe('Total result count.'),
-        per_page: z.number().describe('Results per page.'),
-      })
-      .describe('Page-based pagination metadata.'),
+    pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.3 — 2026-05-08
+
+### Changed
+
+- **Office codes standardized to `H|S|P` across `openfec_lookup_elections` and the `openfec://election/{cycle}/{office}[/...]` resources** — input now matches the codes `openfec_search_candidates` already used. Internal mapping to the FEC API's `house|senate|president` form is preserved. URI examples in the election resource descriptions updated to `H/S/P`. README quick-reference updated. ⚠️ Breaking for any client wired to the old `president|senate|house` enum on those two surfaces.
+- **Calendar `category` is now an enum**, not a free string. All 18 FEC calendar category codes (20–29, 32–34, 36–40) are enumerated with a label legend in the field describe (e.g. `21=Reporting Deadlines`, `36=Election Dates`).
+- **Pagination inputs tightened across 7 tools** — `page` and `per_page` are now `z.number().int().min(1)[.max(100)].default(...)` instead of bare `optional()` with prose-only bounds. The framework's JSON schema now exposes the limits to clients.
+- **`openfec_search_filings` output renamed `filings` → `results`** for consistency with every other search tool. Format renderer and tests updated. ⚠️ Breaking for clients reading `structuredContent.filings` directly.
+- **`search-filings` validates `committee_id` and `candidate_id` format up front** via the shared `validateCommitteeId` / `validateCandidateId` helpers (matches the pattern already in `search-candidates` and `committee.resource`).
+- **`candidate.resource` now returns `principal_committees`** alongside the candidate record and totals, fetched via the new `getCandidateCommittees()` service helper. All three upstream calls run in parallel via `Promise.all`.
+- **`committee.resource` now merges committee totals** into the response. The totals fetch is wrapped to no-op on 404 so committees that don't file Form 3/3X/3P (which return 404 from `/committee/{id}/totals/`) still resolve cleanly through the base `committee_not_found` contract instead of bubbling the totals 404.
+- **Both prompts (`openfec_money_trail`, `openfec_campaign_analysis`) now `.refine()` their args** to require either `candidate_id` or `candidate_name`. Empty invocations now fail at validation with an actionable message instead of generating a prompt referencing "the specified candidate".
+- **Tightened tool/resource descriptions across the surface** — output `results[]` items now spell out which mode produces which row shape (e.g. `Itemized contribution record (mode=itemized) or aggregate row (mode=by_size, by_state, by_employer, by_occupation)`); empty-result hints in `search-disbursements` and `search-filings` now nudge users toward `openfec_search_committees` for committee-by-name lookup; reused `PaginationSchema` everywhere instead of re-inlining the four pagination fields per tool.
+- **`campaign-analysis` prompt restructured** — split principal-committee discovery into its own step (Step 2) before the contribution and disbursement breakdowns; downstream steps renumbered. Makes the multi-call workflow explicit instead of leaving "find the committee" implicit.
+
+### Added
+
+- `OpenFecService.getCandidateCommittees(candidateId, params, ctx)` — `/candidate/{id}/committees/` endpoint.
+- `OpenFecService.getCommitteeTotals(committeeId, params, ctx)` — `/committee/{id}/totals/` endpoint.
+
+---
+
 ## 0.4.2 — 2026-05-08
 
 ### Changed

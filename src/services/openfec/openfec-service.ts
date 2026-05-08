@@ -238,6 +238,14 @@ export class OpenFecService {
     return this.fetchPage('/candidates/totals/', params, ctx);
   }
 
+  getCandidateCommittees(
+    candidateId: string,
+    params: FecParams,
+    ctx: Context,
+  ): Promise<PageResult> {
+    return this.fetchPage(`/candidate/${candidateId}/committees/`, params, ctx);
+  }
+
   /* ---------------------------------------------------------------- */
   /*  Committees                                                      */
   /* ---------------------------------------------------------------- */
@@ -248,6 +256,10 @@ export class OpenFecService {
 
   getCommittee(committeeId: string, ctx: Context): Promise<PageResult> {
     return this.fetchPage(`/committee/${committeeId}/`, {}, ctx);
+  }
+
+  getCommitteeTotals(committeeId: string, params: FecParams, ctx: Context): Promise<PageResult> {
+    return this.fetchPage(`/committee/${committeeId}/totals/`, params, ctx);
   }
 
   /* ---------------------------------------------------------------- */

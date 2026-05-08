@@ -8,15 +8,18 @@ import { resource, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 
+const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
+type OfficeCode = keyof typeof OFFICE_API_FORM;
+
 /** Shared handler logic for all election resource URI variants. */
 async function fetchElection(
-  params: { cycle: string; office: string; state?: string; district?: string },
+  params: { cycle: string; office: OfficeCode; state?: string; district?: string },
   ctx: Parameters<Parameters<typeof resource>[1]['handler']>[1],
 ) {
   const fec = getOpenFecService();
   const apiParams: FecParams = {
     cycle: params.cycle,
-    office: params.office,
+    office: OFFICE_API_FORM[params.office],
     election_full: true,
   };
   if (params.state) apiParams.state = params.state;
@@ -39,33 +42,34 @@ async function fetchElection(
   };
 }
 
-/** Presidential and at-large races: openfec://election/2024/president */
+/** Presidential races: openfec://election/2024/P */
 export const electionResource = resource('openfec://election/{cycle}/{office}', {
   name: 'FEC Election Race',
   description:
-    'Fetch an election race with candidate financial totals. For senate races use openfec://election/{cycle}/senate/{state}. For house races use openfec://election/{cycle}/house/{state}/{district}.',
+    'Fetch a presidential election race with candidate financial totals. For senate races use openfec://election/{cycle}/S/{state}. For house races use openfec://election/{cycle}/H/{state}/{district}.',
   mimeType: 'application/json',
   params: z.object({
     cycle: z.string().describe('Election cycle year (e.g., 2024)'),
-    office: z.string().describe('Office: president, senate, or house'),
+    office: z.enum(['P']).describe('Office code: P=President.'),
   }),
   handler: (params, ctx) => fetchElection(params, ctx),
 });
 
-/** Senate races: openfec://election/2024/senate/AZ */
+/** Senate or at-large house races: openfec://election/2024/S/AZ */
 export const electionStateResource = resource('openfec://election/{cycle}/{office}/{state}', {
   name: 'FEC Election Race (State)',
-  description: 'Fetch a senate or at-large election race with candidate financial totals.',
+  description:
+    'Fetch a senate race, or a house at-large race in a single-district state, with candidate financial totals.',
   mimeType: 'application/json',
   params: z.object({
     cycle: z.string().describe('Election cycle year (e.g., 2024)'),
-    office: z.string().describe('Office: senate (or president)'),
+    office: z.enum(['S', 'H']).describe('Office code: S=Senate, H=House (at-large).'),
     state: z.string().describe('Two-letter US state code (e.g., AZ)'),
   }),
   handler: (params, ctx) => fetchElection(params, ctx),
 });
 
-/** House races: openfec://election/2024/house/CA/12 */
+/** House district races: openfec://election/2024/H/CA/12 */
 export const electionDistrictResource = resource(
   'openfec://election/{cycle}/{office}/{state}/{district}',
   {
@@ -74,7 +78,7 @@ export const electionDistrictResource = resource(
     mimeType: 'application/json',
     params: z.object({
       cycle: z.string().describe('Election cycle year (e.g., 2024)'),
-      office: z.string().describe('Office: house'),
+      office: z.enum(['H']).describe('Office code: H=House.'),
       state: z.string().describe('Two-letter US state code (e.g., CA)'),
       district: z.string().describe('Two-digit district number (e.g., 12)'),
     }),

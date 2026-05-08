@@ -12,6 +12,7 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
@@ -109,7 +110,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       .enum(['contribution_receipt_date', 'contribution_receipt_amount'])
       .optional()
       .describe('Sort field. Itemized only.'),
-    per_page: z.number().default(20).describe('Results per page (max 100).'),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
@@ -121,9 +122,15 @@ export const searchContributions = tool('openfec_search_contributions', {
   output: z.object({
     results: z
       .array(
-        z.looseObject({}).describe('A contribution record (itemized entry) or an aggregate row.'),
+        z
+          .looseObject({})
+          .describe(
+            'Itemized contribution record (mode=itemized) or aggregate row (mode=by_size, by_state, by_employer, by_occupation).',
+          ),
       )
-      .describe('Contribution records (itemized) or aggregate rows.'),
+      .describe(
+        'Contribution result set; itemized records or aggregate buckets depending on mode.',
+      ),
     next_cursor: z
       .string()
       .nullable()
@@ -132,15 +139,9 @@ export const searchContributions = tool('openfec_search_contributions', {
         'Pagination cursor for the next page of itemized results. Null when no more pages.',
       ),
     count: z.number().optional().describe('Total result count (may be approximate for itemized).'),
-    pagination: z
-      .object({
-        page: z.number().describe('Current page number.'),
-        pages: z.number().describe('Total pages.'),
-        count: z.number().describe('Total results.'),
-        per_page: z.number().describe('Results per page.'),
-      })
-      .optional()
-      .describe('Page-based pagination info (aggregate modes only).'),
+    pagination: PaginationSchema.optional().describe(
+      'Page-based pagination info (aggregate modes only).',
+    ),
     search_criteria: SearchCriteriaSchema,
   }),
 

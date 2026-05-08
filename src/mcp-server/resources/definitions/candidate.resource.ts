@@ -32,7 +32,12 @@ export const candidateResource = resource('openfec://candidate/{candidate_id}', 
     validateCandidateId(params.candidate_id);
 
     const fec = getOpenFecService();
-    const candidateResult = await fec.getCandidate(params.candidate_id, ctx);
+    const [candidateResult, totalsResult, committeesResult] = await Promise.all([
+      fec.getCandidate(params.candidate_id, ctx),
+      fec.getCandidateTotals({ candidate_id: params.candidate_id }, ctx),
+      fec.getCandidateCommittees(params.candidate_id, { designation: 'P' }, ctx),
+    ]);
+
     const candidate = candidateResult.results[0];
     if (!candidate) {
       throw ctx.fail('candidate_not_found', `Candidate ${params.candidate_id} not found.`, {
@@ -41,10 +46,10 @@ export const candidateResource = resource('openfec://candidate/{candidate_id}', 
       });
     }
 
-    const totalsResult = await fec.getCandidateTotals({ candidate_id: params.candidate_id }, ctx);
     const totals = totalsResult.results[0];
+    const principal_committees = committeesResult.results;
 
     ctx.log.info('Candidate resource fetched', { candidate_id: params.candidate_id });
-    return { ...candidate, ...(totals ?? {}) };
+    return { ...candidate, ...(totals ?? {}), principal_committees };
   },
 });

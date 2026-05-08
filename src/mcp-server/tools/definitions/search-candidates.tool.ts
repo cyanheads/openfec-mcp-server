@@ -69,8 +69,8 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .describe(
         'Include financial totals (receipts, disbursements, cash on hand). Defaults to true when fetching by candidate_id.',
       ),
-    page: z.number().optional().describe('Page number (1-indexed). Default 1.'),
-    per_page: z.number().optional().describe('Results per page. Default 20, max 100.'),
+    page: z.number().int().min(1).default(1).describe('Page number (1-indexed).'),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
   }),
 
   output: z.object({
@@ -78,18 +78,20 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .array(
         z
           .looseObject({})
-          .describe('A candidate record (candidate_id, name, party, state, office, cycles, ...).'),
+          .describe(
+            'Candidate record; common keys include candidate_id, name, party, state, office, and cycles.',
+          ),
       )
-      .describe('Candidate records with candidate_id, name, party, state, office, cycles, etc.'),
+      .describe('Candidate result set; one record per match.'),
     totals: z
       .array(
-        z.looseObject({}).describe('A per-cycle financial totals row for a candidate committee.'),
+        z.looseObject({}).describe('Per-cycle financial totals row for a candidate committee.'),
       )
       .optional()
       .describe(
         'Financial totals (receipts, disbursements, cash_on_hand) when include_totals is true.',
       ),
-    pagination: PaginationSchema.describe('Page-based pagination metadata.'),
+    pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
 

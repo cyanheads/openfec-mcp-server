@@ -61,7 +61,7 @@ describe('searchFilings', () => {
       const input = searchFilings.input.parse({});
       const result = await searchFilings.handler(input, ctx as unknown as Context);
 
-      expect(result.filings).toEqual(filings);
+      expect(result.results).toEqual(filings);
       expect(result.pagination.count).toBe(2);
     });
 
@@ -124,7 +124,7 @@ describe('searchFilings', () => {
   describe('format', () => {
     it('renders filing info with form type, committee, report, and financials', () => {
       const blocks = searchFilings.format!({
-        filings: [
+        results: [
           {
             form_type: 'F3P',
             committee_name: 'BIDEN FOR PRESIDENT',
@@ -160,7 +160,7 @@ describe('searchFilings', () => {
 
     it('renders amended indicator and PDF link', () => {
       const blocks = searchFilings.format!({
-        filings: [
+        results: [
           {
             form_type: 'F3',
             committee_name: 'TEST COMMITTEE',
@@ -179,7 +179,7 @@ describe('searchFilings', () => {
 
     it('renders empty state', () => {
       const blocks = searchFilings.format!({
-        filings: [],
+        results: [],
         pagination: PAGE,
       });
 

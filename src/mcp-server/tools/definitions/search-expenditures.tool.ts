@@ -12,6 +12,7 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
@@ -95,7 +96,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .enum(['expenditure_date', 'expenditure_amount', 'office_total_ytd'])
       .optional()
       .describe('Sort field. Itemized only.'),
-    per_page: z.number().default(20).describe('Results per page (max 100).'),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
@@ -109,9 +110,13 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .array(
         z
           .looseObject({})
-          .describe('An expenditure record (itemized entry) or a per-candidate aggregate row.'),
+          .describe(
+            'Itemized independent expenditure record (mode=itemized) or per-candidate aggregate row (mode=by_candidate).',
+          ),
       )
-      .describe('Expenditure records (itemized) or per-candidate aggregate rows.'),
+      .describe(
+        'Expenditure result set; itemized records or per-candidate aggregates depending on mode.',
+      ),
     next_cursor: z
       .string()
       .nullable()
@@ -120,15 +125,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         'Pagination cursor for the next page of itemized results. Null when no more pages.',
       ),
     count: z.number().optional().describe('Total result count (may be approximate for itemized).'),
-    pagination: z
-      .object({
-        page: z.number().describe('Current page number.'),
-        pages: z.number().describe('Total pages.'),
-        count: z.number().describe('Total results.'),
-        per_page: z.number().describe('Results per page.'),
-      })
-      .optional()
-      .describe('Page-based pagination info (by_candidate mode only).'),
+    pagination: PaginationSchema.optional().describe(
+      'Page-based pagination info (by_candidate mode only).',
+    ),
     search_criteria: SearchCriteriaSchema,
   }),
 

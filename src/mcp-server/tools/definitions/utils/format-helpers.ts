@@ -72,12 +72,14 @@ export const str = (rec: Record<string, unknown>, key: string): string =>
   typeof rec[key] === 'string' ? (rec[key] as string) : '';
 
 /** Reusable page-based pagination output schema. */
-export const PaginationSchema = z.object({
-  page: z.number().describe('Current page number (1-indexed).'),
-  pages: z.number().describe('Total number of pages.'),
-  count: z.number().describe('Total result count.'),
-  per_page: z.number().describe('Results per page.'),
-});
+export const PaginationSchema = z
+  .object({
+    page: z.number().describe('Current page number (1-indexed).'),
+    pages: z.number().describe('Total number of pages.'),
+    count: z.number().describe('Total result count.'),
+    per_page: z.number().describe('Results per page.'),
+  })
+  .describe('Page-based pagination metadata.');
 
 /**
  * Render all non-empty fields from a record as indented `key: value` lines.

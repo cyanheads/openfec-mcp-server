@@ -64,8 +64,8 @@ export const searchCommittees = tool('openfec_search_committees', {
       ),
     cycle: z.number().optional().describe('Two-year election cycle (even year).'),
     treasurer_name: z.string().optional().describe('Full-text treasurer name search.'),
-    page: z.number().optional().describe('Page number (1-indexed). Default 1.'),
-    per_page: z.number().optional().describe('Results per page. Default 20, max 100.'),
+    page: z.number().int().min(1).default(1).describe('Page number (1-indexed).'),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
   }),
 
   output: z.object({
@@ -74,11 +74,11 @@ export const searchCommittees = tool('openfec_search_committees', {
         z
           .looseObject({})
           .describe(
-            'A committee record (committee_id, name, type, designation, party, state, ...).',
+            'Committee record; common keys include committee_id, name, type, designation, party, and state.',
           ),
       )
-      .describe('Committee records with committee_id, name, type, designation, party, state, etc.'),
-    pagination: PaginationSchema.describe('Page-based pagination metadata.'),
+      .describe('Committee result set; one record per match.'),
+    pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
 

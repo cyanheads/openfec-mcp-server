@@ -11,8 +11,10 @@ const mockService = {
   searchCandidates: vi.fn(),
   getCandidate: vi.fn(),
   getCandidateTotals: vi.fn(),
+  getCandidateCommittees: vi.fn(),
   searchCommittees: vi.fn(),
   getCommittee: vi.fn(),
+  getCommitteeTotals: vi.fn(),
   searchContributions: vi.fn(),
   getContributionAggregates: vi.fn(),
   searchDisbursements: vi.fn(),
@@ -48,20 +50,29 @@ describe('candidateResource', () => {
     results,
   });
 
-  it('returns merged candidate + totals data', async () => {
+  it('returns merged candidate + totals + principal committees', async () => {
     const candidate = { candidate_id: 'P00003392', name: 'BIDEN, JOSEPH R JR', party: 'DEM' };
     const totals = { receipts: 500000, disbursements: 400000, cash_on_hand: 100000 };
+    const committees = [
+      { committee_id: 'C00703975', name: 'BIDEN FOR PRESIDENT', designation: 'P' },
+    ];
 
     mockService.getCandidate.mockResolvedValueOnce(pageResult([candidate]));
     mockService.getCandidateTotals.mockResolvedValueOnce(pageResult([totals]));
+    mockService.getCandidateCommittees.mockResolvedValueOnce(pageResult(committees));
 
     const ctx = createMockContext();
     const params = candidateResource.params.parse({ candidate_id: 'P00003392' });
     const result = await candidateResource.handler(params, ctx);
 
-    expect(result).toEqual({ ...candidate, ...totals });
+    expect(result).toEqual({ ...candidate, ...totals, principal_committees: committees });
     expect(mockService.getCandidate).toHaveBeenCalledWith('P00003392', ctx);
     expect(mockService.getCandidateTotals).toHaveBeenCalledWith({ candidate_id: 'P00003392' }, ctx);
+    expect(mockService.getCandidateCommittees).toHaveBeenCalledWith(
+      'P00003392',
+      { designation: 'P' },
+      ctx,
+    );
   });
 
   it('returns candidate without totals when totals result is empty', async () => {
@@ -69,16 +80,19 @@ describe('candidateResource', () => {
 
     mockService.getCandidate.mockResolvedValueOnce(pageResult([candidate]));
     mockService.getCandidateTotals.mockResolvedValueOnce(pageResult([]));
+    mockService.getCandidateCommittees.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext();
     const params = candidateResource.params.parse({ candidate_id: 'H2CO07170' });
     const result = await candidateResource.handler(params, ctx);
 
-    expect(result).toEqual(candidate);
+    expect(result).toEqual({ ...candidate, principal_committees: [] });
   });
 
   it('throws when candidate not found', async () => {
     mockService.getCandidate.mockResolvedValueOnce(pageResult([]));
+    mockService.getCandidateTotals.mockResolvedValueOnce(pageResult([]));
+    mockService.getCandidateCommittees.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ errors: candidateResource.errors });
     const params = candidateResource.params.parse({ candidate_id: 'P99999999' });

@@ -11,8 +11,10 @@ const mockService = {
   searchCandidates: vi.fn(),
   getCandidate: vi.fn(),
   getCandidateTotals: vi.fn(),
+  getCandidateCommittees: vi.fn(),
   searchCommittees: vi.fn(),
   getCommittee: vi.fn(),
+  getCommitteeTotals: vi.fn(),
   searchContributions: vi.fn(),
   getContributionAggregates: vi.fn(),
   searchDisbursements: vi.fn(),
@@ -48,26 +50,48 @@ describe('committeeResource', () => {
     results,
   });
 
-  it('returns committee data', async () => {
+  it('returns merged committee + totals data', async () => {
     const committee = {
       committee_id: 'C00703975',
       name: 'ACTBLUE',
       committee_type: 'N',
       designation: 'U',
     };
+    const totals = {
+      receipts: 12_000_000,
+      disbursements: 11_500_000,
+      last_cash_on_hand_end_period: 500_000,
+      coverage_end_date: '2024-12-31',
+    };
 
     mockService.getCommittee.mockResolvedValueOnce(pageResult([committee]));
+    mockService.getCommitteeTotals.mockResolvedValueOnce(pageResult([totals]));
 
     const ctx = createMockContext();
     const params = committeeResource.params.parse({ committee_id: 'C00703975' });
     const result = await committeeResource.handler(params, ctx);
 
-    expect(result).toEqual(committee);
+    expect(result).toEqual({ ...committee, ...totals });
     expect(mockService.getCommittee).toHaveBeenCalledWith('C00703975', ctx);
+    expect(mockService.getCommitteeTotals).toHaveBeenCalledWith('C00703975', { per_page: 1 }, ctx);
+  });
+
+  it('returns committee without totals when totals result is empty', async () => {
+    const committee = { committee_id: 'C00000001', name: 'NEW PAC', committee_type: 'N' };
+
+    mockService.getCommittee.mockResolvedValueOnce(pageResult([committee]));
+    mockService.getCommitteeTotals.mockResolvedValueOnce(pageResult([]));
+
+    const ctx = createMockContext();
+    const params = committeeResource.params.parse({ committee_id: 'C00000001' });
+    const result = await committeeResource.handler(params, ctx);
+
+    expect(result).toEqual(committee);
   });
 
   it('throws when committee not found', async () => {
     mockService.getCommittee.mockResolvedValueOnce(pageResult([]));
+    mockService.getCommitteeTotals.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ errors: committeeResource.errors });
     const params = committeeResource.params.parse({ committee_id: 'C99999999' });
