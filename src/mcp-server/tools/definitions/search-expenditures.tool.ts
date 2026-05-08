@@ -6,7 +6,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
@@ -27,6 +27,16 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
   description:
     'Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. Covers Super PACs, party committees, and other groups. Use itemized mode for individual expenditure records, or by_candidate for aggregated totals per candidate.',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'by_candidate_requires_candidate_id',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'by_candidate mode invoked without a candidate_id',
+      recovery:
+        'Find the candidate ID via openfec_search_candidates, then pass it here to see independent expenditures supporting or opposing that candidate.',
+    },
+  ],
 
   input: z.object({
     mode: z
@@ -179,10 +189,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     /*  By candidate (page-based)                                       */
     /* ---------------------------------------------------------------- */
     if (!input.candidate_id) {
-      throw invalidParams(
-        'by_candidate mode requires a candidate_id. Use openfec_search_candidates to find the ID, then pass it here to see independent expenditures supporting or opposing that candidate.',
-        { mode: input.mode },
-      );
+      throw ctx.fail('by_candidate_requires_candidate_id', undefined, {
+        mode: input.mode,
+        ...ctx.recoveryFor('by_candidate_requires_candidate_id'),
+      });
     }
 
     const params: FecParams = { per_page: input.per_page };

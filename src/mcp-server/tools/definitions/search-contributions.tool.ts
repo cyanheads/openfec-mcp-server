@@ -6,7 +6,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
@@ -29,6 +29,23 @@ export const searchContributions = tool('openfec_search_contributions', {
   description:
     'Search itemized individual contributions (Schedule A) or get aggregate breakdowns by size, state, employer, or occupation. Use to answer "who is funding this committee?" Itemized mode requires a committee_id. Aggregate by_size/by_state can use candidate_id instead.',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'itemized_requires_committee_id',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Itemized mode invoked without a committee_id',
+      recovery:
+        "Provide a committee_id, switch to a by_size or by_state aggregate mode with candidate_id, or look up the candidate's committee with openfec_search_committees.",
+    },
+    {
+      reason: 'aggregate_requires_committee_id',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'by_employer or by_occupation aggregate without a committee_id',
+      recovery:
+        'These aggregates roll up to a single committee — provide a committee_id for the spending committee.',
+    },
+  ],
 
   input: z.object({
     mode: z
@@ -139,9 +156,9 @@ export const searchContributions = tool('openfec_search_contributions', {
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
       if (!input.committee_id) {
-        throw invalidParams(
-          'Itemized contribution search requires a committee_id. To search contributions by candidate, use a "by_size" or "by_state" aggregate mode with candidate_id, or first look up the candidate\'s committee with openfec_search_committees.',
-        );
+        throw ctx.fail('itemized_requires_committee_id', undefined, {
+          ...ctx.recoveryFor('itemized_requires_committee_id'),
+        });
       }
 
       const cycle = input.cycle ?? currentCycle();
@@ -191,7 +208,11 @@ export const searchContributions = tool('openfec_search_contributions', {
     /* ---------------------------------------------------------------- */
     if (mode === 'by_employer' || mode === 'by_occupation') {
       if (!input.committee_id) {
-        throw invalidParams(`Aggregate by ${mode.replace('by_', '')} requires a committee_id.`);
+        throw ctx.fail(
+          'aggregate_requires_committee_id',
+          `Aggregate by ${mode.replace('by_', '')} requires a committee_id.`,
+          { mode, ...ctx.recoveryFor('aggregate_requires_committee_id') },
+        );
       }
     }
 

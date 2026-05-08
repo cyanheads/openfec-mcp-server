@@ -44,7 +44,7 @@ describe('lookupElectionsTool', () => {
   let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = createMockContext({ errors: lookupElectionsTool.errors });
     vi.clearAllMocks();
   });
 
@@ -105,7 +105,7 @@ describe('lookupElectionsTool', () => {
       await expect(
         lookupElectionsTool.handler(input, ctx as unknown as Context),
       ).rejects.toMatchObject({
-        code: JsonRpcErrorCode.InvalidParams,
+        code: JsonRpcErrorCode.ValidationError,
       });
     });
 
@@ -118,7 +118,7 @@ describe('lookupElectionsTool', () => {
       await expect(
         lookupElectionsTool.handler(input, ctx as unknown as Context),
       ).rejects.toMatchObject({
-        code: JsonRpcErrorCode.InvalidParams,
+        code: JsonRpcErrorCode.ValidationError,
       });
     });
 
@@ -132,7 +132,7 @@ describe('lookupElectionsTool', () => {
       await expect(
         lookupElectionsTool.handler(input, ctx as unknown as Context),
       ).rejects.toMatchObject({
-        code: JsonRpcErrorCode.InvalidParams,
+        code: JsonRpcErrorCode.ValidationError,
       });
     });
 

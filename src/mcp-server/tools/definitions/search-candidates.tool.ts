@@ -6,7 +6,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { notFound } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
@@ -23,6 +23,16 @@ export const searchCandidates = tool('openfec_search_candidates', {
   description:
     'Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. Candidate IDs start with H (House), S (Senate), or P (President) followed by digits.',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'candidate_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'Single-candidate lookup by candidate_id returned no record',
+      recovery:
+        'Verify the candidate_id format (H/S/P + digits) or drop it and search by name, state, or cycle.',
+    },
+  ],
 
   input: z.object({
     query: z.string().optional().describe('Full-text candidate name search.'),
@@ -119,8 +129,9 @@ export const searchCandidates = tool('openfec_search_candidates', {
     const candidates = candidateResult.results as Record<string, unknown>[];
 
     if (input.candidate_id && candidates.length === 0) {
-      throw notFound(`Candidate ${input.candidate_id} not found.`, {
+      throw ctx.fail('candidate_not_found', `Candidate ${input.candidate_id} not found.`, {
         candidate_id: input.candidate_id,
+        ...ctx.recoveryFor('candidate_not_found'),
       });
     }
 

@@ -5,6 +5,8 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { validateCommitteeId } from '@/mcp-server/tools/definitions/utils/id-validators.js';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 
 export const committeeResource = resource('openfec://committee/{committee_id}', {
@@ -16,11 +18,28 @@ export const committeeResource = resource('openfec://committee/{committee_id}', 
     committee_id: z.string().describe('FEC committee ID (e.g., C00358796)'),
   }),
 
+  errors: [
+    {
+      reason: 'committee_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'No committee exists for the supplied committee_id',
+      recovery:
+        'Verify the committee_id format (C + digits) or look up the committee by name via openfec_search_committees.',
+    },
+  ],
+
   async handler(params, ctx) {
+    validateCommitteeId(params.committee_id);
+
     const fec = getOpenFecService();
     const result = await fec.getCommittee(params.committee_id, ctx);
     const committee = result.results[0];
-    if (!committee) throw new Error(`Committee ${params.committee_id} not found`);
+    if (!committee) {
+      throw ctx.fail('committee_not_found', `Committee ${params.committee_id} not found.`, {
+        committee_id: params.committee_id,
+        ...ctx.recoveryFor('committee_not_found'),
+      });
+    }
 
     ctx.log.info('Committee resource fetched', { committee_id: params.committee_id });
     return committee;

@@ -63,7 +63,7 @@ describe('searchContributions', () => {
   let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = createMockContext({ errors: searchContributions.errors });
     vi.clearAllMocks();
   });
 

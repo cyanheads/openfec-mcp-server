@@ -6,7 +6,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
@@ -29,6 +29,16 @@ export const searchLegal = tool('openfec_search_legal', {
   description:
     'Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, and administrative fines.',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'missing_filter',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Called without query, type, or a specific identifier (ao_number / case_number)',
+      recovery:
+        'Provide at least a search query, document type, or specific identifier (ao_number, case_number) to scope the legal search.',
+    },
+  ],
 
   input: z.object({
     query: z.string().optional().describe('Full-text search across legal documents.'),
@@ -84,9 +94,7 @@ export const searchLegal = tool('openfec_search_legal', {
   async handler(input, ctx) {
     const hasFilter = input.query || input.type || input.ao_number || input.case_number;
     if (!hasFilter) {
-      throw invalidParams(
-        'Provide at least a search query, document type, or specific identifier (ao_number, case_number).',
-      );
+      throw ctx.fail('missing_filter', undefined, { ...ctx.recoveryFor('missing_filter') });
     }
 
     const fec = getOpenFecService();

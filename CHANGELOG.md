@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.2 — 2026-05-08
+
+### Changed
+
+- Upgraded `@cyanheads/mcp-ts-core` from `^0.7.0` to `^0.8.19` (entire 0.8.x series). Notable consumer-facing additions adopted in this release:
+  - **Typed error contracts** — every tool and resource that surfaces a domain-specific failure now declares `errors: [{ reason, code, when, recovery }]` and routes throws through `ctx.fail(reason, msg?, data?)`. Reasons are TypeScript-checked at the throw site; declared `recovery` strings flow to the wire via `ctx.recoveryFor(reason)`.
+  - **`candidate.resource` and `committee.resource`** now declare contracts; `committee.resource` newly validates committee_id format up front via the shared `validateCommitteeId` helper instead of letting the API return an empty result.
+  - **Error-code semantics** — replaced `invalidParams` with `validationError` for all semantic post-shape checks (ID format, missing required filters, mode-specific guards). `invalidParams` is reserved for malformed JSON-RPC params; `validationError` is the correct code for "input parsed cleanly but is semantically wrong." Tests updated accordingly (`InvalidParams` → `ValidationError`).
+- Engines bumped: `bun` `>=1.2.0 → >=1.3.0`, `node` `>=22.0.0 → >=24.0.0`. README Bun badge bumped in lockstep.
+- DevDeps: `@biomejs/biome` `^2.4.13 → ^2.4.14`, `@types/node` `^25.6.0 → ^25.6.2`, `tsc-alias` `^1.8.16 → ^1.8.17`.
+- Synced project skills against framework 0.8.19; added 3 new skills (`api-canvas`, `api-telemetry`, `tool-defs-analysis`) and refreshed 14 existing ones to their package versions.
+- Synced framework scripts via `maintenance` Phase C: added `check-framework-antipatterns.ts` (now wired into `devcheck`) and `split-changelog.ts`; `build-changelog.ts` learned to render a `🛡️ Security` badge alongside `⚠️ Breaking`.
+- `CLAUDE.md` refreshed against the upstream consumer template — typed-error-contract pattern documented inline, `ctx.recoveryFor` reference added, dev/start scripts updated (no more `dev:stdio`/`dev:http`; use `rebuild && start:stdio` for smoke testing).
+
+---
+
 ## 0.4.1 — 2026-04-24
 
 ### Changed

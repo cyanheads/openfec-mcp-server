@@ -5,7 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
@@ -19,6 +19,37 @@ export const lookupElections = tool('openfec_lookup_elections', {
   description:
     "Look up federal election races and candidate financial summaries. Find who's running in a race with fundraising totals, or get an aggregate race summary.",
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'cycle_must_be_even',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Cycle is an odd year',
+      recovery:
+        'Federal election cycles are two-year periods ending in even years (e.g., 2024, 2026).',
+    },
+    {
+      reason: 'missing_state_for_office',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Senate or House office without a state and without a zip',
+      recovery:
+        'Provide a two-letter state code (e.g., AZ) or a zip code to scope the senate or house race.',
+    },
+    {
+      reason: 'missing_district_for_house',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'House office without a district number and without a zip',
+      recovery:
+        'Provide a two-digit district number (e.g., "07") or a zip code to identify the House race.',
+    },
+    {
+      reason: 'summary_does_not_support_zip',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Summary mode invoked with a zip parameter',
+      recovery:
+        'Use mode "search" for ZIP-based lookups, or remove zip and use state and district for summary mode.',
+    },
+  ],
 
   input: z.object({
     mode: z
@@ -76,17 +107,25 @@ export const lookupElections = tool('openfec_lookup_elections', {
 
   async handler(input, ctx) {
     if (input.cycle % 2 !== 0) {
-      throw invalidParams('Election cycles are even years (e.g., 2024, 2026).');
+      throw ctx.fail('cycle_must_be_even', undefined, {
+        cycle: input.cycle,
+        ...ctx.recoveryFor('cycle_must_be_even'),
+      });
     }
     // ZIP resolves geography on its own — only require state/district when no zip
     if (!input.zip) {
       if ((input.office === 'senate' || input.office === 'house') && !input.state) {
-        throw invalidParams(
-          'Senate and House election lookups require a state (or provide a zip).',
-        );
+        throw ctx.fail('missing_state_for_office', undefined, {
+          office: input.office,
+          ...ctx.recoveryFor('missing_state_for_office'),
+        });
       }
       if (input.office === 'house' && !input.district) {
-        throw invalidParams('House election lookups require a district number (or provide a zip).');
+        throw ctx.fail('missing_district_for_house', undefined, {
+          office: input.office,
+          state: input.state,
+          ...ctx.recoveryFor('missing_district_for_house'),
+        });
       }
     }
 
@@ -102,7 +141,9 @@ export const lookupElections = tool('openfec_lookup_elections', {
 
     if (input.mode === 'summary') {
       if (input.zip) {
-        throw invalidParams('Summary mode does not support ZIP lookups. Use search mode with zip.');
+        throw ctx.fail('summary_does_not_support_zip', undefined, {
+          ...ctx.recoveryFor('summary_does_not_support_zip'),
+        });
       }
       params.election_full = input.election_full;
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });

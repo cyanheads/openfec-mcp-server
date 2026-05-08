@@ -1,8 +1,9 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.4.1
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core)
+**Version:** 0.4.2
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.8.19`
+**Engines:** Bun ≥1.3.0, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
@@ -35,7 +36,7 @@ The OpenFEC OpenAPI spec (Swagger 2.0) is at `docs/openapi-spec.json` — 100 pa
 
 ## Core Rules
 
-- **Logic throws, framework catches.** Tool/resource handlers are pure — throw on failure, no `try/catch`. Plain `Error` is fine; the framework catches, classifies, and formats. Use error factories (`notFound()`, `validationError()`, etc.) when the error code matters.
+- **Logic throws, framework catches.** Tool/resource handlers are pure — throw on failure, no `try/catch`. Prefer typed contracts (`errors[]` + `ctx.fail(reason)`) when the failure is part of the public surface; fall back to error factories (`notFound()`, `validationError()`) or plain `Error` otherwise. The framework catches, classifies, and formats.
 - **Use `ctx.log`** for request-scoped logging. No `console` calls.
 - **Use `ctx.state`** for tenant-scoped storage. Never access persistence directly.
 - **Check `ctx.elicit` / `ctx.sample`** for presence before calling.
@@ -49,12 +50,24 @@ The OpenFEC OpenAPI spec (Swagger 2.0) is at `docs/openapi-spec.json` — 100 pa
 
 ```ts
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { invalidParams } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
+import { validateCandidateId } from './utils/id-validators.js';
 
 export const searchCandidates = tool('openfec_search_candidates', {
   description: 'Find federal candidates by name, state, office, party, or cycle.',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'candidate_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'Single-candidate lookup by candidate_id returned no record',
+      recovery:
+        'Verify the candidate_id format (H/S/P + digits) or drop it and search by name, state, or cycle.',
+    },
+  ],
+
   input: z.object({
     query: z.string().optional().describe('Full-text candidate name search.'),
     candidate_id: z.string().optional().describe('FEC candidate ID (e.g., P00003392).'),
@@ -68,10 +81,14 @@ export const searchCandidates = tool('openfec_search_candidates', {
   }),
   async handler(input, ctx) {
     const fec = getOpenFecService();
-    if (input.candidate_id && !/^[HSP]\d+$/i.test(input.candidate_id)) {
-      throw invalidParams('Invalid candidate ID format', { candidate_id: input.candidate_id });
-    }
+    if (input.candidate_id) validateCandidateId(input.candidate_id);
     const result = await fec.searchCandidates(input, ctx);
+    if (input.candidate_id && result.candidates.length === 0) {
+      throw ctx.fail('candidate_not_found', `Candidate ${input.candidate_id} not found.`, {
+        candidate_id: input.candidate_id,
+        ...ctx.recoveryFor('candidate_not_found'),
+      });
+    }
     ctx.log.info('Candidate search completed', { count: result.pagination.count });
     return result;
   },
@@ -169,24 +186,38 @@ Handlers receive a unified `ctx` object. Key properties:
 
 ## Errors
 
-Handlers throw — the framework catches, classifies, and formats. Three escalation levels:
+Handlers throw — the framework catches, classifies, and formats.
+
+**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, recovery, retryable? }]` on `tool()` / `resource()`. The handler then receives `ctx.fail(reason, msg?, data?)` keyed against the contract reason union — `ctx.fail('typo')` is a TypeScript error. The framework auto-populates `data.reason`, the linter enforces conformance, and the `recovery` string (≥5 words) is the source of truth for the recovery hint that flows to the wire. Spread `ctx.recoveryFor('reason')` into `data` to opt the contract recovery onto the wire payload.
 
 ```ts
-// 1. Plain Error — framework auto-classifies from message patterns
-throw new Error('Item not found');           // → NotFound
-throw new Error('Invalid query format');     // → ValidationError
-
-// 2. Error factories — explicit code, concise
-import { notFound, validationError, forbidden, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
-throw notFound('Item not found', { itemId });
-throw serviceUnavailable('API unavailable', { url }, { cause: err });
-
-// 3. McpError — full control over code and data
-import { McpError, JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-throw new McpError(JsonRpcErrorCode.DatabaseError, 'Connection failed', { pool: 'primary' });
+errors: [
+  { reason: 'candidate_not_found', code: JsonRpcErrorCode.NotFound,
+    when: 'Single-candidate lookup returned no record',
+    recovery: 'Verify the candidate_id (H/S/P + digits) or drop it and search by name.' },
+],
+async handler(input, ctx) {
+  if (!found) {
+    throw ctx.fail('candidate_not_found', `Candidate ${id} not found.`, {
+      candidate_id: id,
+      ...ctx.recoveryFor('candidate_not_found'),
+    });
+  }
+}
 ```
 
-Plain `Error` is fine for most cases. Use factories when the error code matters. See framework CLAUDE.md for the full auto-classification table and all available factories.
+**Declare contracts inline on each tool**, even when reasons look similar across tools — per-tool repetition is the intended cost of locality.
+
+**Fallback (no contract entry fits):** error factories or plain `Error`. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`) bubble freely without contract entries.
+
+```ts
+import { notFound, validationError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+throw validationError('Invalid query format', { field: 'query' });    // baseline — fine
+throw serviceUnavailable('API unavailable', { url }, { cause: err });
+throw new Error('Item not found');                                    // auto-classifies → NotFound
+```
+
+Note: `invalidParams` is for malformed JSON-RPC params (rare post-Zod). For semantic post-shape validation, use `validationError`. See the framework `api-errors` skill for the full reference.
 
 ---
 
@@ -253,6 +284,7 @@ Available skills:
 | `add-service` | Scaffold a new service integration |
 | `add-test` | Scaffold test file for a tool, resource, or service |
 | `field-test` | Exercise tools/resources/prompts with real inputs, verify behavior, report issues |
+| `tool-defs-analysis` | Read-only audit of definition language across the surface (10 categories: voice, leaks, defaults, recovery, structure, …) |
 | `security-pass` | Audit server for MCP-flavored security gaps: output injection, scope blast radius, input sinks, tenant isolation |
 | `devcheck` | Lint, format, typecheck, audit |
 | `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
@@ -262,13 +294,15 @@ Available skills:
 | `report-issue-framework` | File a bug or feature request against `@cyanheads/mcp-ts-core` via `gh` CLI |
 | `report-issue-local` | File a bug or feature request against this server's own repo via `gh` CLI |
 | `api-auth` | Auth modes, scopes, JWT/OAuth |
+| `api-canvas` | DataCanvas: register tabular data, run SQL, export, plus the `spillover()` helper for big result sets — Tier 3 opt-in |
 | `api-config` | AppConfig, parseConfig, env vars |
-| `api-context` | Context interface, logger, state, progress |
-| `api-errors` | McpError, JsonRpcErrorCode, error patterns |
+| `api-context` | Context interface, logger, state, progress, sessionId, recoveryFor |
+| `api-errors` | McpError, JsonRpcErrorCode, typed error contracts, factories |
 | `api-linter` | MCP definition lint rules reference — look here when devcheck flags `format-parity`, `schema-*`, `name-*`, `server-json-*`, etc. |
 | `api-services` | LLM, Speech, Graph services |
+| `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
 | `api-testing` | createMockContext, test patterns |
-| `api-utils` | Formatting, parsing, security, pagination, scheduling |
+| `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
 | `api-workers` | Cloudflare Workers runtime |
 
 When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
@@ -287,10 +321,11 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run format` | Auto-fix formatting |
 | `bun run lint:mcp` | Validate MCP tool/resource/prompt definitions |
 | `bun run test` | Run tests |
-| `bun run dev:stdio` | Dev mode (stdio) |
-| `bun run dev:http` | Dev mode (HTTP) |
+| `bun run start` | Production mode (transport from `MCP_TRANSPORT_TYPE`) |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |
+
+For dev / smoke-testing, use `bun run rebuild && bun run start:stdio` (or `start:http`) — production-shape execution against the built `dist/`.
 
 ---
 

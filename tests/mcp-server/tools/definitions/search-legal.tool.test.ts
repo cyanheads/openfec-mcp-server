@@ -42,7 +42,7 @@ describe('searchLegalTool', () => {
   let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = createMockContext({ errors: searchLegalTool.errors });
     vi.clearAllMocks();
   });
 
@@ -67,7 +67,7 @@ describe('searchLegalTool', () => {
 
       await expect(searchLegalTool.handler(input, ctx as unknown as Context)).rejects.toMatchObject(
         {
-          code: JsonRpcErrorCode.InvalidParams,
+          code: JsonRpcErrorCode.ValidationError,
         },
       );
     });

@@ -80,7 +80,7 @@ describe('candidateResource', () => {
   it('throws when candidate not found', async () => {
     mockService.getCandidate.mockResolvedValueOnce(pageResult([]));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: candidateResource.errors });
     const params = candidateResource.params.parse({ candidate_id: 'P99999999' });
 
     await expect(candidateResource.handler(params, ctx)).rejects.toThrow(

@@ -69,7 +69,7 @@ describe('committeeResource', () => {
   it('throws when committee not found', async () => {
     mockService.getCommittee.mockResolvedValueOnce(pageResult([]));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: committeeResource.errors });
     const params = committeeResource.params.parse({ committee_id: 'C99999999' });
 
     await expect(committeeResource.handler(params, ctx)).rejects.toThrow(

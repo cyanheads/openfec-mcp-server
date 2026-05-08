@@ -6,7 +6,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { notFound } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
@@ -23,6 +23,16 @@ export const searchCommittees = tool('openfec_search_committees', {
   description:
     'Find political committees (campaign, PAC, Super PAC, party) by name, type, candidate affiliation, or state. Retrieve a specific committee by FEC ID. Committee IDs start with C followed by digits (e.g., C00358796).',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'committee_not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'Single-committee lookup by committee_id returned no record',
+      recovery:
+        'Verify the committee_id format (C + digits) or drop it and search by name, candidate_id, or type.',
+    },
+  ],
 
   input: z.object({
     query: z.string().optional().describe('Full-text committee name search.'),
@@ -101,8 +111,9 @@ export const searchCommittees = tool('openfec_search_committees', {
     }
 
     if (input.committee_id && result.results.length === 0) {
-      throw notFound(`Committee ${input.committee_id} not found.`, {
+      throw ctx.fail('committee_not_found', `Committee ${input.committee_id} not found.`, {
         committee_id: input.committee_id,
+        ...ctx.recoveryFor('committee_not_found'),
       });
     }
 
