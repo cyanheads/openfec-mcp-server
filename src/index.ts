@@ -15,6 +15,8 @@ await createApp({
   tools: allToolDefinitions,
   resources: allResourceDefinitions,
   prompts: allPromptDefinitions,
+  instructions:
+    'Use the openfec_* tools for US federal campaign finance data: candidates, committees, contributions (Schedule A), disbursements (Schedule B), independent expenditures (Schedule E), filings, elections, calendar, and legal documents. Candidate IDs use H/S/P prefixes (House/Senate/President); committee IDs use C. Cycles are even-year integers covering the prior 2 years (2024 = Jan 2023 – Dec 2024). Itemized contributions and disbursements scope to committee_id, not candidate_id.',
   setup() {
     initOpenFecService();
   },
