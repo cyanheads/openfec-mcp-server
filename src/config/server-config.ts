@@ -10,7 +10,10 @@ import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 const ServerConfigSchema = z.object({
   fecApiKey: z
     .string()
-    .min(1, 'FEC_API_KEY is required. Get a free key at https://api.data.gov/signup/'),
+    .default('DEMO_KEY')
+    .describe(
+      'OpenFEC API key from api.data.gov — optional (DEMO_KEY: 30 req/hr, own key: 1000 req/hr)',
+    ),
   fecBaseUrl: z.string().default('https://api.open.fec.gov/v1').describe('OpenFEC API base URL'),
   fecMaxRetries: z.coerce.number().int().min(0).default(3).describe('Max retry attempts'),
   fecRequestTimeout: z.coerce

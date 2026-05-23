@@ -1,14 +1,21 @@
 <div align="center">
   <h1>@cyanheads/openfec-mcp-server</h1>
-  <p><b>Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.</b></p>
-  <p><b>9 Tools · 5 Resources · 2 Prompts</b></p>
+  <p><b>Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.</b>
+  <div>9 Tools • 5 Resources • 2 Prompts</div>
+  </p>
 </div>
 
 <div align="center">
 
-[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.4.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-259?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) 
+[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.4.5-blue.svg?style=flat-square)](./CHANGELOG.md) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.3.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.3.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
+</div>
+
+<div align="center">
+
+[![Install in Claude Desktop](https://img.shields.io/badge/Install_in-Claude_Desktop-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://github.com/cyanheads/openfec-mcp-server/releases/latest/download/openfec-mcp-server.mcpb)
+
+[![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-67E8F9?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core)
 
 </div>
 
@@ -234,7 +241,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 FEC_API_KEY=your-key bun run start:ht
 ### Prerequisites
 
 - [Bun v1.3.0](https://bun.sh/) or higher (or Node ≥24)
-- A free [OpenFEC API key](https://api.data.gov/signup/)
+- (Optional) A free [OpenFEC API key](https://api.data.gov/signup/) for higher rate limits (1,000 req/hr vs 30 req/hr with the default `DEMO_KEY`)
 
 ### Installation
 
@@ -260,7 +267,7 @@ bun install
 
 | Variable | Description | Default |
 |:---------|:------------|:--------|
-| `FEC_API_KEY` | **Required.** OpenFEC API key. Get one free at [api.data.gov/signup](https://api.data.gov/signup/). | — |
+| `FEC_API_KEY` | OpenFEC API key. Optional — defaults to `DEMO_KEY` (30 req/hr). Provide your own key (free at [api.data.gov/signup](https://api.data.gov/signup/)) for 1,000 req/hr. | `DEMO_KEY` |
 | `FEC_BASE_URL` | OpenFEC API base URL. | `https://api.open.fec.gov/v1` |
 | `FEC_MAX_RETRIES` | Max retry attempts for failed API requests. | `3` |
 | `FEC_REQUEST_TIMEOUT` | Request timeout in milliseconds. | `30000` |

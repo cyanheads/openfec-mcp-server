@@ -1,8 +1,8 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.4.4
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.1`
+**Version:** 0.4.5
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.6`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -151,7 +151,7 @@ export const moneyTrailPrompt = prompt('openfec_money_trail', {
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
 const ServerConfigSchema = z.object({
-  fecApiKey: z.string().min(1, 'FEC_API_KEY is required.'),
+  fecApiKey: z.string().default('DEMO_KEY').describe('OpenFEC API key — optional (DEMO_KEY: 30 req/hr, own key: 1000 req/hr)'),
   fecBaseUrl: z.string().default('https://api.open.fec.gov/v1').describe('OpenFEC API base URL'),
   fecMaxRetries: z.coerce.number().int().min(0).default(3).describe('Max retry attempts'),
   fecRequestTimeout: z.coerce.number().int().min(1000).default(30_000).describe('Request timeout in ms'),
@@ -317,15 +317,27 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run rebuild` | Clean + build |
 | `bun run clean` | Remove build artifacts |
 | `bun run devcheck` | Lint + format + typecheck + security |
+| `bun run audit:refresh` | Delete `bun.lock`, reinstall, re-audit. Use when `devcheck` flags a transitive advisory — stale lockfile can mask already-patched deps. If advisory survives, it's real. |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting |
 | `bun run lint:mcp` | Validate MCP tool/resource/prompt definitions |
+| `bun run lint:packaging` | Validate `manifest.json` + `server.json` env var alignment |
+| `bun run list-skills` | Print index of available project skills |
+| `bun run bundle` | Build and pack as `.mcpb` for one-click Claude Desktop install |
 | `bun run test` | Run tests |
 | `bun run start` | Production mode (transport from `MCP_TRANSPORT_TYPE`) |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |
 
 For dev / smoke-testing, use `bun run rebuild && bun run start:stdio` (or `start:http`) — production-shape execution against the built `dist/`.
+
+---
+
+## Bundling
+
+`bun run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. MCPB is stdio-only — HTTP deployments are unaffected. If you don't need it, delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
+
+**Adding an env var requires both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies the env var names match.
 
 ---
 

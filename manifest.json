@@ -1,0 +1,40 @@
+{
+  "manifest_version": "0.3",
+  "name": "openfec-mcp-server",
+  "version": "0.4.5",
+  "description": "Access FEC campaign finance data. Query data about candidates, money trails, and election filings.",
+  "author": { "name": "cyanheads" },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "MCP_AUTH_MODE": "none",
+        "NODE_ENV": "production"
+      }
+    }
+  },
+  "compatibility": {
+    "runtimes": { "node": ">=24.0.0" }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "user_config": {
+    "FEC_API_KEY": {
+      "title": "OpenFEC API Key",
+      "description": "Optional. Falls back to DEMO_KEY (30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
+      "type": "string",
+      "required": false
+    },
+    "MCP_LOG_LEVEL": {
+      "title": "Log Level",
+      "description": "Minimum log level for output (debug, info, warn).",
+      "type": "string",
+      "required": false,
+      "default": "info"
+    }
+  }
+}

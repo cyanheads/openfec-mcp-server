@@ -48,18 +48,18 @@ describe('getServerConfig', () => {
     expect(config.fecRequestTimeout).toBe(30_000);
   });
 
-  it('throws when FEC_API_KEY is missing', async () => {
+  it('falls back to DEMO_KEY when FEC_API_KEY is missing', async () => {
     delete process.env.FEC_API_KEY;
 
     const { getServerConfig } = await loadModule();
-    expect(() => getServerConfig()).toThrow();
+    expect(getServerConfig().fecApiKey).toBe('DEMO_KEY');
   });
 
-  it('throws when FEC_API_KEY is empty', async () => {
+  it('passes through empty FEC_API_KEY', async () => {
     process.env.FEC_API_KEY = '';
 
     const { getServerConfig } = await loadModule();
-    expect(() => getServerConfig()).toThrow();
+    expect(getServerConfig().fecApiKey).toBe('');
   });
 
   it('throws when FEC_REQUEST_TIMEOUT is below minimum', async () => {

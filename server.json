@@ -6,7 +6,7 @@
     "url": "https://github.com/cyanheads/openfec-mcp-server",
     "source": "github"
   },
-  "version": "0.4.4",
+  "version": "0.4.5",
   "remotes": [
     {
       "type": "streamable-http",
@@ -19,17 +19,23 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "packageArguments": [
-        { "type": "positional", "value": "run" },
-        { "type": "positional", "value": "start:stdio" }
+        {
+          "type": "positional",
+          "value": "run"
+        },
+        {
+          "type": "positional",
+          "value": "start:stdio"
+        }
       ],
       "environmentVariables": [
         {
           "name": "FEC_API_KEY",
-          "description": "OpenFEC API key. Get a free key at https://api.data.gov/signup/",
+          "description": "OpenFEC API key \u2014 optional (falls back to DEMO_KEY: 30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
           "format": "string",
-          "isRequired": true
+          "isRequired": false
         },
         {
           "name": "MCP_LOG_LEVEL",
@@ -39,24 +45,32 @@
           "default": "info"
         }
       ],
-      "transport": { "type": "stdio" }
+      "transport": {
+        "type": "stdio"
+      }
     },
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "packageArguments": [
-        { "type": "positional", "value": "run" },
-        { "type": "positional", "value": "start:http" }
+        {
+          "type": "positional",
+          "value": "run"
+        },
+        {
+          "type": "positional",
+          "value": "start:http"
+        }
       ],
       "environmentVariables": [
         {
           "name": "FEC_API_KEY",
-          "description": "OpenFEC API key. Get a free key at https://api.data.gov/signup/",
+          "description": "OpenFEC API key \u2014 optional (falls back to DEMO_KEY: 30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
           "format": "string",
-          "isRequired": true
+          "isRequired": false
         },
         {
           "name": "MCP_HTTP_HOST",
