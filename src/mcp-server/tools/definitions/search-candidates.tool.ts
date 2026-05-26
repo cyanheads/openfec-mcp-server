@@ -38,9 +38,10 @@ export const searchCandidates = tool('openfec_search_candidates', {
     query: z.string().optional().describe('Full-text candidate name search.'),
     candidate_id: z
       .string()
+      .regex(/^[HSP][0-9A-Z]+$/i)
       .optional()
       .describe(
-        'FEC candidate ID (e.g., P00003392, H2CO07170). When provided, returns a single candidate with full detail.',
+        'FEC candidate ID (e.g., P00003392, H2CO07170). Get IDs from openfec_search_candidates results. When provided, returns a single candidate with full detail.',
       ),
     state: z.string().optional().describe('Two-letter US state code (e.g., AZ, CA).'),
     district: z.string().optional().describe('Two-digit district number for House candidates.'),

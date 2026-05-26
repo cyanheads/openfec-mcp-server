@@ -5,9 +5,9 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 
 const mockService = {
   searchCandidates: vi.fn(),
@@ -123,12 +123,8 @@ describe('searchCandidates', () => {
       expect(result.totals).toEqual([totalsRecord()]);
     });
 
-    it('throws on invalid candidate_id format', async () => {
-      const input = searchCandidates.input.parse({ candidate_id: 'INVALID' });
-
-      await expect(
-        searchCandidates.handler(input, ctx as unknown as Context),
-      ).rejects.toBeInstanceOf(McpError);
+    it('throws on invalid candidate_id format', () => {
+      expect(() => searchCandidates.input.parse({ candidate_id: 'INVALID' })).toThrow(ZodError);
     });
 
     it('skips totals when include_totals=false', async () => {

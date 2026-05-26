@@ -46,8 +46,20 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Query mode. "itemized" returns individual expenditure records (keyset pagination). "by_candidate" returns aggregated totals per candidate by committee (page-based).',
       ),
-    committee_id: z.string().optional().describe('Spending committee ID (e.g., C00703975).'),
-    candidate_id: z.string().optional().describe('Targeted candidate ID (e.g., P00003392).'),
+    committee_id: z
+      .string()
+      .regex(/^C\d+$/i)
+      .optional()
+      .describe(
+        'Spending committee ID (e.g., C00703975). Get IDs from openfec_search_committees results.',
+      ),
+    candidate_id: z
+      .string()
+      .regex(/^[HSP][0-9A-Z]+$/i)
+      .optional()
+      .describe(
+        'Targeted candidate ID (e.g., P00003392). Get IDs from openfec_search_candidates results.',
+      ),
     support_oppose: z
       .enum(['S', 'O'])
       .optional()

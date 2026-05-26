@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.3",
   "name": "openfec-mcp-server",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Access FEC campaign finance data. Query data about candidates, money trails, and election filings.",
   "author": { "name": "cyanheads" },
   "server": {

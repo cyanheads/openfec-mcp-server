@@ -5,9 +5,9 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 
 const mockService = {
   searchCandidates: vi.fn(),
@@ -92,12 +92,8 @@ describe('searchCommittees', () => {
       expect(result.committees).toEqual(committees);
     });
 
-    it('throws on invalid committee_id format', async () => {
-      const input = searchCommittees.input.parse({ committee_id: 'INVALID' });
-
-      await expect(
-        searchCommittees.handler(input, ctx as unknown as Context),
-      ).rejects.toBeInstanceOf(McpError);
+    it('throws on invalid committee_id format', () => {
+      expect(() => searchCommittees.input.parse({ committee_id: 'INVALID' })).toThrow(ZodError);
     });
   });
 

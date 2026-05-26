@@ -33,7 +33,10 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     committee_id: z
       .string()
       .min(1)
-      .describe('Spending committee ID (e.g., C00703975). Required for all modes.'),
+      .regex(/^C\d+$/i)
+      .describe(
+        'Spending committee ID (e.g., C00703975). Get IDs from openfec_search_committees results. Required for all modes.',
+      ),
     recipient_name: z.string().optional().describe('Full-text payee name search. Itemized only.'),
     recipient_state: z.string().optional().describe('Recipient state. Itemized only.'),
     recipient_city: z.string().optional().describe('Recipient city. Itemized only.'),

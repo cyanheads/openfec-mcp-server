@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.6](changelog/0.4.x/0.4.6.md) — 2026-05-26
+
+Add Zod regex validators and workflow hints to candidate_id and committee_id fields
+
 ## [0.4.5](changelog/0.4.x/0.4.5.md) — 2026-05-23
 
 mcp-ts-core ^0.9.1 → ^0.9.6, zod added, manifest.json + .mcpbignore scaffolded, changelog migrated to per-version format, install badges

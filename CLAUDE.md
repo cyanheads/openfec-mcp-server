@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.4.5
+**Version:** 0.4.6
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.6`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 

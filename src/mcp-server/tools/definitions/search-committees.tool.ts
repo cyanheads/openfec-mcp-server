@@ -38,15 +38,17 @@ export const searchCommittees = tool('openfec_search_committees', {
     query: z.string().optional().describe('Full-text committee name search.'),
     committee_id: z
       .string()
+      .regex(/^C\d+$/i)
       .optional()
       .describe(
-        "FEC committee ID (e.g., C00358796). Starts with 'C' followed by digits. Returns a single committee with full detail.",
+        "FEC committee ID (e.g., C00358796). Get IDs from openfec_search_committees results. Starts with 'C' followed by digits. Returns a single committee with full detail.",
       ),
     candidate_id: z
       .string()
+      .regex(/^[HSP][0-9A-Z]+$/i)
       .optional()
       .describe(
-        'Find committees linked to this candidate (authorized, leadership, joint fundraising).',
+        'Find committees linked to this candidate (authorized, leadership, joint fundraising). Get IDs from openfec_search_candidates results.',
       ),
     state: z.string().optional().describe('Two-letter state code.'),
     party: z.string().optional().describe('Three-letter party code (e.g., DEM, REP).'),

@@ -55,11 +55,20 @@ export const searchContributions = tool('openfec_search_contributions', {
       .describe(
         'Query mode. "itemized" returns individual contribution records (keyset pagination). "by_size" aggregates by contribution size bucket. "by_state" aggregates by contributor state. "by_employer" aggregates by employer. "by_occupation" aggregates by occupation.',
       ),
-    committee_id: z.string().optional().describe('Receiving committee ID (e.g., C00703975).'),
+    committee_id: z
+      .string()
+      .regex(/^C\d+$/i)
+      .optional()
+      .describe(
+        'Receiving committee ID (e.g., C00703975). Get IDs from openfec_search_committees results.',
+      ),
     candidate_id: z
       .string()
+      .regex(/^[HSP][0-9A-Z]+$/i)
       .optional()
-      .describe('Candidate ID. Enables by_size and by_state aggregates without a committee_id.'),
+      .describe(
+        'Candidate ID (e.g., P00003392). Get IDs from openfec_search_candidates results. Enables by_size and by_state aggregates without a committee_id.',
+      ),
     contributor_name: z.string().optional().describe('Full-text donor name search. Itemized only.'),
     contributor_employer: z
       .string()
