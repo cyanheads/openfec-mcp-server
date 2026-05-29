@@ -1,0 +1,10 @@
+{
+  "@cyanheads/openfec-mcp-server": {
+    "command": "npx",
+    "args": ["-y", "@cyanheads/openfec-mcp-server"],
+    "env": {
+      "MCP_TRANSPORT_TYPE": "stdio",
+      "FEC_API_KEY": ""
+    }
+  }
+}

@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.7](changelog/0.4.x/0.4.7.md) — 2026-05-28
+
+mcp-ts-core ^0.9.6 → ^0.9.13: HTTP 413 body cap, session-init gate, quieter 401/403/400/404 logs, GET /mcp surfaces keywords; manifest metadata; dep refresh
+
 ## [0.4.6](changelog/0.4.x/0.4.6.md) — 2026-05-26
 
 Add Zod regex validators and workflow hints to candidate_id and committee_id fields

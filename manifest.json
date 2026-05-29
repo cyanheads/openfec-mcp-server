@@ -1,9 +1,17 @@
 {
   "manifest_version": "0.3",
   "name": "openfec-mcp-server",
-  "version": "0.4.6",
-  "description": "Access FEC campaign finance data. Query data about candidates, money trails, and election filings.",
-  "author": { "name": "cyanheads" },
+  "version": "0.4.7",
+  "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
+  "author": {
+    "name": "cyanheads"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyanheads/openfec-mcp-server"
+  },
+  "homepage": "https://github.com/cyanheads/openfec-mcp-server#readme",
+  "license": "Apache-2.0",
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
@@ -18,7 +26,9 @@
     }
   },
   "compatibility": {
-    "runtimes": { "node": ">=24.0.0" }
+    "runtimes": {
+      "node": ">=24.0.0"
+    }
   },
   "tools_generated": true,
   "prompts_generated": true,
