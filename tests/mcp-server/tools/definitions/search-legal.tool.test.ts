@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -60,6 +60,20 @@ describe('searchLegalTool', () => {
       expect(result.results).toEqual(results);
       expect(result.total_count).toBe(1);
       expect(mockService.searchLegal).toHaveBeenCalledOnce();
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice when legal search returns no results', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [],
+        totalCount: 0,
+      });
+
+      const input = searchLegalTool.input.parse({ query: 'no match query' });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).notice).toBeDefined();
+      expect(getEnrichment(ctx).notice).toContain('No legal documents matched');
     });
 
     it('throws when no filter provided', async () => {

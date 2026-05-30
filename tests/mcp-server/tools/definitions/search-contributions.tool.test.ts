@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -86,6 +86,25 @@ describe('searchContributions', () => {
       expect(result.results).toEqual(contributions);
       expect(result.next_cursor).toBeNull();
       expect(result.count).toBe(1);
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice for empty itemized contributions', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
     });
 
     it('throws without committee_id in itemized mode', async () => {

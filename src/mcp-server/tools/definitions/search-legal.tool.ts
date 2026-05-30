@@ -91,6 +91,15 @@ export const searchLegal = tool('openfec_search_legal', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no legal documents matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const hasFilter = input.query || input.type || input.ao_number || input.case_number;
     if (!hasFilter) {
@@ -156,6 +165,12 @@ export const searchLegal = tool('openfec_search_legal', {
 
       return d;
     });
+
+    if (trimmed.length === 0) {
+      ctx.enrich.notice(
+        'No legal documents matched. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
+      );
+    }
 
     return {
       results: trimmed,

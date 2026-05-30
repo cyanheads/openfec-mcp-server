@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -150,6 +150,35 @@ describe('lookupElectionsTool', () => {
       await expect(
         lookupElectionsTool.handler(input, ctx as unknown as Context),
       ).resolves.toBeDefined();
+    });
+
+    it('sets enrichment totalCount from pagination count', async () => {
+      const elections = [
+        { candidate_name: 'BIDEN, JOSEPH R JR', candidate_id: 'P00003392', party: 'DEM' },
+      ];
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: elections,
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
+      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice when search returns empty results', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0 },
+        results: [],
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
+      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
     });
   });
 

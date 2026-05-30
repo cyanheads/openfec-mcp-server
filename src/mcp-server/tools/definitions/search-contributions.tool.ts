@@ -154,6 +154,16 @@ export const searchContributions = tool('openfec_search_contributions', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching contributions or aggregate rows.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no contributions matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const fec = getOpenFecService();
     const mode = input.mode;
@@ -205,6 +215,13 @@ export const searchContributions = tool('openfec_search_contributions', {
         returned: result.results.length,
       });
 
+      ctx.enrich.total(result.pagination.count);
+      if (result.results.length === 0) {
+        ctx.enrich.notice(
+          'No itemized contributions matched. Try a different cycle or broaden name/employer filters.',
+        );
+      }
+
       return {
         results: result.results,
         next_cursor: result.nextCursor,
@@ -243,6 +260,13 @@ export const searchContributions = tool('openfec_search_contributions', {
       count: result.pagination.count,
       returned: result.results.length,
     });
+
+    ctx.enrich.total(result.pagination.count);
+    if (result.results.length === 0) {
+      ctx.enrich.notice(
+        'No contribution aggregates matched. Verify the committee_id or candidate_id is correct.',
+      );
+    }
 
     return {
       results: result.results,

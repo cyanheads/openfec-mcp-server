@@ -6,7 +6,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -94,6 +94,22 @@ describe('searchExpenditures', () => {
       expect(result.results).toEqual(expenditures);
       expect(result.next_cursor).toBeNull();
       expect(result.count).toBe(1);
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice for empty itemized expenditures', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized' });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
     });
 
     it('fetches by_candidate aggregates', async () => {

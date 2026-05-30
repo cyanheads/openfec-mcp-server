@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 
@@ -76,6 +76,22 @@ describe('searchCommittees', () => {
       expect(mockService.searchCommittees).toHaveBeenCalledOnce();
       expect(result.committees).toEqual(committees);
       expect(result.pagination.count).toBe(1);
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice when search returns empty results', async () => {
+      mockService.searchCommittees.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0 },
+        results: [],
+      });
+
+      const input = searchCommittees.input.parse({ query: 'Nonexistent' });
+      await searchCommittees.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
+      expect(getEnrichment(ctx).notice).toContain('No committees matched');
     });
 
     it('fetches a single committee by ID', async () => {

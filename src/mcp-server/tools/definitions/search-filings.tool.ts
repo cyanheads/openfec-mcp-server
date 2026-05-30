@@ -81,6 +81,14 @@ export const searchFilings = tool('openfec_search_filings', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching filings before pagination.'),
+    notice: z
+      .string()
+      .optional()
+      .describe('Guidance when no filings matched — echoes filters and suggests how to broaden.'),
+  },
+
   async handler(input, ctx) {
     if (input.committee_id) validateCommitteeId(input.committee_id);
     if (input.candidate_id) validateCandidateId(input.candidate_id);
@@ -109,6 +117,13 @@ export const searchFilings = tool('openfec_search_filings', {
     });
 
     const result = await fec.searchFilings(params, ctx);
+
+    ctx.enrich.total(result.pagination.count);
+    if (result.results.length === 0) {
+      ctx.enrich.notice(
+        'No filings matched. Try removing the form_type or report_type filter, broadening the date range, or looking up the committee by name with openfec_search_committees.',
+      );
+    }
 
     return {
       results: result.results,

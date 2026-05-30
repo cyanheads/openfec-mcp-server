@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -63,6 +63,22 @@ describe('searchFilings', () => {
 
       expect(result.results).toEqual(filings);
       expect(result.pagination.count).toBe(2);
+      expect(getEnrichment(ctx).totalCount).toBe(2);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice when search returns empty results', async () => {
+      mockService.searchFilings.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0 },
+        results: [],
+      });
+
+      const input = searchFilings.input.parse({ form_type: 'F99' });
+      await searchFilings.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
+      expect(getEnrichment(ctx).notice).toContain('No filings matched');
     });
 
     it('passes all filter params correctly', async () => {

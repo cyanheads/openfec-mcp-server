@@ -103,6 +103,16 @@ export const lookupElections = tool('openfec_lookup_elections', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching candidates or race summaries.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no election results matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     if (input.cycle % 2 !== 0) {
       throw ctx.fail('cycle_must_be_even', undefined, {
@@ -146,6 +156,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       params.election_full = input.election_full;
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });
       const summary = await fec.getElectionSummary(params, ctx);
+      ctx.enrich.total(1);
       return {
         results: [summary as unknown as Record<string, unknown>],
         pagination: { page: 1, pages: 1, count: 1, per_page: 1 },
@@ -160,6 +171,12 @@ export const lookupElections = tool('openfec_lookup_elections', {
     });
     if (input.zip) {
       const data = await fec.searchElectionsByZip(params, ctx);
+      ctx.enrich.total(data.pagination.count);
+      if (data.results.length === 0) {
+        ctx.enrich.notice(
+          'No election races found for this ZIP. Verify the cycle is an even year and the ZIP code is a valid US ZIP.',
+        );
+      }
       return {
         results: data.results,
         pagination: data.pagination,
@@ -168,6 +185,12 @@ export const lookupElections = tool('openfec_lookup_elections', {
     }
     params.election_full = input.election_full;
     const data = await fec.searchElections(params, ctx);
+    ctx.enrich.total(data.pagination.count);
+    if (data.results.length === 0) {
+      ctx.enrich.notice(
+        'No election races matched. Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
+      );
+    }
     return {
       results: data.results,
       pagination: data.pagination,

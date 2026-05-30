@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -132,6 +132,48 @@ describe('lookupCalendarTool', () => {
       const callArgs = mockService.getCalendarDates.mock.calls[0]![0];
       expect(callArgs.min_start_date).toBe('2024-01-01');
       expect(callArgs.max_start_date).toBe('2024-12-31');
+    });
+
+    it('sets enrichment totalCount from pagination', async () => {
+      mockService.getCalendarDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 5 },
+        results: [{ summary: 'FEC Open Meeting', start_date: '2024-07-15' }],
+      });
+
+      const input = lookupCalendarTool.input.parse({});
+      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(5);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('sets enrichment notice when events mode returns empty results', async () => {
+      mockService.getCalendarDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0 },
+        results: [],
+      });
+
+      const input = lookupCalendarTool.input.parse({ description: 'nonexistent event' });
+      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
+    });
+
+    it('sets enrichment notice when filing_deadlines mode returns empty results', async () => {
+      mockService.getReportingDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0 },
+        results: [],
+      });
+
+      const input = lookupCalendarTool.input.parse({
+        mode: 'filing_deadlines',
+        report_type: 'NONEXISTENT',
+      });
+      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
     });
   });
 

@@ -102,6 +102,16 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching disbursements or aggregate rows.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no disbursements matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const fec = getOpenFecService();
     const mode = input.mode;
@@ -146,6 +156,13 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         returned: result.results.length,
       });
 
+      ctx.enrich.total(result.pagination.count);
+      if (result.results.length === 0) {
+        ctx.enrich.notice(
+          'No itemized disbursements matched. Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
+        );
+      }
+
       return {
         results: result.results,
         next_cursor: result.nextCursor,
@@ -172,6 +189,13 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       count: result.pagination.count,
       returned: result.results.length,
     });
+
+    ctx.enrich.total(result.pagination.count);
+    if (result.results.length === 0) {
+      ctx.enrich.notice(
+        'No disbursement aggregates matched. Verify the committee_id is correct and the cycle is set correctly.',
+      );
+    }
 
     return {
       results: result.results,

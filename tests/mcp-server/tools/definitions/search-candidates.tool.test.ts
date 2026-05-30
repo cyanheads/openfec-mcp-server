@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 
@@ -86,6 +86,8 @@ describe('searchCandidates', () => {
       expect(mockService.searchCandidates).toHaveBeenCalledOnce();
       expect(result.candidates).toEqual(candidates);
       expect(result.pagination.count).toBe(1);
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
     });
 
     it('fetches a single candidate by ID', async () => {
@@ -141,6 +143,20 @@ describe('searchCandidates', () => {
 
       expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
       expect(result.totals).toBeUndefined();
+    });
+
+    it('sets enrichment notice when search returns empty results', async () => {
+      mockService.searchCandidates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0 },
+        results: [],
+      });
+
+      const input = searchCandidates.input.parse({ query: 'Nonexistent Candidate' });
+      await searchCandidates.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
+      expect(getEnrichment(ctx).notice).toContain('No candidates matched');
     });
   });
 

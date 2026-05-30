@@ -84,6 +84,16 @@ export const searchCommittees = tool('openfec_search_committees', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching committees before pagination.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no committees matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const fec = getOpenFecService();
 
@@ -117,6 +127,13 @@ export const searchCommittees = tool('openfec_search_committees', {
         committee_id: input.committee_id,
         ...ctx.recoveryFor('committee_not_found'),
       });
+    }
+
+    ctx.enrich.total(result.pagination.count);
+    if (result.results.length === 0) {
+      ctx.enrich.notice(
+        'No committees matched. Try a partial name, remove type/designation filters, or search by candidate_id to find linked committees.',
+      );
     }
 
     return {

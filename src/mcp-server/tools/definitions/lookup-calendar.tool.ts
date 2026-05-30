@@ -95,6 +95,16 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching calendar entries before pagination.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no calendar entries matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const fec = getOpenFecService();
 
@@ -117,6 +127,12 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         report_year: input.report_year,
       });
       const data = await fec.getReportingDates(params, ctx);
+      ctx.enrich.total(data.pagination.count);
+      if (data.results.length === 0) {
+        ctx.enrich.notice(
+          'No filing deadlines matched. Try widening the date range or removing the report_type filter.',
+        );
+      }
       return {
         results: data.results,
         pagination: data.pagination,
@@ -137,6 +153,12 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         election_year: input.election_year,
       });
       const data = await fec.getElectionDates(params, ctx);
+      ctx.enrich.total(data.pagination.count);
+      if (data.results.length === 0) {
+        ctx.enrich.notice(
+          'No election dates matched. Try widening the date range, removing the state or office filter, or checking a different election year.',
+        );
+      }
       return {
         results: data.results,
         pagination: data.pagination,
@@ -152,6 +174,12 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
 
     ctx.log.info('Fetching calendar events', { description: input.description });
     const data = await fec.getCalendarDates(params, ctx);
+    ctx.enrich.total(data.pagination.count);
+    if (data.results.length === 0) {
+      ctx.enrich.notice(
+        'No calendar events matched. Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
+      );
+    }
     return {
       results: data.results,
       pagination: data.pagination,

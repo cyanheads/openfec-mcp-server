@@ -96,6 +96,16 @@ export const searchCandidates = tool('openfec_search_candidates', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching candidates before pagination.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no candidates matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const fec = getOpenFecService();
 
@@ -161,6 +171,13 @@ export const searchCandidates = tool('openfec_search_candidates', {
       ctx.log.info('Fetching candidate totals', { candidate_id: totalsParams.candidate_id });
       const totalsResult = await fec.getCandidateTotals(totalsParams, ctx);
       totals = totalsResult.results as Record<string, unknown>[];
+    }
+
+    ctx.enrich.total(candidateResult.pagination.count);
+    if (candidates.length === 0) {
+      ctx.enrich.notice(
+        'No candidates matched. Try a partial name, remove filters like state or office, or check a different election cycle.',
+      );
     }
 
     return {

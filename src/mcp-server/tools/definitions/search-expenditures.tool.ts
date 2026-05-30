@@ -143,6 +143,16 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     search_criteria: SearchCriteriaSchema,
   }),
 
+  enrichment: {
+    totalCount: z.number().describe('Total matching expenditures or per-candidate aggregates.'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Guidance when no expenditures matched — echoes filters and suggests how to broaden.',
+      ),
+  },
+
   async handler(input, ctx) {
     const fec = getOpenFecService();
     const mode = input.mode;
@@ -188,6 +198,13 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         returned: result.results.length,
       });
 
+      ctx.enrich.total(result.pagination.count);
+      if (result.results.length === 0) {
+        ctx.enrich.notice(
+          'No independent expenditures matched. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+        );
+      }
+
       return {
         results: result.results,
         next_cursor: result.nextCursor,
@@ -221,6 +238,13 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       count: result.pagination.count,
       returned: result.results.length,
     });
+
+    ctx.enrich.total(result.pagination.count);
+    if (result.results.length === 0) {
+      ctx.enrich.notice(
+        'No expenditures by candidate matched. Verify the candidate_id and cycle are correct.',
+      );
+    }
 
     return {
       results: result.results,
