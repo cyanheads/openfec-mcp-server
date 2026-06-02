@@ -1,8 +1,8 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.4.8
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.16`
+**Version:** 0.4.9
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.21`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -308,6 +308,8 @@ Available skills:
 | `api-testing` | createMockContext, test patterns |
 | `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
 | `api-workers` | Cloudflare Workers runtime |
+| `api-mirror` | MirrorService: persistent self-refreshing local SQLite mirror of a bulk upstream dataset — Tier 3 opt-in |
+| `orchestrations` | Multi-server pipeline workflows — gated phase tables for maintenance, field-test, fix-wrapup-release, greenfield |
 
 When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
 
@@ -328,6 +330,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run lint:packaging` | Validate `manifest.json` + `server.json` env var alignment |
 | `bun run list-skills` | Print index of available project skills |
 | `bun run bundle` | Build and pack as `.mcpb` for one-click Claude Desktop install |
+| `bun run release:github` | Create GitHub Release from the current annotated tag |
 | `bun run test` | Run tests |
 | `bun run start` | Production mode (transport from `MCP_TRANSPORT_TYPE`) |
 | `bun run start:stdio` | Production mode (stdio) |

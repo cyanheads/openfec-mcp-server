@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-05-29 05:24:16
+Generated on: 2026-06-02 14:43:59
 
 ```text
 openfec-mcp-server/
@@ -33,12 +33,14 @@ openfec-mcp-server/
 │   ├── build.ts
 │   ├── check-docs-sync.ts
 │   ├── check-framework-antipatterns.ts
+│   ├── check-skill-versions.ts
 │   ├── check-skills-sync.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
 ├── skills/
@@ -65,6 +67,8 @@ openfec-mcp-server/
 │   ├── api-errors/
 │   │   └── SKILL.md
 │   ├── api-linter/
+│   │   └── SKILL.md
+│   ├── api-mirror/
 │   │   └── SKILL.md
 │   ├── api-services/
 │   │   ├── references/
@@ -95,6 +99,13 @@ openfec-mcp-server/
 │   ├── git-wrapup/
 │   │   └── SKILL.md
 │   ├── maintenance/
+│   │   └── SKILL.md
+│   ├── orchestrations/
+│   │   ├── workflows/
+│   │   │   ├── field-test-fix.md
+│   │   │   ├── fix-wrapup-release.md
+│   │   │   ├── greenfield-build.md
+│   │   │   └── maintenance-release.md
 │   │   └── SKILL.md
 │   ├── polish-docs-meta/
 │   │   ├── references/
@@ -165,6 +176,9 @@ openfec-mcp-server/
 │   │   │       └── election.resource.test.ts
 │   │   └── tools/
 │   │       └── definitions/
+│   │           ├── utils/
+│   │           │   ├── format-helpers.test.ts
+│   │           │   └── id-validators.test.ts
 │   │           ├── lookup-calendar.tool.test.ts
 │   │           ├── lookup-elections.tool.test.ts
 │   │           ├── search-candidates.tool.test.ts
@@ -173,9 +187,12 @@ openfec-mcp-server/
 │   │           ├── search-disbursements.tool.test.ts
 │   │           ├── search-expenditures.tool.test.ts
 │   │           ├── search-filings.tool.test.ts
-│   │           └── search-legal.tool.test.ts
+│   │           ├── search-legal.tool.test.ts
+│   │           └── security.test.ts
 │   └── services/
 │       └── openfec/
+│           ├── openfec-service-extended.test.ts
+│           ├── openfec-service-security.test.ts
 │           └── openfec-service.test.ts
 ├── .dockerignore
 ├── .env.example
