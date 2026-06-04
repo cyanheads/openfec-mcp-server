@@ -6,6 +6,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, type RequestContext, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import type {
@@ -423,9 +424,13 @@ function enrichStatusError(msg: string): string {
 /**
  * Re-throw an error with its message sanitized (API key stripped)
  * and enriched with actionable context for HTTP status errors.
+ * Preserves McpError code and data; wraps plain Errors as new instances.
  * Preserves the original error as `cause` for internal debugging.
  */
 function rethrowSanitized(err: unknown): never {
+  if (err instanceof McpError) {
+    throw new McpError(err.code, enrichStatusError(err.message), err.data, { cause: err });
+  }
   if (err instanceof Error) {
     const clean = new Error(enrichStatusError(err.message), { cause: err });
     clean.name = err.name;

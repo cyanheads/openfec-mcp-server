@@ -5,6 +5,7 @@
  * @module tests/services/openfec/openfec-service-security.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -198,5 +199,111 @@ describe('envelope validation', () => {
     await expect(svc.getElectionSummary({ office: 'president', cycle: 2024 }, ctx)).rejects.toThrow(
       'unexpected response',
     );
+  });
+});
+
+describe('rethrowSanitized — McpError preservation', () => {
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('preserves McpError code when fetchWithTimeout throws a McpError', async () => {
+    const mcpErr = new McpError(JsonRpcErrorCode.NotFound, 'Status: 404 Not Found', {
+      statusCode: 404,
+    });
+    mockFetch.mockRejectedValueOnce(mcpErr);
+
+    let caught: unknown;
+    try {
+      await svc.searchCandidates({}, ctx);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(McpError);
+    expect((caught as McpError).code).toBe(JsonRpcErrorCode.NotFound);
+  });
+
+  it('preserves McpError data when fetchWithTimeout throws a McpError', async () => {
+    const data = { statusCode: 429, retryAfter: 60 };
+    const mcpErr = new McpError(
+      JsonRpcErrorCode.RateLimited,
+      'Status: 429 Too Many Requests',
+      data,
+    );
+    mockFetch.mockRejectedValueOnce(mcpErr);
+
+    let caught: unknown;
+    try {
+      await svc.searchCandidates({}, ctx);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(McpError);
+    expect((caught as McpError).code).toBe(JsonRpcErrorCode.RateLimited);
+    expect((caught as McpError).data).toMatchObject({ statusCode: 429, retryAfter: 60 });
+  });
+
+  it('enriches McpError message with status hint while preserving the code (422 → ValidationError)', async () => {
+    const mcpErr = new McpError(
+      JsonRpcErrorCode.ValidationError,
+      'Fetch failed for https://api.open.fec.gov/v1/schedules/schedule_a/. Status: 422 Unprocessable Entity',
+      { statusCode: 422 },
+    );
+    mockFetch.mockRejectedValueOnce(mcpErr);
+
+    let caught: unknown;
+    try {
+      await svc.searchContributions({}, ctx);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(McpError);
+    expect((caught as McpError).code).toBe(JsonRpcErrorCode.ValidationError);
+    expect((caught as McpError).message).toContain('rejected the request parameters');
+  });
+
+  it('sets the original McpError as cause', async () => {
+    const mcpErr = new McpError(JsonRpcErrorCode.NotFound, 'Status: 404 Not Found');
+    mockFetch.mockRejectedValueOnce(mcpErr);
+
+    let caught: unknown;
+    try {
+      await svc.searchCandidates({}, ctx);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect((caught as McpError).cause).toBe(mcpErr);
+  });
+
+  it('sanitizes api_key in McpError message', async () => {
+    const mcpErr = new McpError(
+      JsonRpcErrorCode.Forbidden,
+      'Fetch failed: api_key=SUPER_SECRET_API_KEY_XYZ Status: 403 Forbidden',
+    );
+    mockFetch.mockRejectedValueOnce(mcpErr);
+
+    let caught: unknown;
+    try {
+      await svc.searchCandidates({}, ctx);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(McpError);
+    expect((caught as McpError).message).not.toContain('SUPER_SECRET_API_KEY_XYZ');
+    expect((caught as McpError).message).toContain('REDACTED');
   });
 });
