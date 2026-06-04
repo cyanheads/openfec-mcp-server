@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.10](changelog/0.4.x/0.4.10.md) — 2026-06-04
+
+McpError code/data preservation in rethrowSanitized; totalCount enrichment on openfec_search_legal
+
 ## [0.4.9](changelog/0.4.x/0.4.9.md) — 2026-06-02
 
 mcp-ts-core 0.9.21: per-request log context fix, secret-stripping in fetch errors, withRetry fail-fast
