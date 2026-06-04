@@ -63,6 +63,31 @@ describe('searchLegalTool', () => {
       expect(getEnrichment(ctx).notice).toBeUndefined();
     });
 
+    it('sets enrichment totalCount from service result', async () => {
+      const results = [{ document_type: 'advisory_opinion', ao_no: '2024-01', name: 'Test AO' }];
+      mockService.searchLegal.mockResolvedValueOnce({
+        results,
+        totalCount: 42,
+      });
+
+      const input = searchLegalTool.input.parse({ query: 'contribution limits' });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(42);
+    });
+
+    it('sets enrichment totalCount to 0 when no results', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [],
+        totalCount: 0,
+      });
+
+      const input = searchLegalTool.input.parse({ query: 'no match query' });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+    });
+
     it('sets enrichment notice when legal search returns no results', async () => {
       mockService.searchLegal.mockResolvedValueOnce({
         results: [],

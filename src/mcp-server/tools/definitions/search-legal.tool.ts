@@ -92,6 +92,7 @@ export const searchLegal = tool('openfec_search_legal', {
   }),
 
   enrichment: {
+    totalCount: z.number().describe('Total matching legal documents across all types.'),
     notice: z
       .string()
       .optional()
@@ -166,6 +167,7 @@ export const searchLegal = tool('openfec_search_legal', {
       return d;
     });
 
+    ctx.enrich.total(data.totalCount);
     if (trimmed.length === 0) {
       ctx.enrich.notice(
         'No legal documents matched. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
