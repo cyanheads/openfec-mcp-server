@@ -157,8 +157,13 @@ export const lookupElections = tool('openfec_lookup_elections', {
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });
       const summary = await fec.getElectionSummary(params, ctx);
       ctx.enrich.total(1);
+      const summaryRecord: Record<string, unknown> = {
+        ...(summary as unknown as Record<string, unknown>),
+        _independent_expenditures_note:
+          'Unreconciled upstream aggregate — may be inflated due to double-counting across reporting periods. Use openfec_search_expenditures mode by_candidate for verified per-committee totals.',
+      };
       return {
-        results: [summary as unknown as Record<string, unknown>],
+        results: [summaryRecord],
         pagination: { page: 1, pages: 1, count: 1, per_page: 1 },
       };
     }
@@ -214,7 +219,12 @@ export const lookupElections = tool('openfec_lookup_elections', {
       'disbursements' in first &&
       'independent_expenditures' in first
     ) {
-      return [{ type: 'text', text: `**Election Summary**\n${renderRecord(first)}` }];
+      const noteKey = '_independent_expenditures_note';
+      const note = typeof first[noteKey] === 'string' ? (first[noteKey] as string) : undefined;
+      const skipInFormat = new Set([noteKey]);
+      const body = renderRecord(first, skipInFormat);
+      const caveat = note ? `\n\n> **Note on independent_expenditures:** ${note}` : '';
+      return [{ type: 'text', text: `**Election Summary**\n${body}${caveat}` }];
     }
 
     const headerKeys = new Set(['candidate_name', 'candidate_id']);

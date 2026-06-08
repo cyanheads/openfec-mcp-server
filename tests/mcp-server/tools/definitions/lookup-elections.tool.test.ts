@@ -96,6 +96,29 @@ describe('lookupElectionsTool', () => {
       expect(mockService.searchElections).not.toHaveBeenCalled();
     });
 
+    it('summary mode adds independent_expenditures caveat note to result', async () => {
+      const summary = {
+        count: 50,
+        receipts: 100_000_000,
+        disbursements: 99_000_000,
+        independent_expenditures: 2_695_716_328_841.73,
+      };
+      mockService.getElectionSummary.mockResolvedValueOnce(summary);
+
+      const input = lookupElectionsTool.input.parse({
+        mode: 'summary',
+        office: 'S',
+        state: 'PA',
+        cycle: 2024,
+      });
+      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const row = result.results[0];
+
+      expect(row).toHaveProperty('independent_expenditures', 2_695_716_328_841.73);
+      expect(row).toHaveProperty('_independent_expenditures_note');
+      expect(String(row!._independent_expenditures_note)).toContain('Unreconciled');
+    });
+
     it('throws on odd cycle year', async () => {
       const input = lookupElectionsTool.input.parse({
         office: 'P',
@@ -207,6 +230,30 @@ describe('lookupElectionsTool', () => {
       expect(text).toContain('total_disbursements:');
       expect(text).toContain('cash_on_hand_end_period:');
       expect(text).toContain('coverage_end_date: 2024-06-30');
+    });
+
+    it('renders election summary mode with caveat for independent_expenditures', () => {
+      const blocks = lookupElectionsTool.format!({
+        results: [
+          {
+            count: 50,
+            receipts: 100_000_000,
+            disbursements: 99_000_000,
+            independent_expenditures: 2_695_716_328_841.73,
+            _independent_expenditures_note:
+              'Unreconciled upstream aggregate — may be inflated due to double-counting across reporting periods. Use openfec_search_expenditures mode by_candidate for verified per-committee totals.',
+          },
+        ],
+        pagination: { ...PAGE, count: 1 },
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('**Election Summary**');
+      expect(text).toContain('independent_expenditures');
+      expect(text).toContain('Note on independent_expenditures');
+      expect(text).toContain('Unreconciled');
+      // The raw note key should NOT appear as a separate field line
+      expect(text).not.toContain('_independent_expenditures_note:');
     });
 
     it('renders empty state', () => {

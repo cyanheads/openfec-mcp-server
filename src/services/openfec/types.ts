@@ -93,6 +93,11 @@ export interface LegalResult {
 export interface ElectionSummary {
   count: number;
   disbursements: number;
+  /**
+   * Unreconciled upstream aggregate from /elections/summary/ — may be wildly inflated
+   * due to double-counting across reporting periods. Surface with a caveat; use
+   * /schedules/schedule_e/by_candidate/ for verified per-committee totals.
+   */
   independent_expenditures: number;
   receipts: number;
 }
