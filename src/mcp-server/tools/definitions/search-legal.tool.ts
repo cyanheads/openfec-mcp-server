@@ -34,9 +34,9 @@ export const searchLegal = tool('openfec_search_legal', {
     {
       reason: 'missing_filter',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'Called without query, type, or a specific identifier (ao_number / case_number)',
+      when: 'Called without query, type, a specific identifier (ao_number / case_number), respondent, or citation filter',
       recovery:
-        'Provide at least a search query, document type, or specific identifier (ao_number, case_number) to scope the legal search.',
+        'Provide at least a search query, document type, specific identifier (ao_number, case_number), respondent name, or citation (regulatory_citation, statutory_citation) to scope the legal search.',
     },
   ],
 
@@ -102,7 +102,14 @@ export const searchLegal = tool('openfec_search_legal', {
   },
 
   async handler(input, ctx) {
-    const hasFilter = input.query || input.type || input.ao_number || input.case_number;
+    const hasFilter =
+      input.query ||
+      input.type ||
+      input.ao_number ||
+      input.case_number ||
+      input.respondent ||
+      input.regulatory_citation ||
+      input.statutory_citation;
     if (!hasFilter) {
       throw ctx.fail('missing_filter', undefined, { ...ctx.recoveryFor('missing_filter') });
     }

@@ -111,6 +111,50 @@ describe('searchLegalTool', () => {
       );
     });
 
+    it('accepts respondent as a standalone filter', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [{ document_type: 'mur', case_no: 'MUR-7890', name: 'Acme Corporation' }],
+        totalCount: 1,
+      });
+
+      const input = searchLegalTool.input.parse({ respondent: 'Acme Corporation' });
+      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(result.results).toHaveLength(1);
+      const callArgs = mockService.searchLegal.mock.calls[0]![0];
+      expect(callArgs.case_respondents).toBe('Acme Corporation');
+    });
+
+    it('accepts regulatory_citation as a standalone filter', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [
+          { document_type: 'advisory_opinion', ao_no: '2022-05', name: 'AO on 11 CFR 112' },
+        ],
+        totalCount: 1,
+      });
+
+      const input = searchLegalTool.input.parse({ regulatory_citation: '11 CFR 112.4' });
+      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(result.results).toHaveLength(1);
+      const callArgs = mockService.searchLegal.mock.calls[0]![0];
+      expect(callArgs.ao_regulatory_citation).toBe('11 CFR 112.4');
+    });
+
+    it('accepts statutory_citation as a standalone filter', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [{ document_type: 'statute', no: '30106', name: 'Statute on contributions' }],
+        totalCount: 1,
+      });
+
+      const input = searchLegalTool.input.parse({ statutory_citation: '52 U.S.C. 30106' });
+      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(result.results).toHaveLength(1);
+      const callArgs = mockService.searchLegal.mock.calls[0]![0];
+      expect(callArgs.ao_statutory_citation).toBe('52 U.S.C. 30106');
+    });
+
     it('passes ao_number as ao_no', async () => {
       mockService.searchLegal.mockResolvedValueOnce({
         results: [],
