@@ -36,6 +36,7 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
   decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { searchCandidates } from '@/mcp-server/tools/definitions/search-candidates.tool.js';
 import { searchCommittees } from '@/mcp-server/tools/definitions/search-committees.tool.js';
 import { searchContributions } from '@/mcp-server/tools/definitions/search-contributions.tool.js';
@@ -44,17 +45,31 @@ import { searchFilings } from '@/mcp-server/tools/definitions/search-filings.too
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
 describe('input injection resistance', () => {
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    ctx = createMockContext();
+    vi.clearAllMocks();
+  });
+
   describe('searchCandidates', () => {
-    it('Zod rejects candidate_id starting with a non H/S/P letter', () => {
-      expect(() =>
-        searchCandidates.input.parse({ candidate_id: "X'; DROP TABLE t; --" }),
-      ).toThrow();
+    it('handler rejects candidate_id starting with a non H/S/P letter with a friendly error', async () => {
+      // .regex() removed from Zod schema — validation happens in handler via validateCandidateId
+      const input = searchCandidates.input.parse({ candidate_id: "X'; DROP TABLE t; --" });
+      const err = await searchCandidates
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
 
-    it('Zod rejects candidate_id with special chars that would break URLs', () => {
-      expect(() =>
-        searchCandidates.input.parse({ candidate_id: 'P/../../../etc/passwd' }),
-      ).toThrow();
+    it('handler rejects candidate_id with special chars that would break URLs', async () => {
+      const input = searchCandidates.input.parse({ candidate_id: 'P/../../../etc/passwd' });
+      const err = await searchCandidates
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
 
     it('accepts query containing SQL-like characters as text (passed to FEC as-is)', async () => {
@@ -65,28 +80,47 @@ describe('input injection resistance', () => {
   });
 
   describe('searchCommittees', () => {
-    it('Zod rejects committee_id with non-C prefix', () => {
-      expect(() =>
-        searchCommittees.input.parse({ committee_id: '<script>alert(1)</script>' }),
-      ).toThrow();
+    it('handler rejects committee_id with non-C prefix with a friendly error', async () => {
+      const input = searchCommittees.input.parse({ committee_id: '<script>alert(1)</script>' });
+      const err = await searchCommittees
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
 
-    it('Zod rejects committee_id with slash traversal pattern', () => {
-      expect(() => searchCommittees.input.parse({ committee_id: 'C00000001/../secret' })).toThrow();
+    it('handler rejects committee_id with slash traversal pattern', async () => {
+      const input = searchCommittees.input.parse({ committee_id: 'C00000001/../secret' });
+      const err = await searchCommittees
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
   });
 
   describe('searchContributions', () => {
-    it('Zod rejects committee_id injection', () => {
-      expect(() =>
-        searchContributions.input.parse({ committee_id: "C'; DELETE FROM contributions; --" }),
-      ).toThrow();
+    it('handler rejects committee_id injection with a friendly error', async () => {
+      const input = searchContributions.input.parse({
+        committee_id: "C'; DELETE FROM contributions; --",
+      });
+      const err = await searchContributions
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
 
-    it('Zod rejects candidate_id injection', () => {
-      expect(() =>
-        searchContributions.input.parse({ candidate_id: 'P<img src=x onerror=alert(1)>' }),
-      ).toThrow();
+    it('handler rejects candidate_id injection with a friendly error', async () => {
+      const input = searchContributions.input.parse({
+        candidate_id: 'P<img src=x onerror=alert(1)>',
+        mode: 'by_state',
+      });
+      const err = await searchContributions
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
   });
 });

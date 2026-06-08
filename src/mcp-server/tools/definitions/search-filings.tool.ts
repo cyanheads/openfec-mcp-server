@@ -26,14 +26,12 @@ export const searchFilings = tool('openfec_search_filings', {
   input: z.object({
     committee_id: z
       .string()
-      .regex(/^C\d+$/i)
       .optional()
       .describe(
         'Filing committee ID (e.g., C00358796). Get IDs from openfec_search_committees results.',
       ),
     candidate_id: z
       .string()
-      .regex(/^[HSP][0-9A-Z]+$/i)
       .optional()
       .describe(
         'Associated candidate ID (e.g., P00003392). Get IDs from openfec_search_candidates results.',

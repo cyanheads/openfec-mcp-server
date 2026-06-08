@@ -121,6 +121,21 @@ describe('searchDisbursements', () => {
       ).rejects.toBeInstanceOf(McpError);
     });
 
+    it('throws friendly McpError for malformed committee_id (validator now reachable)', async () => {
+      // With .regex() removed from the Zod schema, the friendly validator fires instead
+      // of a raw -32602 Zod boundary error.
+      const input = searchDisbursements.input.parse({ committee_id: 'ABC123' });
+
+      const err = await searchDisbursements
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      const mcpErr = err as McpError;
+      expect(mcpErr.data).toMatchObject({ committee_id: 'ABC123', reason: 'invalid_committee_id' });
+      expect(mcpErr.message).toContain("start with 'C'");
+    });
+
     it('fetches by_purpose aggregates', async () => {
       const aggregates = [aggregateRecord()];
       mockService.getDisbursementAggregates.mockResolvedValueOnce({

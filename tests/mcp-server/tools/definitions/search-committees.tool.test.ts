@@ -5,9 +5,9 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ZodError } from 'zod';
 
 const mockService = {
   searchCandidates: vi.fn(),
@@ -108,8 +108,14 @@ describe('searchCommittees', () => {
       expect(result.committees).toEqual(committees);
     });
 
-    it('throws on invalid committee_id format', () => {
-      expect(() => searchCommittees.input.parse({ committee_id: 'INVALID' })).toThrow(ZodError);
+    it('throws on invalid committee_id format with a friendly McpError', async () => {
+      // .regex() removed from Zod schema — validation now fires in handler via validateCommitteeId
+      const input = searchCommittees.input.parse({ committee_id: 'INVALID' });
+      const err = await searchCommittees
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
   });
 

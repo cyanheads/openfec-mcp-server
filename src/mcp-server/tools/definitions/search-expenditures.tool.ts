@@ -48,14 +48,12 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       ),
     committee_id: z
       .string()
-      .regex(/^C\d+$/i)
       .optional()
       .describe(
         'Spending committee ID (e.g., C00703975). Get IDs from openfec_search_committees results.',
       ),
     candidate_id: z
       .string()
-      .regex(/^[HSP][0-9A-Z]+$/i)
       .optional()
       .describe(
         'Targeted candidate ID (e.g., P00003392). Get IDs from openfec_search_candidates results.',
