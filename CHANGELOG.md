@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.11](changelog/0.4.x/0.4.11.md) — 2026-06-08
+
+search_legal respondent/citation gate fix; handler-level ID validation; lookup_elections independent_expenditures caveat
+
 ## [0.4.10](changelog/0.4.x/0.4.10.md) — 2026-06-04
 
 McpError code/data preservation in rethrowSanitized; totalCount enrichment on openfec_search_legal
