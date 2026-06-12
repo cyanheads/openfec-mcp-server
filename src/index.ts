@@ -12,6 +12,8 @@ import { allToolDefinitions } from './mcp-server/tools/definitions/index.js';
 import { initOpenFecService } from './services/openfec/openfec-service.js';
 
 await createApp({
+  name: 'openfec-mcp-server',
+  title: 'openfec-mcp-server',
   tools: allToolDefinitions,
   resources: allResourceDefinitions,
   prompts: allPromptDefinitions,
