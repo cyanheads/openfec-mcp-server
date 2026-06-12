@@ -6,7 +6,7 @@
     "url": "https://github.com/cyanheads/openfec-mcp-server",
     "source": "github"
   },
-  "version": "0.4.11",
+  "version": "0.4.12",
   "remotes": [
     {
       "type": "streamable-http",
@@ -19,7 +19,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.4.11",
+      "version": "0.4.12",
       "packageArguments": [
         {
           "type": "positional",
@@ -33,7 +33,7 @@
       "environmentVariables": [
         {
           "name": "FEC_API_KEY",
-          "description": "OpenFEC API key \u2014 optional (falls back to DEMO_KEY: 30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
+          "description": "OpenFEC API key \u2014 optional (DEMO_KEY: 30 req/hr). Own key: 1000 req/hr. Free at api.data.gov.",
           "format": "string",
           "isRequired": false
         },
@@ -54,7 +54,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openfec-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.4.11",
+      "version": "0.4.12",
       "packageArguments": [
         {
           "type": "positional",
@@ -68,7 +68,7 @@
       "environmentVariables": [
         {
           "name": "FEC_API_KEY",
-          "description": "OpenFEC API key \u2014 optional (falls back to DEMO_KEY: 30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
+          "description": "OpenFEC API key \u2014 optional (DEMO_KEY: 30 req/hr). Own key: 1000 req/hr. Free at api.data.gov.",
           "format": "string",
           "isRequired": false
         },

@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-06-02 14:43:59
+Generated on: 2026-06-12 08:38:48
 
 ```text
 openfec-mcp-server/
@@ -35,6 +35,7 @@ openfec-mcp-server/
 │   ├── check-framework-antipatterns.ts
 │   ├── check-skill-versions.ts
 │   ├── check-skills-sync.ts
+│   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
@@ -92,8 +93,6 @@ openfec-mcp-server/
 │   │   └── SKILL.md
 │   ├── design-mcp-server/
 │   │   └── SKILL.md
-│   ├── devcheck/
-│   │   └── SKILL.md
 │   ├── field-test/
 │   │   └── SKILL.md
 │   ├── git-wrapup/
@@ -123,6 +122,10 @@ openfec-mcp-server/
 │   ├── security-pass/
 │   │   └── SKILL.md
 │   ├── setup/
+│   │   └── SKILL.md
+│   ├── techniques/
+│   │   ├── references/
+│   │   │   └── outline-on-overflow.md
 │   │   └── SKILL.md
 │   └── tool-defs-analysis/
 │       └── SKILL.md

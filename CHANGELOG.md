@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.12](changelog/0.4.x/0.4.12.md) — 2026-06-12
+
+mcp-ts-core 0.10.6 adoption; bundle-content + identity packaging guards; in-code identity pinning; Dockerfile healthcheck
+
 ## [0.4.11](changelog/0.4.x/0.4.11.md) — 2026-06-08
 
 search_legal respondent/citation gate fix; handler-level ID validation; lookup_elections independent_expenditures caveat
