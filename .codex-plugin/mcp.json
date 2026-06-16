@@ -1,5 +1,5 @@
 {
-  "@cyanheads/openfec-mcp-server": {
+  "openfec-mcp-server": {
     "command": "npx",
     "args": ["-y", "@cyanheads/openfec-mcp-server"],
     "env": {

@@ -1,5 +1,5 @@
 {
-  "name": "@cyanheads/openfec-mcp-server",
+  "name": "openfec-mcp-server",
   "version": "0.4.12",
   "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
   "author": {
@@ -9,7 +9,7 @@
   "repository": "https://github.com/cyanheads/openfec-mcp-server",
   "license": "Apache-2.0",
   "mcpServers": {
-    "@cyanheads/openfec-mcp-server": {
+    "openfec-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/openfec-mcp-server"],
       "env": {

@@ -1,5 +1,5 @@
 {
-  "name": "@cyanheads/openfec-mcp-server",
+  "name": "openfec-mcp-server",
   "version": "0.4.12",
   "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
   "author": {
@@ -13,7 +13,7 @@
   "keywords": ["mcp", "mcp-server", "model-context-protocol", "openfec", "fec", "campaign-finance", "elections"],
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
-    "displayName": "@cyanheads/openfec-mcp-server",
+    "displayName": "openfec-mcp-server",
     "shortDescription": "Access FEC campaign finance data through MCP — candidates, committees, contributions, disbursements, elections.",
     "longDescription": "Provides MCP tools for querying the FEC OpenAPI: search candidates, committees, contributions (Schedule A), disbursements (Schedule B), independent expenditures (Schedule E), filings, elections, calendar, and legal documents. Supports STDIO and Streamable HTTP transports.",
     "developerName": "cyanheads",
