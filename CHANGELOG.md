@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.13](changelog/0.4.x/0.4.13.md) — 2026-06-20
+
+mcp-ts-core ^0.10.9 maintenance: framework dep bump, fresh-scaffold + dependency-specifier + plugin-manifest devcheck guards, ctx.content skill docs, biome 2.5 + dev-dep refresh
+
 ## [0.4.12](changelog/0.4.x/0.4.12.md) — 2026-06-12
 
 mcp-ts-core 0.10.6 adoption; bundle-content + identity packaging guards; in-code identity pinning; Dockerfile healthcheck
