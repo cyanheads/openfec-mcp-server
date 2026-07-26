@@ -52,12 +52,44 @@ describe('moneyTrailPrompt', () => {
       'Map their committees',
       'Follow direct fundraising',
       'Track outside money',
+      'Add party coordinated spending',
       'Examine spending',
       'Synthesize',
     ];
     for (const step of steps) {
       expect(text).toContain(step);
     }
+  });
+
+  /**
+   * The sequence is executed verbatim by clients, so every tool it names must
+   * exist under that exact name — a tool the server gained but the sequence
+   * never mentions is unreachable through this prompt.
+   */
+  it('names every tool the money-trail sequence chains', () => {
+    const messages = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
+    const text = (messages[0].content as { text: string }).text;
+
+    const tools = [
+      'openfec_search_candidates',
+      'openfec_search_committees',
+      'openfec_get_committee_totals',
+      'openfec_search_contributions',
+      'openfec_search_expenditures',
+      'openfec_search_coordinated_expenditures',
+      'openfec_search_disbursements',
+    ];
+    for (const name of tools) {
+      expect(text).toContain(name);
+    }
+  });
+
+  it('pins the cycle on every call when one was supplied', () => {
+    const withCycle = moneyTrailPrompt.generate({ candidate_id: 'P00003392', cycle: '2020' });
+    expect((withCycle[0].content as { text: string }).text).toContain('Pass cycle=2020');
+
+    const withoutCycle = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
+    expect((withoutCycle[0].content as { text: string }).text).not.toContain('Pass cycle=');
   });
 
   it('args parsing validates schema', () => {

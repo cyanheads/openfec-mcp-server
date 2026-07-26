@@ -35,21 +35,27 @@ export const campaignAnalysisPrompt = prompt('openfec_campaign_analysis', {
         ? `"${args.candidate_name}"`
         : 'the specified candidate';
     const cycleNote = args.cycle ? ` for the ${args.cycle} cycle` : '';
+    const cycleRule = args.cycle
+      ? `\n\nPass cycle=${args.cycle} on every call that accepts it — itemized Schedule A/B/E queries fall back to the current cycle when it is omitted — and read search_criteria on each response to confirm the filters that were applied.`
+      : '';
 
     return [
       {
         role: 'user',
         content: {
           type: 'text',
-          text: `Perform a structured campaign finance analysis of ${target}${cycleNote}. Use OpenFEC tools to build a complete financial picture.
+          text: `Perform a structured campaign finance analysis of ${target}${cycleNote}. Use OpenFEC tools to build a complete financial picture.${cycleRule}
 
 ## 1. Candidate Overview
 Use openfec_search_candidates with include_totals=true to get:
 - Total receipts, disbursements, cash on hand, debt
 - Coverage period dates
+- The candidate record's office, state, and district — step 5 needs all three
 
 ## 2. Find the Principal Committee
 Use openfec_search_committees with the candidate_id to identify the principal campaign committee. Use that committee_id for the contribution and disbursement queries in steps 3 and 4.
+
+Then use openfec_get_committee_totals (mode: single) on that committee_id, omitting cycle on this one call so every cycle the committee has filed comes back. That series is the trajectory step 7 asks about.
 
 ## 3. Fundraising Analysis
 Use openfec_search_contributions with the principal committee_id:
@@ -64,7 +70,7 @@ Use openfec_search_disbursements with the principal committee_id:
 - Calculate burn rate: disbursements / receipts
 
 ## 5. Competitive Position
-Use openfec_lookup_elections to find all candidates in the race:
+Use openfec_lookup_elections to find all candidates in the race. It requires office and cycle, plus state for a Senate race and both state and district for a House race — take them from the candidate record in step 1:
 - Compare total raised, cash on hand, and burn rates
 - Identify financial advantages and gaps
 
@@ -72,6 +78,8 @@ Use openfec_lookup_elections to find all candidates in the race:
 Use openfec_search_expenditures with the candidate_id:
 - Total independent expenditure support vs. opposition
 - Key outside groups involved
+
+Then use openfec_search_coordinated_expenditures with the candidate_id. Schedule F is party money spent on the candidate's behalf in coordination with the campaign, under its own statutory limit — legally distinct from independent expenditure and absent from the query above, so party support is understated without it.
 
 ## 7. Assessment
 Synthesize into a financial health assessment:

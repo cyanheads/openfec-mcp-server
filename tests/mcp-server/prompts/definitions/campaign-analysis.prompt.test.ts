@@ -60,6 +60,47 @@ describe('campaignAnalysisPrompt', () => {
     }
   });
 
+  /**
+   * The sequence is executed verbatim by clients, so every tool it names must
+   * exist under that exact name — a tool the server gained but the sequence
+   * never mentions is unreachable through this prompt.
+   */
+  it('names every tool the analysis sequence chains', () => {
+    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
+    const text = (messages[0].content as { text: string }).text;
+
+    const tools = [
+      'openfec_search_candidates',
+      'openfec_search_committees',
+      'openfec_get_committee_totals',
+      'openfec_search_contributions',
+      'openfec_search_disbursements',
+      'openfec_lookup_elections',
+      'openfec_search_expenditures',
+      'openfec_search_coordinated_expenditures',
+    ];
+    for (const name of tools) {
+      expect(text).toContain(name);
+    }
+  });
+
+  /** openfec_lookup_elections requires office and cycle, so step 5 must source them. */
+  it('sources the required openfec_lookup_elections scope from the candidate record', () => {
+    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
+    const text = (messages[0].content as { text: string }).text;
+
+    expect(text).toContain('office, state, and district');
+    expect(text).toContain('It requires office and cycle');
+  });
+
+  it('pins the cycle on every call when one was supplied', () => {
+    const withCycle = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392', cycle: '2020' });
+    expect((withCycle[0].content as { text: string }).text).toContain('Pass cycle=2020');
+
+    const withoutCycle = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
+    expect((withoutCycle[0].content as { text: string }).text).not.toContain('Pass cycle=');
+  });
+
   it('args parsing validates schema', () => {
     expect(() => campaignAnalysisPrompt.args.parse({})).toThrow(/candidate_id or candidate_name/);
     expect(campaignAnalysisPrompt.args.parse({ candidate_id: 'P00003392' })).toEqual({

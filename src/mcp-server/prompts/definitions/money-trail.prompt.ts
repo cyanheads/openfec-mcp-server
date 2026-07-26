@@ -35,13 +35,16 @@ export const moneyTrailPrompt = prompt('openfec_money_trail', {
         ? `"${args.candidate_name}"`
         : 'the specified candidate';
     const cycleNote = args.cycle ? ` for the ${args.cycle} cycle` : '';
+    const cycleRule = args.cycle
+      ? `\n\nPass cycle=${args.cycle} on every call that accepts it — itemized Schedule A/B/E queries fall back to the current cycle when it is omitted — and read search_criteria on each response to confirm the filters that were applied.`
+      : '';
 
     return [
       {
         role: 'user',
         content: {
           type: 'text',
-          text: `Trace the full money trail for ${target}${cycleNote}. Use the OpenFEC tools to investigate each layer:
+          text: `Trace the full money trail for ${target}${cycleNote}. Use the OpenFEC tools to investigate each layer:${cycleRule}
 
 ## Step 1: Identify the candidate
 ${args.candidate_id ? `Look up candidate ${args.candidate_id} using openfec_search_candidates with include_totals=true.` : `Search for "${args.candidate_name}" using openfec_search_candidates. Once found, note the candidate_id and look up their financial totals.`}
@@ -51,6 +54,8 @@ Use openfec_search_committees with the candidate_id to find:
 - Principal campaign committee
 - Leadership PACs
 - Joint fundraising committees
+
+For each committee_id found, use openfec_get_committee_totals (mode: single) to get that committee's own per-cycle receipts, disbursements, and cash on hand. The step 1 totals are candidate-scoped and cover the campaign account only, not a leadership PAC or a joint fundraising committee.
 
 ## Step 3: Follow direct fundraising
 Carry forward the receipt totals already retrieved in step 1. Use openfec_search_contributions with the principal campaign committee_id to break down where the money came from:
@@ -64,16 +69,20 @@ Use openfec_search_expenditures with the candidate_id to find:
 - Independent expenditures opposing this candidate (support_oppose: O)
 - Which Super PACs and groups are involved (mode: by_candidate for summary)
 
-## Step 5: Examine spending
+## Step 5: Add party coordinated spending
+Use openfec_search_coordinated_expenditures with the candidate_id. Schedule F is money a party committee spends on the candidate's behalf in coordination with the campaign, under its own statutory limit — legally distinct from the independent expenditures in step 4 and absent from them, so a trail that stops at Schedule E understates party support. Each row names the spending party committee.
+
+## Step 6: Examine spending
 For the principal campaign committee, use openfec_search_disbursements to see:
 - Spending by purpose category (mode: by_purpose)
 - Top recipients (mode: by_recipient)
 
-## Step 6: Synthesize
+## Step 7: Synthesize
 Summarize the complete money picture:
-- Total raised vs. spent vs. cash on hand
+- Total raised vs. spent vs. cash on hand, per committee
 - Donor composition (small vs. large donors, top industries)
 - Outside money landscape (supporting vs. opposing)
+- Party support: coordinated expenditures alongside independent spending
 - Key financial strengths and vulnerabilities`,
         },
       },
