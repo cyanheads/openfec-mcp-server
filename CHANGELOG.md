@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.5.0](changelog/0.5.x/0.5.0.md) — 2026-07-26 · ⚠️ Breaking
+
+Independent-expenditure and legal-search filters now reach the API instead of being silently dropped (#16, #17); itemized Schedule B and E queries are cycle-scoped (#19, #22); outbound parameter names are checked against the OpenFEC spec
+
 ## [0.4.15](changelog/0.4.x/0.4.15.md) — 2026-07-26
 
 Page-based aggregate modes and elections search reach page 2 (#12); election resources surface pagination instead of dropping it (#12); candidate totals sub-fetch pages independently and every cycle renders (#13, #18); itemized next_cursor delimited for text-only clients (#21)

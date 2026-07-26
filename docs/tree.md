@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-07-26 15:05:57
+Generated on: 2026-07-26 16:51:36
 
 ```text
 openfec-mcp-server/
@@ -25,6 +25,7 @@ openfec-mcp-server/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
 │   ├── 0.4.x/
+│   ├── 0.5.x/
 │   └── template.md
 ├── claude-plans/
 ├── docs/
@@ -150,6 +151,7 @@ openfec-mcp-server/
 │   │   └── tools/
 │   │       └── definitions/
 │   │           ├── utils/
+│   │           │   ├── election-cycle.ts
 │   │           │   ├── format-helpers.ts
 │   │           │   └── id-validators.ts
 │   │           ├── index.ts
