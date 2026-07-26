@@ -75,11 +75,17 @@ const byCandidateRecord = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** The cycle the itemized branch falls back to when the caller omits one. */
+const CURRENT_CYCLE = (() => {
+  const year = new Date().getFullYear();
+  return year % 2 === 0 ? year : year + 1;
+})();
+
 describe('searchExpenditures', () => {
   let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = createMockContext({ errors: searchExpenditures.errors });
     vi.clearAllMocks();
   });
 
@@ -156,6 +162,161 @@ describe('searchExpenditures', () => {
         ctx,
       );
       expect(result.pagination?.page).toBe(2);
+    });
+
+    it('sends the by_candidate endpoint its own parameter names, not the itemized ones', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'H2OH09999',
+        support_oppose: 'S',
+        candidate_office: 'H',
+        candidate_office_state: 'OH',
+        candidate_office_district: '09',
+        cycle: 2024,
+      });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      const callArgs = mockService.getExpendituresByCandidate.mock.calls[0]![0];
+      expect(callArgs).toMatchObject({
+        support_oppose: 'S',
+        office: 'house',
+        state: 'OH',
+        district: '09',
+        cycle: 2024,
+      });
+      for (const dropped of [
+        'support_oppose_indicator',
+        'candidate_office',
+        'candidate_office_state',
+        'candidate_office_district',
+        'candidate_party',
+      ]) {
+        expect(callArgs).not.toHaveProperty(dropped);
+      }
+    });
+
+    it.each([
+      ['S', 'senate'],
+      ['P', 'president'],
+    ])('translates candidate_office %s to office %s for by_candidate', async (letter, office) => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_office: letter,
+        candidate_office_state: 'OH',
+      });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getExpendituresByCandidate.mock.calls[0]![0].office).toBe(office);
+    });
+
+    it('accepts office plus state as a by_candidate scope without a candidate_id', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 125 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_office: 'S',
+        candidate_office_state: 'OH',
+        cycle: 2024,
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getExpendituresByCandidate).toHaveBeenCalledOnce();
+      expect(result.pagination?.count).toBe(125);
+    });
+
+    it('accepts a presidential by_candidate scope from the office alone', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 943 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_office: 'P',
+        cycle: 2024,
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      const callArgs = mockService.getExpendituresByCandidate.mock.calls[0]![0];
+      expect(callArgs).toMatchObject({ office: 'president', cycle: 2024 });
+      expect(callArgs).not.toHaveProperty('state');
+      expect(result.pagination?.count).toBe(943);
+    });
+
+    it('rejects a by_candidate Senate scope with no state, which the endpoint would 422', async () => {
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_office: 'S',
+      });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'by_candidate_requires_scope' });
+      expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a by_candidate House scope with no district, which the endpoint would 422', async () => {
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_office: 'H',
+        candidate_office_state: 'OH',
+      });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({ reason: 'by_candidate_requires_scope' });
+      expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+    });
+
+    it('rejects by_candidate with neither a candidate_id nor a race scope', async () => {
+      const input = searchExpenditures.input.parse({ mode: 'by_candidate', cycle: 2024 });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
+      expect(data.reason).toBe('by_candidate_requires_scope');
+      expect(data.recovery.hint).toContain('candidate_office');
+      expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+    });
+
+    it('rejects candidate_party in by_candidate rather than dropping it silently', async () => {
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'S6FL00123',
+        candidate_party: 'DEM',
+      });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({
+        reason: 'candidate_party_not_supported_by_candidate',
+      });
+      expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
     });
 
     it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
@@ -318,6 +479,60 @@ describe('searchExpenditures', () => {
       await searchExpenditures.handler(input, ctx as unknown as Context);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].sort_nulls_last).toBeUndefined();
+    });
+
+    it('scopes an unfiltered itemized call to the current cycle', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({});
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].cycle).toBe(CURRENT_CYCLE);
+    });
+
+    it('keeps an explicit itemized cycle instead of the default', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized', cycle: 2020 });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].cycle).toBe(2020);
+    });
+
+    it('sends the itemized endpoint its own office/state/district parameter names', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        candidate_office: 'H',
+        candidate_office_state: 'OH',
+        candidate_office_district: '09',
+        candidate_party: 'DEM',
+      });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      const callArgs = mockService.searchExpenditures.mock.calls[0]![0];
+      expect(callArgs).toMatchObject({
+        candidate_office: 'H',
+        candidate_office_state: 'OH',
+        candidate_office_district: '09',
+        candidate_party: 'DEM',
+      });
+      expect(callArgs).not.toHaveProperty('office');
+      expect(callArgs).not.toHaveProperty('state');
+      expect(callArgs).not.toHaveProperty('district');
     });
 
     it('accepts every ascending and descending sort value the schema advertises', () => {

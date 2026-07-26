@@ -13,6 +13,7 @@ import {
   getOpenFecService,
 } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { currentCycle } from './utils/election-cycle.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
@@ -28,18 +29,35 @@ const supportOpposeLabel = (code: unknown) =>
 
 const modes = ['itemized', 'by_candidate'] as const;
 
+/**
+ * `/schedules/schedule_e/by_candidate/` spells the office out where the itemized
+ * endpoint uses a single letter, and rejects the letter form with a 422.
+ */
+const BY_CANDIDATE_OFFICE: Record<'H' | 'S' | 'P', string> = {
+  H: 'house',
+  S: 'senate',
+  P: 'president',
+};
+
 export const searchExpenditures = tool('openfec_search_expenditures', {
   description:
-    'Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. Covers Super PACs, party committees, and other groups. Use itemized mode for individual expenditure records, or by_candidate for aggregated totals per candidate.',
+    'Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. Covers Super PACs, party committees, and other groups. Use itemized mode for individual expenditure records, or by_candidate for aggregated totals per candidate; by_candidate needs either a candidate_id or a full race scope (candidate_office alone for President, plus candidate_office_state for Senate, plus candidate_office_district as well for House).',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   errors: [
     {
-      reason: 'by_candidate_requires_candidate_id',
+      reason: 'by_candidate_requires_scope',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'by_candidate mode invoked without a candidate_id',
+      when: 'by_candidate mode invoked without a candidate_id and without a full race scope',
       recovery:
-        'Find the candidate ID via openfec_search_candidates, then pass it here to see independent expenditures supporting or opposing that candidate.',
+        'Pass a candidate_id (find one with openfec_search_candidates), or scope a whole race: candidate_office=P on its own, candidate_office=S with candidate_office_state, or candidate_office=H with both candidate_office_state and candidate_office_district.',
+    },
+    {
+      reason: 'candidate_party_not_supported_by_candidate',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'candidate_party passed in by_candidate mode, which the aggregate endpoint cannot filter on',
+      recovery:
+        'Drop candidate_party and scope by candidate_id or by a race (candidate_office, with candidate_office_state for S and both the state and candidate_office_district for H), or switch to mode itemized where party filtering is supported.',
     },
   ],
 
@@ -72,16 +90,33 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     candidate_office: z
       .enum(['H', 'S', 'P'])
       .optional()
-      .describe('Office of the targeted candidate: H=House, S=Senate, P=President.'),
+      .describe(
+        'Office of the targeted candidate: H=House, S=Senate, P=President. In by_candidate mode this scopes a whole race: P stands alone, S also needs candidate_office_state, H also needs candidate_office_state and candidate_office_district.',
+      ),
     candidate_office_state: z
       .string()
       .optional()
-      .describe('Two-letter state code of the targeted race.'),
+      .describe(
+        'Two-letter state code of the targeted race. Required alongside candidate_office=H or candidate_office=S in by_candidate mode; leave it off for candidate_office=P, whose aggregate rows carry no state and match nothing when one is supplied.',
+      ),
+    candidate_office_district: z
+      .string()
+      .optional()
+      .describe(
+        'Two-digit House district of the targeted race (e.g., "09"). Required alongside candidate_office=H and candidate_office_state in by_candidate mode; Senate and presidential rows carry no district and match nothing when one is supplied.',
+      ),
     candidate_party: z
       .string()
       .optional()
-      .describe('Three-letter party code of the targeted candidate (e.g., DEM, REP).'),
-    cycle: z.number().optional().describe('Two-year election cycle (e.g., 2024). Even years only.'),
+      .describe(
+        'Three-letter party code of the targeted candidate (e.g., DEM, REP). Itemized only — by_candidate rejects it, since the aggregate endpoint has no party filter.',
+      ),
+    cycle: z
+      .number()
+      .optional()
+      .describe(
+        'Two-year election cycle (e.g., 2024). Even years only. Itemized mode defaults to the current cycle when omitted — Schedule E spans all history and an unscoped scan times out upstream. Pass an explicit cycle to search an earlier period.',
+      ),
     min_date: z
       .string()
       .optional()
@@ -183,9 +218,16 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     /*  Itemized expenditures (keyset/SEEK)                             */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
+      /**
+       * Schedule E is large enough that an unscoped scan times out upstream, and
+       * the timeout is retried — so scope the query the way itemized
+       * contributions already do rather than sending an unbounded request.
+       */
+      const cycle = input.cycle ?? currentCycle();
       const params: FecParams = {
         per_page: input.per_page,
         most_recent: input.most_recent,
+        cycle,
       };
 
       if (input.committee_id) params.committee_id = input.committee_id;
@@ -195,8 +237,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       if (input.candidate_office) params.candidate_office = input.candidate_office;
       if (input.candidate_office_state)
         params.candidate_office_state = input.candidate_office_state;
+      if (input.candidate_office_district)
+        params.candidate_office_district = input.candidate_office_district;
       if (input.candidate_party) params.candidate_party = input.candidate_party;
-      if (input.cycle) params.cycle = input.cycle;
       if (input.min_date) params.min_date = input.min_date;
       if (input.max_date) params.max_date = input.max_date;
       if (input.min_amount !== undefined) params.min_amount = input.min_amount;
@@ -222,6 +265,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       ctx.log.info('Itemized expenditures fetched', {
         committee_id: input.committee_id,
         candidate_id: input.candidate_id,
+        cycle,
         count: result.pagination.count,
         returned: result.results.length,
       });
@@ -244,10 +288,30 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     /* ---------------------------------------------------------------- */
     /*  By candidate (page-based)                                       */
     /* ---------------------------------------------------------------- */
-    if (!input.candidate_id) {
-      throw ctx.fail('by_candidate_requires_candidate_id', undefined, {
+    if (input.candidate_party) {
+      throw ctx.fail(
+        'candidate_party_not_supported_by_candidate',
+        'The by_candidate aggregate endpoint has no party filter, so candidate_party would be ignored.',
+        { mode: input.mode, ...ctx.recoveryFor('candidate_party_not_supported_by_candidate') },
+      );
+    }
+
+    /**
+     * A whole race is a valid scope here, but a district race has to be named in
+     * full: the endpoint answers 422 for `house` or `senate` without a state, and
+     * for `house` without a district. The presidency is a national race — `office`
+     * alone is a complete scope, and pairing it with a state matches nothing.
+     */
+    const raceScoped =
+      input.candidate_office === 'P' ||
+      (Boolean(input.candidate_office) &&
+        Boolean(input.candidate_office_state) &&
+        (input.candidate_office !== 'H' || Boolean(input.candidate_office_district)));
+
+    if (!input.candidate_id && !raceScoped) {
+      throw ctx.fail('by_candidate_requires_scope', undefined, {
         mode: input.mode,
-        ...ctx.recoveryFor('by_candidate_requires_candidate_id'),
+        ...ctx.recoveryFor('by_candidate_requires_scope'),
       });
     }
 
@@ -255,10 +319,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
-    if (input.support_oppose) params.support_oppose_indicator = input.support_oppose;
-    if (input.candidate_office) params.candidate_office = input.candidate_office;
-    if (input.candidate_office_state) params.candidate_office_state = input.candidate_office_state;
-    if (input.candidate_party) params.candidate_party = input.candidate_party;
+    if (input.support_oppose) params.support_oppose = input.support_oppose;
+    if (input.candidate_office) params.office = BY_CANDIDATE_OFFICE[input.candidate_office];
+    if (input.candidate_office_state) params.state = input.candidate_office_state;
+    if (input.candidate_office_district) params.district = input.candidate_office_district;
     if (input.cycle) params.cycle = input.cycle;
 
     const result = await fec.getExpendituresByCandidate(params, ctx);
@@ -270,7 +334,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     ctx.enrich.total(result.pagination.count);
     if (result.results.length === 0) {
       ctx.enrich.notice(
-        'No expenditures by candidate matched. Verify the candidate_id and cycle are correct.',
+        'No expenditures by candidate matched. Verify the candidate_id (or the office/state/district race scope) and the cycle are correct.',
       );
     }
 
