@@ -46,11 +46,18 @@ const CURRENT_CYCLE = (() => {
   return year % 2 === 0 ? year : year + 1;
 })();
 
-/** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
+/**
+ * Build the cursor this tool would return for `args`, carrying `lastIndexes`.
+ * The itemized branch binds the cursor to the effective values, so the cycle it
+ * defaults is resolved the same way here.
+ */
 const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
   encodeCursor(
     lastIndexes,
-    cursorQuery('openfec_search_disbursements', searchDisbursements.input.parse(args)),
+    cursorQuery('openfec_search_disbursements', {
+      ...searchDisbursements.input.parse(args),
+      cycle: args.cycle ?? CURRENT_CYCLE,
+    }),
   );
 
 const disbursementRecord = (overrides: Record<string, unknown> = {}) => ({
@@ -66,6 +73,22 @@ const disbursementRecord = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Schedule B rows as OpenFEC returns them — a full nested spending committee. */
+const nestedCommittee = (id: string) => ({
+  committee_id: id,
+  name: `COMMITTEE ${id}`,
+  committee_type_full: 'Presidential',
+  treasurer_name: 'SMITH, ANNA',
+  cycles: [2020, 2022, 2024],
+});
+
+const nestedDisbursementRecord = (committeeId: string, overrides: Record<string, unknown> = {}) =>
+  disbursementRecord({
+    committee_id: committeeId,
+    committee: nestedCommittee(committeeId),
+    ...overrides,
+  });
+
 const aggregateRecord = (overrides: Record<string, unknown> = {}) => ({
   purpose: 'ADVERTISING',
   total: 3_500_000,
@@ -77,7 +100,7 @@ describe('searchDisbursements', () => {
   let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = createMockContext({ errors: searchDisbursements.errors });
     vi.clearAllMocks();
   });
 
@@ -186,6 +209,116 @@ describe('searchDisbursements', () => {
       expect(mcpErr.message).toContain("start with 'C'");
     });
 
+    it('hoists the shared spending committee out of the itemized rows', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 2, per_page: 20 },
+        results: [
+          nestedDisbursementRecord('C00703975'),
+          nestedDisbursementRecord('C00703975', { recipient_name: 'PRINT SHOP LLC' }),
+        ],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      expect(result.committee).toMatchObject({ committee_id: 'C00703975' });
+      for (const row of result.results) expect(row).not.toHaveProperty('committee');
+      expect(result.results[0]!.committee_id).toBe('C00703975');
+    });
+
+    it('echoes the resolved mode and criteria on a non-empty response', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [disbursementRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        cycle: 2024,
+      });
+      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      expect(result.mode).toBe('itemized');
+      expect(result.search_criteria).toMatchObject({ committee_id: 'C00703975', cycle: 2024 });
+    });
+
+    it('echoes the cycle it defaulted to when the caller omitted one', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [disbursementRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchDisbursements.mock.calls[0]![0]!.two_year_transaction_period).toBe(
+        CURRENT_CYCLE,
+      );
+      expect(result.search_criteria).toMatchObject({ cycle: CURRENT_CYCLE });
+    });
+
+    it.each([
+      ['recipient_name', 'MEDIA'],
+      ['recipient_state', 'DC'],
+      ['recipient_city', 'WASHINGTON'],
+      ['recipient_committee_id', 'C00999999'],
+      ['disbursement_description', 'MEDIA BUY'],
+      ['disbursement_purpose_category', 'ADVERTISING'],
+      ['min_date', '2024-10-01'],
+      ['max_date', '2024-10-31'],
+      ['min_amount', 1000],
+      ['max_amount', 5000],
+      ['sort', '-disbursement_amount'],
+      ['cursor', 'abc'],
+    ])('rejects itemized-only %s in an aggregate mode instead of dropping it', async (f, v) => {
+      const input = searchDisbursements.input.parse({
+        mode: 'by_recipient',
+        committee_id: 'C00703975',
+        [f]: v,
+      });
+
+      const err = await searchDisbursements
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({
+        reason: 'itemized_only_filters_in_aggregate_mode',
+        inapplicable_inputs: [f],
+      });
+      expect(mockService.getDisbursementAggregates).not.toHaveBeenCalled();
+    });
+
+    it('names the rejected inputs and the ones the aggregate does accept', async () => {
+      const input = searchDisbursements.input.parse({
+        mode: 'by_recipient',
+        committee_id: 'C00703975',
+        recipient_name: 'MEDIA',
+        min_date: '2024-10-01',
+      });
+
+      const err = (await searchDisbursements
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e)) as McpError;
+
+      expect(err.message).toContain('recipient_name');
+      expect(err.message).toContain('min_date');
+      expect(err.message).toContain('committee_id, cycle');
+      const data = err.data as { supported_inputs: string[]; recovery: { hint: string } };
+      expect(data.supported_inputs).toEqual(['committee_id', 'cycle', 'mode', 'page', 'per_page']);
+      expect(data.recovery.hint).toContain('itemized');
+    });
+
     it('fetches by_purpose aggregates', async () => {
       const aggregates = [aggregateRecord()];
       mockService.getDisbursementAggregates.mockResolvedValueOnce({
@@ -275,7 +408,7 @@ describe('searchDisbursements', () => {
       expect(callArgs.last_disbursement_date).toBe('2024-06-01');
       expect(callQuery).toEqual({
         scope: 'openfec_search_disbursements',
-        args: { mode: 'itemized', committee_id: 'C00703975' },
+        args: { mode: 'itemized', committee_id: 'C00703975', cycle: String(CURRENT_CYCLE) },
       });
     });
 
@@ -381,11 +514,15 @@ describe('searchDisbursements', () => {
     it('renders itemized disbursements with recipient and description', () => {
       const blocks = searchDisbursements.format!({
         results: [disbursementRecord()],
+        mode: 'itemized',
         next_cursor: null,
         count: 1,
+        search_criteria: { mode: 'itemized', committee_id: 'C00703975' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** itemized');
+      expect(text).toContain('_Search criteria: mode=itemized · committee_id=C00703975_');
       expect(text).toContain('MEDIA STRATEGIES INC');
       expect(text).toContain('recipient_city: WASHINGTON');
       expect(text).toContain('recipient_state: DC');
@@ -398,8 +535,10 @@ describe('searchDisbursements', () => {
       const cursor = 'eyJxIjp7InNjb3BlIjoib3BlbmZlY19zZWFyY2hfZGlzYnVyc2VtZW50cyJ9fQ=';
       const blocks = searchDisbursements.format!({
         results: [disbursementRecord()],
+        mode: 'itemized',
         next_cursor: cursor,
         count: 100,
+        search_criteria: {},
       });
 
       const text = blocks[0]!.text;
@@ -410,22 +549,46 @@ describe('searchDisbursements', () => {
     it('renders aggregate disbursements with purpose and count', () => {
       const blocks = searchDisbursements.format!({
         results: [aggregateRecord()],
+        mode: 'by_purpose',
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { mode: 'by_purpose' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** by_purpose');
       expect(text).toContain('purpose: ADVERTISING');
       expect(text).toContain('count: 120');
       expect(text).toContain('Page 1 of 1');
     });
 
-    it('renders empty state', () => {
+    it('renders empty state with the mode and criteria', () => {
       const blocks = searchDisbursements.format!({
         results: [],
+        mode: 'by_recipient',
         count: 0,
+        search_criteria: { committee_id: 'C00703975' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      const text = blocks[0]!.text;
+      expect(text).toContain('No results found');
+      expect(text).toContain('**Mode:** by_recipient');
+      expect(text).toContain('committee_id: C00703975');
+    });
+
+    it('renders the hoisted committee once, above the rows', () => {
+      const blocks = searchDisbursements.format!({
+        results: [disbursementRecord(), disbursementRecord()],
+        mode: 'itemized',
+        committee: nestedCommittee('C00703975'),
+        next_cursor: null,
+        count: 2,
+        search_criteria: {},
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('**Committee (applies to every row below):** COMMITTEE C00703975');
+      expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
+      expect(text).toContain('SMITH, ANNA');
     });
   });
 });

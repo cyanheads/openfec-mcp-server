@@ -41,11 +41,19 @@ import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
-/** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
+/**
+ * Build the cursor this tool would return for `args`, carrying `lastIndexes`.
+ * The itemized branch binds the cursor to the effective values, so the two
+ * fields it defaults are resolved the same way here.
+ */
 const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
   encodeCursor(
     lastIndexes,
-    cursorQuery('openfec_search_expenditures', searchExpenditures.input.parse(args)),
+    cursorQuery('openfec_search_expenditures', {
+      ...searchExpenditures.input.parse(args),
+      cycle: args.cycle ?? CURRENT_CYCLE,
+      most_recent: args.most_recent ?? true,
+    }),
   );
 
 const expenditureRecord = (overrides: Record<string, unknown> = {}) => ({
@@ -63,6 +71,23 @@ const expenditureRecord = (overrides: Record<string, unknown> = {}) => ({
   is_notice: false,
   ...overrides,
 });
+
+/** Schedule E rows as OpenFEC actually returns them — nested committee + candidate. */
+const nestedCommittee = (id: string) => ({
+  committee_id: id,
+  name: `PAC ${id}`,
+  committee_type_full: 'Super PAC',
+  treasurer_name: 'ROE, RICHARD',
+  cycles: [2020, 2022, 2024],
+});
+
+const nestedExpenditureRecord = (committeeId: string, overrides: Record<string, unknown> = {}) =>
+  expenditureRecord({
+    committee_id: committeeId,
+    committee: nestedCommittee(committeeId),
+    candidate: { candidate_id: 'H2OH01234', idx: 1, two_year_period: 2024 },
+    ...overrides,
+  });
 
 const byCandidateRecord = (overrides: Record<string, unknown> = {}) => ({
   support_oppose_indicator: 'O',
@@ -314,9 +339,177 @@ describe('searchExpenditures', () => {
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({
-        reason: 'candidate_party_not_supported_by_candidate',
+        reason: 'itemized_only_filters_in_aggregate_mode',
+        inapplicable_inputs: ['candidate_party'],
       });
       expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['payee_name', 'NOSUCHPAYEE'],
+      ['min_date', '2024-10-01'],
+      ['max_date', '2024-10-31'],
+      ['min_amount', 1_000_000],
+      ['max_amount', 2_000_000],
+      ['is_notice', true],
+      ['most_recent', false],
+      ['sort', '-expenditure_amount'],
+      ['cursor', 'abc'],
+    ])('rejects itemized-only %s in by_candidate instead of dropping it', async (field, value) => {
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'S6FL00123',
+        [field]: value,
+      });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({
+        reason: 'itemized_only_filters_in_aggregate_mode',
+        inapplicable_inputs: [field],
+      });
+      expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+    });
+
+    it('names every rejected input and what by_candidate does accept', async () => {
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'S6FL00123',
+        min_date: '2024-10-01',
+        max_date: '2024-10-31',
+        payee_name: 'NOSUCHPAYEE',
+      });
+
+      const err = (await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e)) as McpError;
+
+      expect(err.message).toContain('payee_name');
+      expect(err.message).toContain('min_date');
+      expect(err.message).toContain('max_date');
+      // The rejection names the mode's supported inputs, not just the bad ones.
+      expect(err.message).toContain('candidate_id');
+      expect(err.message).toContain('support_oppose');
+      const data = err.data as { supported_inputs: string[]; recovery: { hint: string } };
+      expect(data.supported_inputs).toContain('cycle');
+      expect(data.recovery.hint).toContain('itemized');
+    });
+
+    it('accepts the filters by_candidate genuinely supports', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'S6FL00123',
+        committee_id: 'C00111111',
+        support_oppose: 'S',
+        cycle: 2024,
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.mode).toBe('by_candidate');
+      expect(mockService.getExpendituresByCandidate).toHaveBeenCalledOnce();
+    });
+
+    it('hoists the shared committee out of the rows when scoped to one committee_id', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 2, per_page: 20 },
+        results: [nestedExpenditureRecord('C00111111'), nestedExpenditureRecord('C00111111')],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.committee).toMatchObject({ committee_id: 'C00111111', name: 'PAC C00111111' });
+      for (const row of result.results) expect(row).not.toHaveProperty('committee');
+      // The flat identity field stays, so a row is still attributable on its own.
+      expect(result.results[0]!.committee_id).toBe('C00111111');
+    });
+
+    it('keeps the per-row committee when the query spans committees', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 2, per_page: 20 },
+        results: [nestedExpenditureRecord('C00111111'), nestedExpenditureRecord('C00222222')],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        candidate_id: 'H2OH01234',
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.committee).toBeUndefined();
+      expect(result.results[0]!.committee).toMatchObject({ committee_id: 'C00111111' });
+      expect(result.results[1]!.committee).toMatchObject({ committee_id: 'C00222222' });
+    });
+
+    it('drops the duplicated candidate sub-object whether or not the committee is hoisted', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 2, per_page: 20 },
+        results: [nestedExpenditureRecord('C00111111'), nestedExpenditureRecord('C00222222')],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        candidate_id: 'H2OH01234',
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      for (const row of result.results) {
+        expect(row).not.toHaveProperty('candidate');
+        // The flat candidate_id it duplicated is still there.
+        expect(row.candidate_id).toBe('H2OH01234');
+      }
+    });
+
+    it('echoes the resolved mode and search criteria on a non-empty response', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+        cycle: 2024,
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.mode).toBe('itemized');
+      expect(result.search_criteria).toMatchObject({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+        cycle: 2024,
+      });
+    });
+
+    it('echoes by_candidate as the resolved mode', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'S6FL00123',
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.mode).toBe('by_candidate');
+      expect(result.search_criteria).toMatchObject({ candidate_id: 'S6FL00123' });
     });
 
     it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
@@ -383,7 +576,12 @@ describe('searchExpenditures', () => {
       expect(callArgs.last_expenditure_date).toBe('2024-09-15');
       expect(callQuery).toEqual({
         scope: 'openfec_search_expenditures',
-        args: { mode: 'itemized', committee_id: 'C00111111', most_recent: 'true' },
+        args: {
+          mode: 'itemized',
+          committee_id: 'C00111111',
+          cycle: String(CURRENT_CYCLE),
+          most_recent: 'true',
+        },
       });
     });
 
@@ -481,6 +679,66 @@ describe('searchExpenditures', () => {
       expect(mockService.searchExpenditures.mock.calls[0]![0].sort_nulls_last).toBeUndefined();
     });
 
+    it('applies most_recent=true in itemized mode when the caller omits it', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized' });
+      expect(input.most_recent).toBeUndefined();
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].most_recent).toBe(true);
+    });
+
+    it('forwards an explicit most_recent=false to the itemized endpoint', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized', most_recent: false });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].most_recent).toBe(false);
+    });
+
+    it('echoes an explicitly-supplied most_recent in the search criteria', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized', most_recent: false });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.search_criteria).toMatchObject({ most_recent: false });
+    });
+
+    it('echoes the defaults it applied when the caller omitted most_recent and cycle', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized' });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(result.search_criteria).toMatchObject({
+        most_recent: true,
+        cycle: CURRENT_CYCLE,
+      });
+      expect(mockService.searchExpenditures.mock.calls[0]![0]).toMatchObject({
+        most_recent: true,
+        cycle: CURRENT_CYCLE,
+      });
+    });
+
     it('scopes an unfiltered itemized call to the current cycle', async () => {
       mockService.searchExpenditures.mockResolvedValueOnce({
         pagination: { count: 0, per_page: 20 },
@@ -563,11 +821,15 @@ describe('searchExpenditures', () => {
             expenditure_amount: 250_000,
           }),
         ],
+        mode: 'itemized',
         next_cursor: null,
         count: 2,
+        search_criteria: { mode: 'itemized', committee_id: 'C00111111' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** itemized');
+      expect(text).toContain('_Search criteria: mode=itemized · committee_id=C00111111_');
       expect(text).toContain('[SUPPORT]');
       expect(text).toContain('[OPPOSE]');
       expect(text).toContain('SMITH, JOHN');
@@ -580,8 +842,10 @@ describe('searchExpenditures', () => {
       const cursor = 'eyJxIjp7InNjb3BlIjoib3BlbmZlY19zZWFyY2hfZXhwZW5kaXR1cmVzIn19=';
       const blocks = searchExpenditures.format!({
         results: [expenditureRecord()],
+        mode: 'itemized',
         next_cursor: cursor,
         count: 200,
+        search_criteria: {},
       });
 
       const text = blocks[0]!.text;
@@ -592,10 +856,13 @@ describe('searchExpenditures', () => {
     it('renders by_candidate aggregate results', () => {
       const blocks = searchExpenditures.format!({
         results: [byCandidateRecord()],
+        mode: 'by_candidate',
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { mode: 'by_candidate' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** by_candidate');
       expect(text).toContain('[OPPOSE]');
       expect(text).toContain('JONES, ALICE');
       expect(text).toContain('CITIZENS UNITED PAC');
@@ -603,13 +870,33 @@ describe('searchExpenditures', () => {
       expect(text).toContain('Page 1 of 1');
     });
 
-    it('renders empty state', () => {
+    it('renders empty state with the mode that produced it', () => {
       const blocks = searchExpenditures.format!({
         results: [],
+        mode: 'by_candidate',
         count: 0,
+        search_criteria: { candidate_id: 'S6FL00123' },
       });
 
       expect(blocks[0]!.text).toContain('No results found');
+      expect(blocks[0]!.text).toContain('**Mode:** by_candidate');
+      expect(blocks[0]!.text).toContain('candidate_id: S6FL00123');
+    });
+
+    it('renders the hoisted committee once, above the rows', () => {
+      const blocks = searchExpenditures.format!({
+        results: [expenditureRecord(), expenditureRecord()],
+        mode: 'itemized',
+        committee: nestedCommittee('C00111111'),
+        next_cursor: null,
+        count: 2,
+        search_criteria: {},
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('**Committee (applies to every row below):** PAC C00111111');
+      expect(text.match(/PAC C00111111/g)).toHaveLength(1);
+      expect(text).toContain('ROE, RICHARD');
     });
   });
 });

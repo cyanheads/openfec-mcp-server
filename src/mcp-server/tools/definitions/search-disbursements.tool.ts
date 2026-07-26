@@ -5,6 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import {
   cursorQuery,
   decodeCursor,
@@ -15,18 +16,56 @@ import { currentCycle } from './utils/election-cycle.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
+import {
+  formatHoistedCommittee,
+  HoistedCommitteeSchema,
+  trimScheduleRows,
+} from './utils/trim-schedule-row.js';
 
 const modes = ['itemized', 'by_purpose', 'by_recipient', 'by_recipient_id'] as const;
+
+/**
+ * Inputs the itemized Schedule B endpoint accepts and the aggregate endpoints
+ * do not. Sending one in an aggregate mode used to drop it silently, returning
+ * an unnarrowed result set that looks like an answer to the narrowed question.
+ */
+const ITEMIZED_ONLY_INPUTS = [
+  'recipient_name',
+  'recipient_state',
+  'recipient_city',
+  'recipient_committee_id',
+  'disbursement_description',
+  'disbursement_purpose_category',
+  'min_date',
+  'max_date',
+  'min_amount',
+  'max_amount',
+  'sort',
+  'cursor',
+] as const;
+
+/** What the Schedule B aggregate endpoints do accept — quoted in the rejection. */
+const AGGREGATE_INPUTS = 'committee_id, cycle, mode, page, per_page';
 
 export const searchDisbursements = tool('openfec_search_disbursements', {
   description:
     'Search itemized committee spending (Schedule B) or get aggregate breakdowns by purpose or recipient. All modes require a committee_id. Use to answer "what is this committee spending money on?" or "who is receiving payments from this committee?"',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'itemized_only_filters_in_aggregate_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'An itemized-only filter was supplied alongside an aggregate mode, which cannot apply it',
+      recovery: `Re-run with mode "itemized" to filter by recipient, description, date range, or amount, or drop the named inputs to keep the aggregate. Aggregate modes accept only ${AGGREGATE_INPUTS}.`,
+    },
+  ],
 
   input: z.object({
     mode: z
@@ -112,6 +151,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .describe(
         'Disbursement result set; itemized records or aggregate buckets depending on mode.',
       ),
+    mode: z
+      .enum(modes)
+      .describe(
+        'Query mode as the server resolved it. Row shapes differ by mode — itemized rows are individual payments, aggregate rows are buckets with a total — so read this rather than inferring the shape from the fields present.',
+      ),
+    committee: HoistedCommitteeSchema,
     next_cursor: z
       .string()
       .nullable()
@@ -147,6 +192,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
       const cycle = input.cycle ?? currentCycle();
+      /**
+       * The cycle can default, and a default the caller cannot see is the
+       * failure the criteria echo exists to close — so the echo and the cursor
+       * identity are both built from the effective values, not the raw input.
+       */
+      const applied = { ...input, cycle };
       const params: FecParams = {
         committee_id: input.committee_id,
         two_year_transaction_period: cycle,
@@ -169,7 +220,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       if (input.max_amount !== undefined) params.max_amount = input.max_amount;
       if (input.sort) params.sort = input.sort;
 
-      const query = cursorQuery('openfec_search_disbursements', input);
+      const query = cursorQuery('openfec_search_disbursements', applied);
       if (input.cursor) {
         Object.assign(params, decodeCursor(input.cursor, query));
       }
@@ -189,17 +240,40 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         );
       }
 
+      /** committee_id is required here, so every row carries the same committee. */
+      const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
+        hoistCommittee: true,
+      });
+
       return {
-        results: result.results,
+        results: trimmed.results,
+        ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+        mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
-        search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+        search_criteria: buildSearchCriteria(applied),
       };
     }
 
     /* ---------------------------------------------------------------- */
     /*  Aggregate modes                                                 */
     /* ---------------------------------------------------------------- */
+    const inapplicable = ITEMIZED_ONLY_INPUTS.filter(
+      (key) => input[key] !== undefined && input[key] !== '',
+    );
+    if (inapplicable.length > 0) {
+      throw ctx.fail(
+        'itemized_only_filters_in_aggregate_mode',
+        `Mode "${mode}" cannot apply ${inapplicable.join(', ')} — the Schedule B aggregate endpoints accept only ${AGGREGATE_INPUTS}. Sending them would have returned an unfiltered aggregate.`,
+        {
+          mode,
+          inapplicable_inputs: inapplicable,
+          supported_inputs: AGGREGATE_INPUTS.split(', '),
+          ...ctx.recoveryFor('itemized_only_filters_in_aggregate_mode'),
+        },
+      );
+    }
+
     const params: FecParams = {
       committee_id: input.committee_id,
       page: input.page,
@@ -226,8 +300,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
     return {
       results: result.results,
+      mode,
       pagination: result.pagination,
-      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+      search_criteria: buildSearchCriteria(input),
     };
   },
 
@@ -236,11 +311,15 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       return formatEmptyResult(
         result.search_criteria,
         'Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
+        result.mode,
       );
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;
-    const lines: string[] = [];
+    const lines: string[] = [
+      `**Mode:** ${result.mode}`,
+      ...formatHoistedCommittee(result.committee),
+    ];
 
     if (isItemized) {
       if (result.count != null) {
@@ -263,6 +342,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       const p = result.pagination;
       lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
     }
+
+    const criteria = formatSearchCriteria(result.search_criteria);
+    if (criteria) lines.push(criteria);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

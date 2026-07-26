@@ -46,11 +46,18 @@ const CURRENT_CYCLE = (() => {
   return year % 2 === 0 ? year : year + 1;
 })();
 
-/** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
+/**
+ * Build the cursor this tool would return for `args`, carrying `lastIndexes`.
+ * The itemized branch binds the cursor to the effective values, so the cycle it
+ * defaults is resolved the same way here.
+ */
 const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
   encodeCursor(
     lastIndexes,
-    cursorQuery('openfec_search_contributions', searchContributions.input.parse(args)),
+    cursorQuery('openfec_search_contributions', {
+      ...searchContributions.input.parse(args),
+      cycle: args.cycle ?? CURRENT_CYCLE,
+    }),
   );
 
 const contributionRecord = (overrides: Record<string, unknown> = {}) => ({
@@ -64,6 +71,22 @@ const contributionRecord = (overrides: Record<string, unknown> = {}) => ({
   contributor_state: 'WA',
   ...overrides,
 });
+
+/** Schedule A rows as OpenFEC returns them — a full nested receiving committee. */
+const nestedCommittee = (id: string) => ({
+  committee_id: id,
+  name: `COMMITTEE ${id}`,
+  committee_type_full: 'Presidential',
+  treasurer_name: 'SMITH, ANNA',
+  cycles: [2020, 2022, 2024],
+});
+
+const nestedContributionRecord = (committeeId: string, overrides: Record<string, unknown> = {}) =>
+  contributionRecord({
+    committee_id: committeeId,
+    committee: nestedCommittee(committeeId),
+    ...overrides,
+  });
 
 const aggregateRecord = (overrides: Record<string, unknown> = {}) => ({
   size: 200,
@@ -233,6 +256,198 @@ describe('searchContributions', () => {
       );
     });
 
+    it('hoists the shared receiving committee out of the itemized rows', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 2, per_page: 20 },
+        results: [
+          nestedContributionRecord('C00703975'),
+          nestedContributionRecord('C00703975', { contributor_name: 'ROE, RICHARD' }),
+        ],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(result.committee).toMatchObject({ committee_id: 'C00703975' });
+      for (const row of result.results) expect(row).not.toHaveProperty('committee');
+      expect(result.results[0]!.committee_id).toBe('C00703975');
+    });
+
+    it('keeps the donor-as-committee contributor object, which is not a duplicate', async () => {
+      const contributor = {
+        committee_id: 'C00010603',
+        name: 'MINNESOTA DFL',
+        treasurer_name: 'PARK, JOHN',
+        designated_agent_name: 'AGENT, ANN',
+        cycles: [2020, 2022, 2024],
+      };
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [nestedContributionRecord('C00703975', { contributor })],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(result.results[0]!.contributor).toEqual(contributor);
+    });
+
+    it('echoes the resolved mode and criteria on a non-empty itemized response', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [contributionRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        cycle: 2024,
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(result.mode).toBe('itemized');
+      expect(result.search_criteria).toMatchObject({ committee_id: 'C00703975', cycle: 2024 });
+    });
+
+    it('echoes the cycle it defaulted to when the caller omitted one', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [contributionRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchContributions.mock.calls[0]![0]!.two_year_transaction_period).toBe(
+        CURRENT_CYCLE,
+      );
+      expect(result.search_criteria).toMatchObject({ cycle: CURRENT_CYCLE });
+    });
+
+    it('echoes the cycle a by_candidate aggregate defaulted to', async () => {
+      mockService.getContributionAggregates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [aggregateRecord()],
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'by_size',
+        candidate_id: 'P00003392',
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getContributionAggregates.mock.calls[0]![1]!.cycle).toBe(CURRENT_CYCLE);
+      expect(result.search_criteria).toMatchObject({ cycle: CURRENT_CYCLE });
+    });
+
+    it('echoes the _candidate variant the aggregate actually resolved to', async () => {
+      mockService.getContributionAggregates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [aggregateRecord()],
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'by_state',
+        candidate_id: 'P00003392',
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      // The caller asked for by_state; the server ran by_state_candidate.
+      expect(result.mode).toBe('by_state_candidate');
+      expect(result.search_criteria).toMatchObject({ mode: 'by_state' });
+    });
+
+    it.each([
+      ['contributor_name', 'DOE'],
+      ['contributor_employer', 'ACME'],
+      ['contributor_occupation', 'ENGINEER'],
+      ['contributor_city', 'SEATTLE'],
+      ['contributor_state', 'WA'],
+      ['contributor_zip', '98101'],
+      ['min_date', '2024-10-01'],
+      ['max_date', '2024-10-31'],
+      ['min_amount', 1000],
+      ['max_amount', 5000],
+      ['is_individual', true],
+      ['sort', '-contribution_receipt_amount'],
+      ['cursor', 'abc'],
+    ])('rejects itemized-only %s in an aggregate mode instead of dropping it', async (f, v) => {
+      const input = searchContributions.input.parse({
+        mode: 'by_state',
+        committee_id: 'C00703975',
+        [f]: v,
+      });
+
+      const err = await searchContributions
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      expect((err as McpError).data).toMatchObject({
+        reason: 'itemized_only_filters_in_aggregate_mode',
+        inapplicable_inputs: [f],
+      });
+      expect(mockService.getContributionAggregates).not.toHaveBeenCalled();
+    });
+
+    it('names the rejected inputs and the ones the aggregate does accept', async () => {
+      const input = searchContributions.input.parse({
+        mode: 'by_state',
+        committee_id: 'C00703975',
+        contributor_state: 'WA',
+        min_date: '2024-10-01',
+      });
+
+      const err = (await searchContributions
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e)) as McpError;
+
+      expect(err.message).toContain('contributor_state');
+      expect(err.message).toContain('min_date');
+      expect(err.message).toContain('committee_id, candidate_id, cycle');
+      const data = err.data as { supported_inputs: string[]; recovery: { hint: string } };
+      expect(data.supported_inputs).toEqual([
+        'committee_id',
+        'candidate_id',
+        'cycle',
+        'mode',
+        'page',
+        'per_page',
+      ]);
+      expect(data.recovery.hint).toContain('itemized');
+    });
+
+    it('still accepts the filters the aggregate endpoints support', async () => {
+      mockService.getContributionAggregates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [aggregateRecord()],
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'by_size',
+        committee_id: 'C00703975',
+        cycle: 2024,
+        page: 2,
+        per_page: 50,
+      });
+      await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getContributionAggregates).toHaveBeenCalledOnce();
+    });
+
     it('requires committee_id for by_employer mode', async () => {
       const input = searchContributions.input.parse({ mode: 'by_employer' });
 
@@ -262,7 +477,7 @@ describe('searchContributions', () => {
       expect(callArgs.last_contribution_receipt_date).toBe('2024-01-01');
       expect(callQuery).toEqual({
         scope: 'openfec_search_contributions',
-        args: { mode: 'itemized', committee_id: 'C00703975' },
+        args: { mode: 'itemized', committee_id: 'C00703975', cycle: String(CURRENT_CYCLE) },
       });
     });
 
@@ -351,11 +566,15 @@ describe('searchContributions', () => {
     it('renders itemized results with donor info', () => {
       const blocks = searchContributions.format!({
         results: [contributionRecord()],
+        mode: 'itemized',
         next_cursor: null,
         count: 1,
+        search_criteria: { mode: 'itemized', committee_id: 'C00703975' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** itemized');
+      expect(text).toContain('_Search criteria: mode=itemized · committee_id=C00703975_');
       expect(text).toContain('DOE, JANE');
       expect(text).toContain('contributor_city: SEATTLE');
       expect(text).toContain('contributor_state: WA');
@@ -368,8 +587,10 @@ describe('searchContributions', () => {
       const cursor = 'eyJxIjp7InNjb3BlIjoib3BlbmZlY19zZWFyY2hfY29udHJpYnV0aW9ucyJ9fQ=';
       const blocks = searchContributions.format!({
         results: [contributionRecord()],
+        mode: 'itemized',
         next_cursor: cursor,
         count: 50,
+        search_criteria: {},
       });
 
       const text = blocks[0]!.text;
@@ -380,22 +601,46 @@ describe('searchContributions', () => {
     it('renders aggregate results', () => {
       const blocks = searchContributions.format!({
         results: [aggregateRecord()],
+        mode: 'by_size_candidate',
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { mode: 'by_size' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** by_size_candidate');
       expect(text).toContain('size: 200');
       expect(text).toContain('count: 25000');
       expect(text).toContain('Page 1 of 1');
     });
 
-    it('renders empty results message', () => {
+    it('renders empty results message with the mode and criteria', () => {
       const blocks = searchContributions.format!({
         results: [],
+        mode: 'by_employer',
         count: 0,
+        search_criteria: { committee_id: 'C00703975' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      const text = blocks[0]!.text;
+      expect(text).toContain('No results found');
+      expect(text).toContain('**Mode:** by_employer');
+      expect(text).toContain('committee_id: C00703975');
+    });
+
+    it('renders the hoisted committee once, above the rows', () => {
+      const blocks = searchContributions.format!({
+        results: [contributionRecord(), contributionRecord()],
+        mode: 'itemized',
+        committee: nestedCommittee('C00703975'),
+        next_cursor: null,
+        count: 2,
+        search_criteria: {},
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('**Committee (applies to every row below):** COMMITTEE C00703975');
+      expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
+      expect(text).toContain('SMITH, ANNA');
     });
   });
 });

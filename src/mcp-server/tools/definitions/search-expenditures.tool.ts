@@ -17,11 +17,17 @@ import { currentCycle } from './utils/election-cycle.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
+import {
+  formatHoistedCommittee,
+  HoistedCommitteeSchema,
+  trimScheduleRows,
+} from './utils/trim-schedule-row.js';
 
 /** Expand S/O indicator to a readable label. */
 const supportOpposeLabel = (code: unknown) =>
@@ -39,6 +45,31 @@ const BY_CANDIDATE_OFFICE: Record<'H' | 'S' | 'P', string> = {
   P: 'president',
 };
 
+/** Applied when the caller leaves `most_recent` unset in itemized mode. */
+const MOST_RECENT_DEFAULT = true;
+
+/**
+ * Inputs the itemized Schedule E endpoint accepts and `/by_candidate/` does
+ * not. Sending one in by_candidate mode used to drop it silently, returning an
+ * unnarrowed result set that looks like an answer to the narrowed question.
+ */
+const ITEMIZED_ONLY_INPUTS = [
+  'payee_name',
+  'candidate_party',
+  'min_date',
+  'max_date',
+  'min_amount',
+  'max_amount',
+  'is_notice',
+  'most_recent',
+  'sort',
+  'cursor',
+] as const;
+
+/** What `/by_candidate/` does accept — quoted in the rejection. */
+const BY_CANDIDATE_INPUTS =
+  'committee_id, candidate_id, support_oppose, candidate_office, candidate_office_state, candidate_office_district, cycle, mode, page, per_page';
+
 export const searchExpenditures = tool('openfec_search_expenditures', {
   description:
     'Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. Covers Super PACs, party committees, and other groups. Use itemized mode for individual expenditure records, or by_candidate for aggregated totals per candidate; by_candidate needs either a candidate_id or a full race scope (candidate_office alone for President, plus candidate_office_state for Senate, plus candidate_office_district as well for House).',
@@ -53,11 +84,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         'Pass a candidate_id (find one with openfec_search_candidates), or scope a whole race: candidate_office=P on its own, candidate_office=S with candidate_office_state, or candidate_office=H with both candidate_office_state and candidate_office_district.',
     },
     {
-      reason: 'candidate_party_not_supported_by_candidate',
+      reason: 'itemized_only_filters_in_aggregate_mode',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'candidate_party passed in by_candidate mode, which the aggregate endpoint cannot filter on',
-      recovery:
-        'Drop candidate_party and scope by candidate_id or by a race (candidate_office, with candidate_office_state for S and both the state and candidate_office_district for H), or switch to mode itemized where party filtering is supported.',
+      when: 'An itemized-only filter (payee_name, candidate_party, a date or amount bound, is_notice, most_recent, sort, cursor) was supplied alongside mode by_candidate, which cannot apply it',
+      recovery: `Re-run with mode "itemized" to filter by payee, party, date range, amount, or notice status, or drop the named inputs to keep the per-candidate aggregate. by_candidate accepts only ${BY_CANDIDATE_INPUTS}.`,
     },
   ],
 
@@ -139,8 +169,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe('Only 24/48-hour notice filings (near-election spending). Itemized only.'),
     most_recent: z
       .boolean()
-      .default(true)
-      .describe('Only the most recent version of amended filings. Itemized only.'),
+      .optional()
+      .describe(
+        'Only the most recent version of amended filings. Itemized only — by_candidate rejects it. Defaults to true in itemized mode when omitted; pass false to see superseded versions of amended filings.',
+      ),
     sort: z
       .enum([
         'expenditure_date',
@@ -183,6 +215,12 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Expenditure result set; itemized records or per-candidate aggregates depending on mode.',
       ),
+    mode: z
+      .enum(modes)
+      .describe(
+        'Query mode as the server resolved it. Row shapes differ by mode — itemized rows are individual expenditures, by_candidate rows are per-candidate totals — so read this rather than inferring the shape from the fields present.',
+      ),
+    committee: HoistedCommitteeSchema,
     next_cursor: z
       .string()
       .nullable()
@@ -224,9 +262,18 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
        * contributions already do rather than sending an unbounded request.
        */
       const cycle = input.cycle ?? currentCycle();
+      const mostRecent = input.most_recent ?? MOST_RECENT_DEFAULT;
+      /**
+       * Both `cycle` and `most_recent` can default, and a default the caller
+       * cannot see is the failure the criteria echo exists to close — so the
+       * echo and the cursor identity are both built from the effective values,
+       * not the raw input. Binding the cursor to the effective values also
+       * keeps an omitted `most_recent` and an explicit `true` on one identity.
+       */
+      const applied = { ...input, cycle, most_recent: mostRecent };
       const params: FecParams = {
         per_page: input.per_page,
-        most_recent: input.most_recent,
+        most_recent: mostRecent,
         cycle,
       };
 
@@ -256,7 +303,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         params.sort_nulls_last = true;
       }
 
-      const query = cursorQuery('openfec_search_expenditures', input);
+      const query = cursorQuery('openfec_search_expenditures', applied);
       if (input.cursor) {
         Object.assign(params, decodeCursor(input.cursor, query));
       }
@@ -277,22 +324,43 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         );
       }
 
+      /**
+       * Schedule E does not require a committee_id, so a candidate- or
+       * race-scoped page spans several spending committees. Hoist only when the
+       * caller pinned one; the embedded `candidate` sub-object carries nothing
+       * the row and the echoed cycle do not already state.
+       */
+      const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
+        hoistCommittee: Boolean(input.committee_id),
+        drop: ['candidate'],
+      });
+
       return {
-        results: result.results,
+        results: trimmed.results,
+        ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+        mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
-        search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+        search_criteria: buildSearchCriteria(applied),
       };
     }
 
     /* ---------------------------------------------------------------- */
     /*  By candidate (page-based)                                       */
     /* ---------------------------------------------------------------- */
-    if (input.candidate_party) {
+    const inapplicable = ITEMIZED_ONLY_INPUTS.filter(
+      (key) => input[key] !== undefined && input[key] !== '',
+    );
+    if (inapplicable.length > 0) {
       throw ctx.fail(
-        'candidate_party_not_supported_by_candidate',
-        'The by_candidate aggregate endpoint has no party filter, so candidate_party would be ignored.',
-        { mode: input.mode, ...ctx.recoveryFor('candidate_party_not_supported_by_candidate') },
+        'itemized_only_filters_in_aggregate_mode',
+        `Mode "by_candidate" cannot apply ${inapplicable.join(', ')} — /schedules/schedule_e/by_candidate/ accepts only ${BY_CANDIDATE_INPUTS}. Sending them would have returned an unfiltered per-candidate aggregate.`,
+        {
+          mode: input.mode,
+          inapplicable_inputs: inapplicable,
+          supported_inputs: BY_CANDIDATE_INPUTS.split(', '),
+          ...ctx.recoveryFor('itemized_only_filters_in_aggregate_mode'),
+        },
       );
     }
 
@@ -340,8 +408,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
     return {
       results: result.results,
+      mode: 'by_candidate' as const,
       pagination: result.pagination,
-      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+      search_criteria: buildSearchCriteria(input),
     };
   },
 
@@ -350,11 +419,15 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       return formatEmptyResult(
         result.search_criteria,
         'Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+        result.mode,
       );
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;
-    const lines: string[] = [];
+    const lines: string[] = [
+      `**Mode:** ${result.mode}`,
+      ...formatHoistedCommittee(result.committee),
+    ];
 
     if (isItemized) {
       if (result.count != null) {
@@ -376,6 +449,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       const p = result.pagination;
       lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
     }
+
+    const criteria = formatSearchCriteria(result.search_criteria);
+    if (criteria) lines.push(criteria);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

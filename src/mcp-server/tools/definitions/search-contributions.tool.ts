@@ -17,13 +17,51 @@ import { currentCycle } from './utils/election-cycle.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
+import {
+  formatHoistedCommittee,
+  HoistedCommitteeSchema,
+  trimScheduleRows,
+} from './utils/trim-schedule-row.js';
 
 const modes = ['itemized', 'by_size', 'by_state', 'by_employer', 'by_occupation'] as const;
+
+/**
+ * Modes as the handler resolves them. `by_size` and `by_state` split into a
+ * `_candidate` variant when the query is scoped by candidate_id rather than
+ * committee_id, and that variant hits a different upstream endpoint.
+ */
+const resolvedModes = [...modes, 'by_size_candidate', 'by_state_candidate'] as const;
+type ResolvedMode = (typeof resolvedModes)[number];
+
+/**
+ * Inputs the itemized Schedule A endpoint accepts and the aggregate endpoints
+ * do not. Sending one in an aggregate mode used to drop it silently, returning
+ * an unnarrowed result set that looks like an answer to the narrowed question.
+ */
+const ITEMIZED_ONLY_INPUTS = [
+  'contributor_name',
+  'contributor_employer',
+  'contributor_occupation',
+  'contributor_city',
+  'contributor_state',
+  'contributor_zip',
+  'min_date',
+  'max_date',
+  'min_amount',
+  'max_amount',
+  'is_individual',
+  'sort',
+  'cursor',
+] as const;
+
+/** What the Schedule A aggregate endpoints do accept — quoted in the rejection. */
+const AGGREGATE_INPUTS = 'committee_id, candidate_id, cycle, mode, page, per_page';
 
 export const searchContributions = tool('openfec_search_contributions', {
   description:
@@ -44,6 +82,12 @@ export const searchContributions = tool('openfec_search_contributions', {
       when: 'by_employer or by_occupation aggregate without a committee_id',
       recovery:
         'These aggregates roll up to a single committee — provide a committee_id for the spending committee.',
+    },
+    {
+      reason: 'itemized_only_filters_in_aggregate_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'An itemized-only filter was supplied alongside an aggregate mode, which cannot apply it',
+      recovery: `Re-run with mode "itemized" (requires committee_id) to filter by contributor, date range, or amount, or drop the named inputs to keep the aggregate. Aggregate modes accept only ${AGGREGATE_INPUTS}.`,
     },
   ],
 
@@ -152,6 +196,12 @@ export const searchContributions = tool('openfec_search_contributions', {
       .describe(
         'Contribution result set; itemized records or aggregate buckets depending on mode.',
       ),
+    mode: z
+      .enum(resolvedModes)
+      .describe(
+        'Query mode as the server resolved it. "by_size" and "by_state" resolve to "by_size_candidate" / "by_state_candidate" when scoped by candidate_id — a different endpoint with different row shapes — so read this rather than assuming the mode you sent.',
+      ),
+    committee: HoistedCommitteeSchema,
     next_cursor: z
       .string()
       .nullable()
@@ -194,6 +244,12 @@ export const searchContributions = tool('openfec_search_contributions', {
       }
 
       const cycle = input.cycle ?? currentCycle();
+      /**
+       * The cycle can default, and a default the caller cannot see is the
+       * failure the criteria echo exists to close — so the echo and the cursor
+       * identity are both built from the effective values, not the raw input.
+       */
+      const applied = { ...input, cycle };
       const params: FecParams = {
         committee_id: input.committee_id,
         two_year_transaction_period: cycle,
@@ -214,7 +270,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       if (input.is_individual !== undefined) params.is_individual = input.is_individual;
       if (input.sort) params.sort = input.sort;
 
-      const query = cursorQuery('openfec_search_contributions', input);
+      const query = cursorQuery('openfec_search_contributions', applied);
       if (input.cursor) {
         Object.assign(params, decodeCursor(input.cursor, query));
       }
@@ -234,11 +290,18 @@ export const searchContributions = tool('openfec_search_contributions', {
         );
       }
 
+      /** committee_id is required here, so every row carries the same committee. */
+      const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
+        hoistCommittee: true,
+      });
+
       return {
-        results: result.results,
+        results: trimmed.results,
+        ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+        mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
-        search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+        search_criteria: buildSearchCriteria(applied),
       };
     }
 
@@ -255,8 +318,25 @@ export const searchContributions = tool('openfec_search_contributions', {
       }
     }
 
+    const inapplicable = ITEMIZED_ONLY_INPUTS.filter(
+      (key) => input[key] !== undefined && input[key] !== '',
+    );
+    if (inapplicable.length > 0) {
+      throw ctx.fail(
+        'itemized_only_filters_in_aggregate_mode',
+        `Mode "${mode}" cannot apply ${inapplicable.join(', ')} — the Schedule A aggregate endpoints accept only ${AGGREGATE_INPUTS}. Sending them would have returned an unfiltered aggregate.`,
+        {
+          mode,
+          inapplicable_inputs: inapplicable,
+          supported_inputs: AGGREGATE_INPUTS.split(', '),
+          ...ctx.recoveryFor('itemized_only_filters_in_aggregate_mode'),
+        },
+      );
+    }
+
     // /by_candidate variants require cycle — default to current if not provided
-    const useByCandidate = (mode === 'by_size' || mode === 'by_state') && input.candidate_id;
+    const useByCandidate =
+      (mode === 'by_size' || mode === 'by_state') && Boolean(input.candidate_id);
     const cycle = input.cycle ?? (useByCandidate ? currentCycle() : undefined);
 
     const params: FecParams = {
@@ -269,7 +349,11 @@ export const searchContributions = tool('openfec_search_contributions', {
     if (input.candidate_id) params.candidate_id = input.candidate_id;
     if (cycle) params.cycle = cycle;
 
-    const aggregateMode: string = useByCandidate ? `${mode}_candidate` : mode;
+    const aggregateMode: ResolvedMode = useByCandidate
+      ? mode === 'by_size'
+        ? 'by_size_candidate'
+        : 'by_state_candidate'
+      : mode;
 
     const result = await fec.getContributionAggregates(aggregateMode, params, ctx);
     ctx.log.info('Contribution aggregates fetched', {
@@ -287,8 +371,9 @@ export const searchContributions = tool('openfec_search_contributions', {
 
     return {
       results: result.results,
+      mode: aggregateMode,
       pagination: result.pagination,
-      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+      search_criteria: buildSearchCriteria({ ...input, cycle }),
     };
   },
 
@@ -297,11 +382,15 @@ export const searchContributions = tool('openfec_search_contributions', {
       return formatEmptyResult(
         result.search_criteria,
         'For itemized mode, try a different cycle or broaden name/employer filters. For aggregates, verify the committee_id or candidate_id is correct.',
+        result.mode,
       );
     }
 
     const isItemized = 'next_cursor' in result && result.next_cursor !== undefined;
-    const lines: string[] = [];
+    const lines: string[] = [
+      `**Mode:** ${result.mode}`,
+      ...formatHoistedCommittee(result.committee),
+    ];
 
     if (isItemized) {
       if (result.count != null) {
@@ -324,6 +413,9 @@ export const searchContributions = tool('openfec_search_contributions', {
       const p = result.pagination;
       lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
     }
+
+    const criteria = formatSearchCriteria(result.search_criteria);
+    if (criteria) lines.push(criteria);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },
