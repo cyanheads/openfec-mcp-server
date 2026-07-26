@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** openfec-mcp-server
-**Version:** 0.6.0
+**Version:** 0.7.0
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.11.0`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 
@@ -241,14 +241,17 @@ src/
       types.ts                          # API request/response types
   mcp-server/
     tools/definitions/
-      search-candidates.tool.ts         # 9 tool definitions (*.tool.ts)
+      search-candidates.tool.ts         # 12 tool definitions (*.tool.ts)
       search-committees.tool.ts
+      get-committee-totals.tool.ts
       search-contributions.tool.ts
       search-disbursements.tool.ts
       search-expenditures.tool.ts
+      search-coordinated-expenditures.tool.ts
       search-filings.tool.ts
       lookup-elections.tool.ts
       search-legal.tool.ts
+      get-legal-document.tool.ts
       lookup-calendar.tool.ts
     resources/definitions/
       candidate.resource.ts             # 5 resource definitions (*.resource.ts)

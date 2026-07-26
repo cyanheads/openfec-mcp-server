@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-07-26 19:31:54
+Generated on: 2026-07-26 21:13:53
 
 ```text
 openfec-mcp-server/
@@ -27,6 +27,7 @@ openfec-mcp-server/
 │   ├── 0.4.x/
 │   ├── 0.5.x/
 │   ├── 0.6.x/
+│   ├── 0.7.x/
 │   └── template.md
 ├── claude-plans/
 ├── docs/
@@ -156,12 +157,15 @@ openfec-mcp-server/
 │   │           │   ├── format-helpers.ts
 │   │           │   ├── id-validators.ts
 │   │           │   └── trim-schedule-row.ts
+│   │           ├── get-committee-totals.tool.ts
+│   │           ├── get-legal-document.tool.ts
 │   │           ├── index.ts
 │   │           ├── lookup-calendar.tool.ts
 │   │           ├── lookup-elections.tool.ts
 │   │           ├── search-candidates.tool.ts
 │   │           ├── search-committees.tool.ts
 │   │           ├── search-contributions.tool.ts
+│   │           ├── search-coordinated-expenditures.tool.ts
 │   │           ├── search-disbursements.tool.ts
 │   │           ├── search-expenditures.tool.ts
 │   │           ├── search-filings.tool.ts
@@ -190,11 +194,14 @@ openfec-mcp-server/
 │   │           │   ├── format-helpers.test.ts
 │   │           │   ├── id-validators.test.ts
 │   │           │   └── trim-schedule-row.test.ts
+│   │           ├── get-committee-totals.tool.test.ts
+│   │           ├── get-legal-document.tool.test.ts
 │   │           ├── lookup-calendar.tool.test.ts
 │   │           ├── lookup-elections.tool.test.ts
 │   │           ├── search-candidates.tool.test.ts
 │   │           ├── search-committees.tool.test.ts
 │   │           ├── search-contributions.tool.test.ts
+│   │           ├── search-coordinated-expenditures.tool.test.ts
 │   │           ├── search-disbursements.tool.test.ts
 │   │           ├── search-expenditures.tool.test.ts
 │   │           ├── search-filings.tool.test.ts

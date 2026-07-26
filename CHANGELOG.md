@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.7.0](changelog/0.7.x/0.7.0.md) — 2026-07-26
+
+Three new tools — openfec_get_committee_totals, openfec_search_coordinated_expenditures, openfec_get_legal_document (9 → 12) — closing #14 and #1; the outbound parameter guard now checks path-parameterized endpoints, and a genuine upstream miss is distinguished from an edge routing failure
+
 ## [0.6.0](changelog/0.6.x/0.6.0.md) — 2026-07-26 · ⚠️ Breaking
 
 Query responses now echo effective search criteria and resolved mode on every call (#5); itemized Schedule A/B/E rows hoist the shared committee object instead of repeating it per row (#11); aggregate modes on the three schedule tools reject itemized-only filters instead of silently ignoring them (#23)

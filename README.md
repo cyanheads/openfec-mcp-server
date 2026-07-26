@@ -1,13 +1,13 @@
 <div align="center">
   <h1>@cyanheads/openfec-mcp-server</h1>
   <p><b>Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.</b>
-  <div>9 Tools • 5 Resources • 2 Prompts</div>
+  <div>12 Tools • 5 Resources • 2 Prompts</div>
   </p>
 </div>
 
 <div align="center">
 
-[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.6.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.3.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
+[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.7.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.3.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -29,18 +29,21 @@
 
 ## Tools
 
-Nine tools for querying federal election campaign finance data:
+Twelve tools for querying federal election campaign finance data:
 
 | Tool Name | Description |
 |:----------|:------------|
 | `openfec_search_candidates` | Find federal candidates by name, state, office, party, or cycle. |
 | `openfec_search_committees` | Find political committees by name, type, candidate affiliation, or state. |
+| `openfec_get_committee_totals` | Get pre-aggregated committee financial totals for one committee, or rank committees of one entity type. |
 | `openfec_search_contributions` | Search itemized individual contributions or aggregate breakdowns by size, state, employer, or occupation. |
 | `openfec_search_disbursements` | Search itemized committee spending or aggregate breakdowns by purpose or recipient. |
 | `openfec_search_expenditures` | Search independent expenditures supporting or opposing federal candidates. |
+| `openfec_search_coordinated_expenditures` | Search coordinated party expenditures (Schedule F) made on behalf of a candidate. |
 | `openfec_search_filings` | Search FEC filings and reports by committee, candidate, form type, or date range. |
 | `openfec_lookup_elections` | Look up election races and candidate financial summaries. |
 | `openfec_search_legal` | Search FEC legal documents: advisory opinions, enforcement cases, and administrative fines. |
+| `openfec_get_legal_document` | Fetch one legal document in full, including the arrays legal search trims away. |
 | `openfec_lookup_calendar` | Look up FEC calendar events, filing deadlines, and election dates. |
 
 ### `openfec_search_candidates`
@@ -62,6 +65,17 @@ Find political committees (campaign, PAC, Super PAC, party).
 - Fetch a specific committee by FEC ID (C prefix)
 - Committee types: House, Senate, Presidential, Super PAC, PAC, Party
 - Treasurer name search
+
+---
+
+### `openfec_get_committee_totals`
+
+Pre-aggregated committee finances, without paginating Schedule A.
+
+- **single**: One committee's totals, one row per two-year cycle it filed
+- **by_entity_type**: Every committee of one type — presidential, pac, party, pac-party, house-senate, ie-only
+- Receipts, disbursements, cash on hand, debts, and the itemized/unitemized contribution split
+- Grouped mode filters by state, committee type, designation, organization type, and receipts/disbursements thresholds
 
 ---
 
@@ -100,6 +114,16 @@ Search Schedule E independent expenditure data.
 
 ---
 
+### `openfec_search_coordinated_expenditures`
+
+Search Schedule F coordinated party expenditures.
+
+- Party committee spending made on behalf of a candidate, in coordination with that campaign — a separate legal category from independent expenditures and from direct contributions
+- Filters: spending committee, benefiting candidate, cycle, payee name, date range, amount range
+- Page-based pagination; the shared spending committee is hoisted out of the rows when the query names one
+
+---
+
 ### `openfec_search_filings`
 
 Search FEC filings and reports.
@@ -120,6 +144,16 @@ Search across FEC legal document types.
 - Filter by respondent, regulatory/statutory citation, penalty amount range
 - Date filtering is type-scoped: pick a `date_kind` the document type records (advisory opinions issue/request/document, cases open/close/document, admin fines RTB/final determination)
 - Offset-based pagination (up to 200 results per page)
+
+---
+
+### `openfec_get_legal_document`
+
+Fetch one legal document in full by type and number.
+
+- Returns the full `documents` array that `openfec_search_legal` replaces with a count and category summary, and the complete `commission_votes` it cuts down to a date and a truncated action
+- `doc_type` is the plural of a search result's `document_type` (`mur` → `murs`); `no` is that result's `no` field, which every document type carries
+- Reports how many related filings the record carries, so it can be checked against the search result's `document_count`
 
 ---
 
