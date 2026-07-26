@@ -16,6 +16,51 @@ import {
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 
+/**
+ * Date parameters `/legal/search/` accepts, keyed by document type and then by
+ * date kind. There is no generic date bound and no kind shared by every type:
+ * advisory opinions, cases (MURs and ADRs), and administrative fines each carry
+ * their own prefix and their own set of dates. `statutes` has none at all.
+ */
+const DATE_PARAMS = {
+  advisory_opinions: {
+    issue_date: ['ao_min_issue_date', 'ao_max_issue_date'],
+    request_date: ['ao_min_request_date', 'ao_max_request_date'],
+    document_date: ['ao_min_document_date', 'ao_max_document_date'],
+  },
+  murs: {
+    open_date: ['case_min_open_date', 'case_max_open_date'],
+    close_date: ['case_min_close_date', 'case_max_close_date'],
+    document_date: ['case_min_document_date', 'case_max_document_date'],
+  },
+  adrs: {
+    open_date: ['case_min_open_date', 'case_max_open_date'],
+    close_date: ['case_min_close_date', 'case_max_close_date'],
+    document_date: ['case_min_document_date', 'case_max_document_date'],
+  },
+  admin_fines: {
+    rtb_date: ['af_min_rtb_date', 'af_max_rtb_date'],
+    fd_date: ['af_min_fd_date', 'af_max_fd_date'],
+  },
+  statutes: {},
+} as const satisfies Record<string, Record<string, readonly [string, string]>>;
+
+/** Every date kind any document type supports — the `date_kind` input's domain. */
+const dateKinds = [
+  'issue_date',
+  'request_date',
+  'open_date',
+  'close_date',
+  'document_date',
+  'rtb_date',
+  'fd_date',
+] as const;
+
+type LegalType = keyof typeof DATE_PARAMS;
+
+/** Date kinds valid for one document type, in the order the schema lists them. */
+const kindsFor = (type: LegalType): string[] => Object.keys(DATE_PARAMS[type]);
+
 /** Human-readable labels for document type discriminators. */
 const typeLabels: Record<string, string> = {
   advisory_opinion: 'Advisory Opinion',
@@ -34,9 +79,23 @@ export const searchLegal = tool('openfec_search_legal', {
     {
       reason: 'missing_filter',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'Called without query, type, a specific identifier (ao_number / case_number), respondent, or citation filter',
+      when: 'Called without any scoping filter at all',
       recovery:
-        'Provide at least a search query, document type, specific identifier (ao_number, case_number), respondent name, or citation (regulatory_citation, statutory_citation) to scope the legal search.',
+        'Provide at least one of: query, type, ao_number, case_number, respondent, regulatory_citation, statutory_citation, a penalty bound (min_penalty_amount / max_penalty_amount), or a date bound with its type and date_kind.',
+    },
+    {
+      reason: 'date_filter_incomplete',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'min_date or max_date given without both a type and a date_kind, or a date_kind given with neither bound',
+      recovery:
+        'Send min_date and/or max_date together with type and date_kind — upstream date parameters are named per document type and per date kind, so both are needed to pick one.',
+    },
+    {
+      reason: 'date_kind_not_valid_for_type',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'The requested date_kind is not a date this document type records',
+      recovery:
+        'Pick a date_kind the type records: advisory_opinions has issue_date, request_date, document_date; murs and adrs have open_date, close_date, document_date; admin_fines has rtb_date and fd_date; statutes are not date-filterable.',
     },
   ],
 
@@ -56,10 +115,33 @@ export const searchLegal = tool('openfec_search_legal', {
     min_penalty_amount: z
       .number()
       .optional()
-      .describe('Minimum penalty amount (enforcement cases).'),
-    max_penalty_amount: z.number().optional().describe('Maximum penalty amount.'),
-    min_date: z.string().optional().describe('Earliest document date (YYYY-MM-DD).'),
-    max_date: z.string().optional().describe('Latest document date (YYYY-MM-DD).'),
+      .describe(
+        'Minimum penalty amount in dollars. Filters enforcement cases (murs, adrs) only — other document types are returned unfiltered by it.',
+      ),
+    max_penalty_amount: z
+      .number()
+      .optional()
+      .describe(
+        'Maximum penalty amount in dollars. Filters enforcement cases (murs, adrs) only — other document types are returned unfiltered by it.',
+      ),
+    date_kind: z
+      .enum(dateKinds)
+      .optional()
+      .describe(
+        'Which date min_date/max_date bound. Each document type records its own dates, so this must be one the chosen type has: type=advisory_opinions → issue_date (opinion issued), request_date (request received), document_date; type=murs or adrs → open_date (case opened), close_date (case closed), document_date; type=admin_fines → rtb_date (reason-to-believe finding), fd_date (final determination). type=statutes cannot be date-filtered. Required whenever min_date or max_date is given, together with type.',
+      ),
+    min_date: z
+      .string()
+      .optional()
+      .describe(
+        'Earliest date (YYYY-MM-DD) for the date_kind selected. Requires type and date_kind.',
+      ),
+    max_date: z
+      .string()
+      .optional()
+      .describe(
+        'Latest date (YYYY-MM-DD) for the date_kind selected. Requires type and date_kind.',
+      ),
     from_hit: z
       .number()
       .int()
@@ -102,6 +184,7 @@ export const searchLegal = tool('openfec_search_legal', {
   },
 
   async handler(input, ctx) {
+    const hasDateBound = Boolean(input.min_date || input.max_date);
     const hasFilter =
       input.query ||
       input.type ||
@@ -109,9 +192,33 @@ export const searchLegal = tool('openfec_search_legal', {
       input.case_number ||
       input.respondent ||
       input.regulatory_citation ||
-      input.statutory_citation;
+      input.statutory_citation ||
+      input.min_penalty_amount !== undefined ||
+      input.max_penalty_amount !== undefined ||
+      hasDateBound;
     if (!hasFilter) {
       throw ctx.fail('missing_filter', undefined, { ...ctx.recoveryFor('missing_filter') });
+    }
+
+    /**
+     * A date bound only becomes a real upstream parameter once the type and the
+     * date kind together name one — so reject the incomplete forms rather than
+     * guessing a kind and dropping the rest.
+     */
+    if (hasDateBound !== Boolean(input.date_kind) || (hasDateBound && !input.type)) {
+      throw ctx.fail(
+        'date_filter_incomplete',
+        'A date filter needs min_date and/or max_date, plus type and date_kind.',
+        {
+          given: {
+            type: input.type,
+            date_kind: input.date_kind,
+            min_date: input.min_date,
+            max_date: input.max_date,
+          },
+          ...ctx.recoveryFor('date_filter_incomplete'),
+        },
+      );
     }
 
     const fec = getOpenFecService();
@@ -128,11 +235,32 @@ export const searchLegal = tool('openfec_search_legal', {
     if (input.regulatory_citation) params.ao_regulatory_citation = input.regulatory_citation;
     if (input.statutory_citation) params.ao_statutory_citation = input.statutory_citation;
     if (input.min_penalty_amount !== undefined)
-      params.min_penalty_amount = input.min_penalty_amount;
+      params.case_min_penalty_amount = input.min_penalty_amount;
     if (input.max_penalty_amount !== undefined)
-      params.max_penalty_amount = input.max_penalty_amount;
-    if (input.min_date) params.min_date = input.min_date;
-    if (input.max_date) params.max_date = input.max_date;
+      params.case_max_penalty_amount = input.max_penalty_amount;
+
+    if (input.type && input.date_kind) {
+      const forType: Record<string, readonly [string, string]> = DATE_PARAMS[input.type];
+      const bounds = forType[input.date_kind];
+      if (!bounds) {
+        const valid = kindsFor(input.type);
+        throw ctx.fail(
+          'date_kind_not_valid_for_type',
+          valid.length > 0
+            ? `Document type "${input.type}" has no ${input.date_kind}; it records ${valid.join(', ')}.`
+            : `Document type "${input.type}" carries no date the API can filter on.`,
+          {
+            type: input.type,
+            date_kind: input.date_kind,
+            valid_date_kinds: valid,
+            ...ctx.recoveryFor('date_kind_not_valid_for_type'),
+          },
+        );
+      }
+      const [minParam, maxParam] = bounds;
+      if (input.min_date) params[minParam] = input.min_date;
+      if (input.max_date) params[maxParam] = input.max_date;
+    }
 
     ctx.log.info('Searching legal documents', {
       query: input.query,

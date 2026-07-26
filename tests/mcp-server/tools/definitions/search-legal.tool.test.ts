@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -166,6 +166,125 @@ describe('searchLegalTool', () => {
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
       expect(callArgs.ao_no).toBe('2024-01');
       expect(callArgs).not.toHaveProperty('ao_number');
+    });
+
+    it('maps penalty bounds to the case_* names the endpoint accepts', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
+
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        min_penalty_amount: 1_000_000,
+        max_penalty_amount: 5_000_000,
+      });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      const callArgs = mockService.searchLegal.mock.calls[0]![0];
+      expect(callArgs.case_min_penalty_amount).toBe(1_000_000);
+      expect(callArgs.case_max_penalty_amount).toBe(5_000_000);
+      expect(callArgs).not.toHaveProperty('min_penalty_amount');
+      expect(callArgs).not.toHaveProperty('max_penalty_amount');
+    });
+
+    it('accepts a penalty bound as a standalone filter', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
+
+      const input = searchLegalTool.input.parse({ min_penalty_amount: 1_000_000 });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchLegal).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ['murs', 'open_date', 'case_min_open_date', 'case_max_open_date'],
+      ['murs', 'close_date', 'case_min_close_date', 'case_max_close_date'],
+      ['murs', 'document_date', 'case_min_document_date', 'case_max_document_date'],
+      ['adrs', 'open_date', 'case_min_open_date', 'case_max_open_date'],
+      ['advisory_opinions', 'issue_date', 'ao_min_issue_date', 'ao_max_issue_date'],
+      ['advisory_opinions', 'request_date', 'ao_min_request_date', 'ao_max_request_date'],
+      ['advisory_opinions', 'document_date', 'ao_min_document_date', 'ao_max_document_date'],
+      ['admin_fines', 'rtb_date', 'af_min_rtb_date', 'af_max_rtb_date'],
+      ['admin_fines', 'fd_date', 'af_min_fd_date', 'af_max_fd_date'],
+    ])('maps type=%s date_kind=%s onto %s/%s', async (type, kind, minParam, maxParam) => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
+
+      const input = searchLegalTool.input.parse({
+        type,
+        date_kind: kind,
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+      });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      const callArgs = mockService.searchLegal.mock.calls[0]![0];
+      expect(callArgs[minParam]).toBe('2024-01-01');
+      expect(callArgs[maxParam]).toBe('2024-12-31');
+      expect(callArgs).not.toHaveProperty('min_date');
+      expect(callArgs).not.toHaveProperty('max_date');
+      expect(callArgs).not.toHaveProperty('date_kind');
+    });
+
+    it('sends only the bound that was given', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
+
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        date_kind: 'open_date',
+        min_date: '2024-01-01',
+      });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      const callArgs = mockService.searchLegal.mock.calls[0]![0];
+      expect(callArgs.case_min_open_date).toBe('2024-01-01');
+      expect(callArgs).not.toHaveProperty('case_max_open_date');
+    });
+
+    it('rejects a date_kind the document type does not record, naming the valid ones', async () => {
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        date_kind: 'issue_date',
+        min_date: '2024-01-01',
+      });
+
+      const err = await searchLegalTool
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      const data = (err as McpError).data as { reason: string; valid_date_kinds: string[] };
+      expect(data.reason).toBe('date_kind_not_valid_for_type');
+      expect(data.valid_date_kinds).toEqual(['open_date', 'close_date', 'document_date']);
+      expect(mockService.searchLegal).not.toHaveBeenCalled();
+    });
+
+    it('rejects any date filter on statutes, which carry no filterable date', async () => {
+      const input = searchLegalTool.input.parse({
+        type: 'statutes',
+        date_kind: 'document_date',
+        min_date: '2024-01-01',
+      });
+
+      const err = await searchLegalTool
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      const data = (err as McpError).data as { reason: string; valid_date_kinds: string[] };
+      expect(data.reason).toBe('date_kind_not_valid_for_type');
+      expect(data.valid_date_kinds).toEqual([]);
+    });
+
+    it.each([
+      ['a bound without type or date_kind', { min_date: '2024-01-01' }],
+      ['a bound without date_kind', { type: 'murs', min_date: '2024-01-01' }],
+      ['a bound without type', { date_kind: 'open_date', min_date: '2024-01-01' }],
+      ['a date_kind with no bound', { type: 'murs', date_kind: 'open_date' }],
+    ])('rejects %s instead of dropping it', async (_label, args) => {
+      const input = searchLegalTool.input.parse(args);
+
+      const err = await searchLegalTool
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect((err as McpError).data).toMatchObject({ reason: 'date_filter_incomplete' });
+      expect(mockService.searchLegal).not.toHaveBeenCalled();
     });
 
     it('passes case_number as case_no', async () => {
