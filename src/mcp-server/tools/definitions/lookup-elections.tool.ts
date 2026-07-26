@@ -11,12 +11,19 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 
 const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
+
+/** Applied when the caller leaves `election_full` unset on a non-ZIP query. */
+const ELECTION_FULL_DEFAULT = true;
+
+/** What a ZIP-scoped search accepts — quoted in the rejection. */
+const ZIP_SEARCH_INPUTS = ['mode', 'office', 'cycle', 'state', 'district', 'zip'];
 
 export const lookupElections = tool('openfec_lookup_elections', {
   description:
@@ -52,6 +59,13 @@ export const lookupElections = tool('openfec_lookup_elections', {
       recovery:
         'Use mode "search" for ZIP-based lookups, or remove zip and use state and district for summary mode.',
     },
+    {
+      reason: 'inputs_not_applicable_to_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'election_full supplied alongside zip — a ZIP-scoped search runs an endpoint that has no such parameter',
+      recovery:
+        'Drop election_full to keep the ZIP lookup, or drop zip and scope the race with state and district, where election_full applies.',
+    },
   ],
 
   input: z.object({
@@ -81,9 +95,9 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .describe('ZIP code — finds races covering this ZIP. Search mode only.'),
     election_full: z
       .boolean()
-      .default(true)
+      .optional()
       .describe(
-        'Expand to full election period (4yr president, 6yr senate, 2yr house). Default true. Ignored for ZIP-based searches.',
+        'Expand to full election period (4yr president, 6yr senate, 2yr house). Defaults to true when omitted; a ZIP-scoped search rejects it, since that endpoint has no such parameter. Carries no schema default, so an explicit value is distinguishable from an omission.',
       ),
     page: z
       .number()
@@ -113,6 +127,11 @@ export const lookupElections = tool('openfec_lookup_elections', {
       )
       .describe(
         'Election race result set; candidate financial rows in search mode, a single aggregate summary row in summary mode.',
+      ),
+    mode: z
+      .enum(['search', 'summary'])
+      .describe(
+        'Query mode as the server resolved it. Row shapes differ by mode — search rows are per-candidate financial records, summary is one aggregate race row — so read this rather than inferring the shape from the fields present.',
       ),
     pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
@@ -152,7 +171,23 @@ export const lookupElections = tool('openfec_lookup_elections', {
       }
     }
 
+    if (input.zip && input.election_full !== undefined) {
+      throw ctx.fail(
+        'inputs_not_applicable_to_mode',
+        `A ZIP-scoped search runs /elections/search/, which cannot apply election_full — it accepts only ${ZIP_SEARCH_INPUTS.join(', ')}. Sending it would have returned a result set the flag never narrowed.`,
+        {
+          mode: input.mode,
+          inapplicable_inputs: ['election_full'],
+          supported_inputs: ZIP_SEARCH_INPUTS,
+          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+        },
+      );
+    }
+
     const fec = getOpenFecService();
+
+    /** election_full carries no schema default, so the echo reports the effective value. */
+    const electionFull = input.election_full ?? ELECTION_FULL_DEFAULT;
 
     const params: FecParams = {
       office: OFFICE_API_FORM[input.office],
@@ -168,7 +203,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
           ...ctx.recoveryFor('summary_does_not_support_zip'),
         });
       }
-      params.election_full = input.election_full;
+      params.election_full = electionFull;
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });
       const summary = await fec.getElectionSummary(params, ctx);
       ctx.enrich.total(1);
@@ -179,7 +214,9 @@ export const lookupElections = tool('openfec_lookup_elections', {
       };
       return {
         results: [summaryRecord],
+        mode: 'summary' as const,
         pagination: { page: 1, pages: 1, count: 1, per_page: 1 },
+        search_criteria: buildSearchCriteria({ ...input, election_full: electionFull }),
       };
     }
 
@@ -203,11 +240,12 @@ export const lookupElections = tool('openfec_lookup_elections', {
       }
       return {
         results: data.results,
+        mode: 'search' as const,
         pagination: data.pagination,
-        search_criteria: data.results.length === 0 ? buildSearchCriteria(input) : undefined,
+        search_criteria: buildSearchCriteria(input),
       };
     }
-    params.election_full = input.election_full;
+    params.election_full = electionFull;
     const data = await fec.searchElections(params, ctx);
     ctx.enrich.total(data.pagination.count);
     if (data.results.length === 0) {
@@ -217,8 +255,9 @@ export const lookupElections = tool('openfec_lookup_elections', {
     }
     return {
       results: data.results,
+      mode: 'search' as const,
       pagination: data.pagination,
-      search_criteria: data.results.length === 0 ? buildSearchCriteria(input) : undefined,
+      search_criteria: buildSearchCriteria({ ...input, election_full: electionFull }),
     };
   },
 
@@ -227,11 +266,18 @@ export const lookupElections = tool('openfec_lookup_elections', {
       return formatEmptyResult(
         result.search_criteria,
         'Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
+        result.mode,
       );
     }
 
     const { page, pages, count, per_page } = result.pagination;
-    const paginationLine = `\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`;
+    const criteriaLine = formatSearchCriteria(result.search_criteria);
+    const footer = [
+      `\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`,
+      criteriaLine,
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     // Summary mode returns a single flat object with aggregate totals
     const first = result.results[0];
@@ -246,20 +292,27 @@ export const lookupElections = tool('openfec_lookup_elections', {
       const skipInFormat = new Set([noteKey]);
       const body = renderRecord(first, skipInFormat);
       const caveat = note ? `\n\n> **Note on independent_expenditures:** ${note}` : '';
-      return [{ type: 'text', text: `**Election Summary**\n${body}${caveat}\n${paginationLine}` }];
+      return [
+        {
+          type: 'text',
+          text: `**Election Summary**\n**Mode:** ${result.mode}\n${body}${caveat}\n${footer}`,
+        },
+      ];
     }
 
     const headerKeys = new Set(['candidate_name', 'candidate_id']);
 
-    const lines = result.results.map((r) => {
-      const name = String(r.candidate_name ?? 'Unknown');
-      const id = r.candidate_id ? String(r.candidate_id) : '';
-      const header = id ? `**${name}** (${id})` : `**${name}**`;
-      const fields = renderRecord(r, headerKeys);
-      return fields ? `${header}\n${fields}` : header;
-    });
-
-    lines.push(paginationLine);
+    const lines = [
+      `**Mode:** ${result.mode}`,
+      ...result.results.map((r) => {
+        const name = String(r.candidate_name ?? 'Unknown');
+        const id = r.candidate_id ? String(r.candidate_id) : '';
+        const header = id ? `**${name}** (${id})` : `**${name}**`;
+        const fields = renderRecord(r, headerKeys);
+        return fields ? `${header}\n${fields}` : header;
+      }),
+      footer,
+    ];
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

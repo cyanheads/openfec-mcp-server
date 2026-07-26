@@ -72,6 +72,13 @@ describe('lookupElectionsTool', () => {
 
       expect(result.results).toEqual(elections);
       expect(mockService.searchElections).toHaveBeenCalledOnce();
+      expect(result.mode).toBe('search');
+      expect(result.search_criteria).toMatchObject({
+        mode: 'search',
+        office: 'P',
+        cycle: 2024,
+        election_full: true,
+      });
     });
 
     it('summary mode calls getElectionSummary', async () => {
@@ -94,6 +101,57 @@ describe('lookupElectionsTool', () => {
       expect(result.results[0]).toMatchObject({ count: 50, receipts: 500_000_000 });
       expect(mockService.getElectionSummary).toHaveBeenCalledOnce();
       expect(mockService.searchElections).not.toHaveBeenCalled();
+      // The summary branch used to omit the echo entirely.
+      expect(result.mode).toBe('summary');
+      expect(result.search_criteria).toMatchObject({ mode: 'summary', office: 'P', cycle: 2024 });
+    });
+
+    it('omits election_full from a ZIP search it cannot apply', async () => {
+      mockService.searchElectionsByZip.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ candidate_name: 'SMITH, JANE' }],
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'H', cycle: 2024, zip: '98101' });
+      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchElectionsByZip.mock.calls[0]![0]).not.toHaveProperty(
+        'election_full',
+      );
+      expect(result.search_criteria).toMatchObject({ zip: '98101' });
+      expect(result.search_criteria).not.toHaveProperty('election_full');
+    });
+
+    it('rejects an explicit election_full on a ZIP search instead of dropping it', async () => {
+      const input = lookupElectionsTool.input.parse({
+        office: 'H',
+        cycle: 2024,
+        zip: '98101',
+        election_full: false,
+      });
+
+      await expect(
+        lookupElectionsTool.handler(input, ctx as unknown as Context),
+      ).rejects.toMatchObject({
+        data: {
+          reason: 'inputs_not_applicable_to_mode',
+          inapplicable_inputs: ['election_full'],
+        },
+      });
+      expect(mockService.searchElectionsByZip).not.toHaveBeenCalled();
+    });
+
+    it('echoes the election_full default it applied on a non-ZIP search', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ candidate_name: 'SMITH, JANE' }],
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
+      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchElections.mock.calls[0]![0]!.election_full).toBe(true);
+      expect(result.search_criteria).toMatchObject({ election_full: true });
     });
 
     it('summary mode adds independent_expenditures caveat note to result', async () => {
@@ -281,7 +339,9 @@ describe('lookupElectionsTool', () => {
             coverage_end_date: '2024-06-30',
           },
         ],
+        mode: 'search',
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { mode: 'search', office: 'S', cycle: 2024, state: 'AZ' },
       });
 
       const text = blocks[0]!.text;
@@ -306,7 +366,9 @@ describe('lookupElectionsTool', () => {
               'Unreconciled upstream aggregate — may be inflated due to double-counting across reporting periods. Use openfec_search_expenditures mode by_candidate for verified per-committee totals.',
           },
         ],
+        mode: 'summary',
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { mode: 'summary', office: 'P', cycle: 2024 },
       });
 
       const text = blocks[0]!.text;
@@ -328,7 +390,9 @@ describe('lookupElectionsTool', () => {
             independent_expenditures: 1_000,
           },
         ],
+        mode: 'summary',
         pagination: { page: 1, pages: 1, count: 1, per_page: 1 },
+        search_criteria: {},
       });
 
       expect(blocks[0]!.text).toContain('1 result(s) · page 1/1 · 1 per page');
@@ -337,10 +401,28 @@ describe('lookupElectionsTool', () => {
     it('renders empty state', () => {
       const blocks = lookupElectionsTool.format!({
         results: [],
+        mode: 'search',
         pagination: PAGE,
+        search_criteria: { office: 'H', cycle: 2024, state: 'AZ', district: '07' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      const text = blocks[0]!.text;
+      expect(text).toContain('No results found');
+      expect(text).toContain('**Mode:** search');
+      expect(text).toContain('district: 07');
+    });
+
+    it('renders the mode and criteria echo on a non-empty search response', () => {
+      const blocks = lookupElectionsTool.format!({
+        results: [{ candidate_name: 'SMITH, JANE', candidate_id: 'S4AZ00123' }],
+        mode: 'search',
+        pagination: { ...PAGE, count: 1 },
+        search_criteria: { office: 'S', cycle: 2024 },
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** search');
+      expect(text).toContain('_Search criteria: office=S · cycle=2024_');
     });
   });
 });

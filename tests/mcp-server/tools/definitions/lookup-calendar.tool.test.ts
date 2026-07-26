@@ -42,7 +42,7 @@ describe('lookupCalendarTool', () => {
   let ctx: ReturnType<typeof createMockContext>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = createMockContext({ errors: lookupCalendarTool.errors });
     vi.clearAllMocks();
   });
 
@@ -68,6 +68,8 @@ describe('lookupCalendarTool', () => {
 
       const callArgs = mockService.getCalendarDates.mock.calls[0]![0];
       expect(callArgs.description).toBe('meeting');
+      expect(result.mode).toBe('events');
+      expect(result.search_criteria).toMatchObject({ mode: 'events', description: 'meeting' });
     });
 
     it('filing deadlines mode calls getReportingDates', async () => {
@@ -90,6 +92,61 @@ describe('lookupCalendarTool', () => {
       const callArgs = mockService.getReportingDates.mock.calls[0]![0];
       expect(callArgs.report_type).toBe('Q1');
       expect(callArgs.report_year).toBe(2024);
+      expect(result.mode).toBe('filing_deadlines');
+      expect(result.search_criteria).toMatchObject({ report_type: 'Q1', report_year: 2024 });
+    });
+
+    it('rejects inputs the mode cannot apply instead of dropping them', async () => {
+      // report_type belongs to filing_deadlines and state to election_dates.
+      const input = lookupCalendarTool.input.parse({
+        mode: 'events',
+        description: 'meeting',
+        report_type: 'Q1',
+        state: 'AZ',
+      });
+
+      await expect(
+        lookupCalendarTool.handler(input, ctx as unknown as Context),
+      ).rejects.toMatchObject({
+        data: {
+          reason: 'inputs_not_applicable_to_mode',
+          mode: 'events',
+          inapplicable_inputs: expect.arrayContaining(['report_type', 'state']),
+        },
+      });
+      expect(mockService.getCalendarDates).not.toHaveBeenCalled();
+    });
+
+    it('names the offending input and the accepted set in the rejection', async () => {
+      const input = lookupCalendarTool.input.parse({
+        mode: 'filing_deadlines',
+        category: '21',
+        report_year: 2024,
+      });
+
+      await expect(lookupCalendarTool.handler(input, ctx as unknown as Context)).rejects.toThrow(
+        /cannot apply category[\s\S]*accepts only[\s\S]*report_type, report_year/,
+      );
+    });
+
+    it('accepts date bounds in every mode', async () => {
+      mockService.getElectionDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ election_date: '2024-11-05' }],
+      });
+
+      const input = lookupCalendarTool.input.parse({
+        mode: 'election_dates',
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+      });
+      const result = await lookupCalendarTool.handler(input, ctx as unknown as Context);
+
+      expect(result.search_criteria).toMatchObject({
+        mode: 'election_dates',
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+      });
     });
 
     it('election dates mode calls getElectionDates with mapped param names', async () => {
@@ -203,10 +260,14 @@ describe('lookupCalendarTool', () => {
             election_year: 2024,
           },
         ],
+        mode: 'events',
         pagination: { ...PAGE, count: 3 },
+        search_criteria: { mode: 'events', description: 'meeting' },
       });
 
       const text = blocks[0]!.text;
+      expect(text).toContain('**Mode:** events');
+      expect(text).toContain('_Search criteria: mode=events · description=meeting_');
       expect(text).toContain('**FEC Open Meeting**');
       expect(text).toContain('Monthly public meeting');
       expect(text).toContain('FEC Meetings');
@@ -222,10 +283,15 @@ describe('lookupCalendarTool', () => {
     it('renders empty state', () => {
       const blocks = lookupCalendarTool.format!({
         results: [],
+        mode: 'filing_deadlines',
         pagination: PAGE,
+        search_criteria: { report_type: 'Q2', report_year: 2024 },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      const text = blocks[0]!.text;
+      expect(text).toContain('No results found');
+      expect(text).toContain('**Mode:** filing_deadlines');
+      expect(text).toContain('report_type: Q2');
     });
   });
 });

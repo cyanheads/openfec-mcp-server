@@ -5,20 +5,44 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 
+/**
+ * Inputs each mode forwards upstream. A mode reads its own FEC dataset, so an
+ * input outside its list cannot be applied — it is rejected rather than dropped,
+ * since a dropped filter returns an unnarrowed result set that looks like an
+ * answer to the narrowed question.
+ */
+const MODE_INPUTS = {
+  events: ['mode', 'min_date', 'max_date', 'description', 'category'],
+  filing_deadlines: ['mode', 'min_date', 'max_date', 'report_type', 'report_year'],
+  election_dates: ['mode', 'min_date', 'max_date', 'state', 'office', 'election_year'],
+} as const satisfies Record<string, readonly string[]>;
+
 export const lookupCalendar = tool('openfec_lookup_calendar', {
   description:
     'Look up FEC calendar events, filing deadlines, and election dates. Use to find upcoming filing windows for a committee, locate when a federal election occurred, or scope FEC events by date range and category.',
   annotations: { readOnlyHint: true, idempotentHint: true },
+
+  errors: [
+    {
+      reason: 'inputs_not_applicable_to_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'A filter belonging to a different calendar mode was supplied, which the chosen mode cannot apply',
+      recovery:
+        'Switch to the mode that owns the named inputs, or drop them: description and category belong to events, report_type and report_year to filing_deadlines, state, office and election_year to election_dates. min_date and max_date work in every mode.',
+    },
+  ],
 
   input: z.object({
     mode: z
@@ -91,6 +115,11 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       .describe(
         'Calendar result set; events, filing deadlines, or election dates depending on mode.',
       ),
+    mode: z
+      .enum(['events', 'filing_deadlines', 'election_dates'])
+      .describe(
+        'Query mode as the server resolved it. Each mode reads a different FEC dataset with its own row shape — calendar events, report due dates, or election dates — so read this rather than inferring the dataset from the fields present.',
+      ),
     pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
@@ -113,7 +142,21 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       per_page: input.per_page,
     };
 
+    const applied: readonly string[] = MODE_INPUTS[input.mode];
     const criteria = buildSearchCriteria(input);
+    const inapplicable = Object.keys(criteria).filter((key) => !applied.includes(key));
+    if (inapplicable.length > 0) {
+      throw ctx.fail(
+        'inputs_not_applicable_to_mode',
+        `Mode "${input.mode}" cannot apply ${inapplicable.join(', ')} — it accepts only ${applied.join(', ')}. Sending them would have returned an unnarrowed ${input.mode} result set.`,
+        {
+          mode: input.mode,
+          inapplicable_inputs: inapplicable,
+          supported_inputs: applied,
+          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+        },
+      );
+    }
 
     if (input.mode === 'filing_deadlines') {
       // /reporting-dates/ uses min_due_date / max_due_date
@@ -135,8 +178,9 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       }
       return {
         results: data.results,
+        mode: 'filing_deadlines' as const,
         pagination: data.pagination,
-        search_criteria: data.results.length === 0 ? criteria : undefined,
+        search_criteria: criteria,
       };
     }
 
@@ -161,8 +205,9 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       }
       return {
         results: data.results,
+        mode: 'election_dates' as const,
         pagination: data.pagination,
-        search_criteria: data.results.length === 0 ? criteria : undefined,
+        search_criteria: criteria,
       };
     }
 
@@ -182,8 +227,9 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
     }
     return {
       results: data.results,
+      mode: 'events' as const,
       pagination: data.pagination,
-      search_criteria: data.results.length === 0 ? criteria : undefined,
+      search_criteria: criteria,
     };
   },
 
@@ -192,18 +238,25 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       return formatEmptyResult(
         result.search_criteria,
         'Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
+        result.mode,
       );
     }
 
-    const lines = result.results.map((r) => {
-      const summary = String(r.summary ?? r.report_type ?? r.election_type_full ?? 'Event');
-      const header = `**${summary}**`;
-      const fields = renderRecord(r, new Set(['summary']));
-      return fields ? `${header}\n${fields}` : header;
-    });
+    const lines = [
+      `**Mode:** ${result.mode}`,
+      ...result.results.map((r) => {
+        const summary = String(r.summary ?? r.report_type ?? r.election_type_full ?? 'Event');
+        const header = `**${summary}**`;
+        const fields = renderRecord(r, new Set(['summary']));
+        return fields ? `${header}\n${fields}` : header;
+      }),
+    ];
 
     const { page, pages, count, per_page } = result.pagination;
     lines.push(`\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`);
+
+    const criteriaLine = formatSearchCriteria(result.search_criteria);
+    if (criteriaLine) lines.push(criteriaLine);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },
