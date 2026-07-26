@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.4.15-blue.svg?style=flat-square)](./CHANGELOG.md) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.3.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
+[![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![Version](https://img.shields.io/badge/Version-0.5.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.3.0-f9f1e1.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -94,8 +94,8 @@ Search Schedule B spending data with four query modes.
 
 Search Schedule E independent expenditure data.
 
-- **itemized**: Individual expenditure records with support/oppose indicator
-- **by_candidate**: Aggregated totals per targeted candidate
+- **itemized**: Individual expenditure records with support/oppose indicator; scoped to the current cycle unless another is given
+- **by_candidate**: Aggregated totals per targeted candidate, scoped by candidate ID or by a whole race (office alone for President, plus state for Senate, plus district as well for House)
 - Filters: committee, candidate, office, party, 24/48-hour notices, date and amount range
 
 ---
@@ -118,6 +118,7 @@ Search across FEC legal document types.
 - Advisory opinions, MURs (enforcement cases), ADRs, administrative fines, statutes
 - Look up specific cases by AO number or case number
 - Filter by respondent, regulatory/statutory citation, penalty amount range
+- Date filtering is type-scoped: pick a `date_kind` the document type records (advisory opinions issue/request/document, cases open/close/document, admin fines RTB/final determination)
 - Offset-based pagination (up to 200 results per page)
 
 ---

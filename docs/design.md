@@ -203,7 +203,7 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 | `recipient_committee_id` | string | No | Recipient committee ID (for committee-to-committee transfers). Itemized mode only. |
 | `disbursement_description` | string | No | Full-text description search (e.g., "media buy", "consulting"). Itemized mode only. |
 | `disbursement_purpose_category` | string | No | Purpose category code. Itemized mode only. |
-| `cycle` | number | No | Two-year election cycle. |
+| `cycle` | number | No | Two-year election cycle. Itemized mode defaults to the current cycle when omitted, since an all-history Schedule B scan of an active committee times out upstream. |
 | `min_date` | string | No | Earliest disbursement date (YYYY-MM-DD). Itemized mode only. |
 | `max_date` | string | No | Latest disbursement date (YYYY-MM-DD). Itemized mode only. |
 | `min_amount` | number | No | Minimum amount. Itemized mode only. |
@@ -243,12 +243,13 @@ Search independent expenditures (Schedule E) — spending by outside groups (Sup
 | `mode` | enum | No | `itemized` (default) — individual expenditure records. `by_candidate` — aggregated totals per candidate by committee. |
 | `committee_id` | string | No | Spending committee ID. |
 | `candidate_id` | string | No | Targeted candidate ID. |
-| `support_oppose` | `S` \| `O` | No | `S` = support, `O` = oppose. |
+| `support_oppose` | `S` \| `O` | No | `S` = support, `O` = oppose. Sent as `support_oppose_indicator` (itemized) or `support_oppose` (`by_candidate`). |
 | `payee_name` | string | No | Full-text payee name search. Itemized mode only. |
-| `candidate_office` | `H` \| `S` \| `P` | No | Office of the targeted candidate. |
-| `candidate_office_state` | string | No | State of the targeted race. |
-| `candidate_party` | string | No | Party of the targeted candidate. |
-| `cycle` | number | No | Two-year election cycle. |
+| `candidate_office` | `H` \| `S` \| `P` | No | Office of the targeted candidate. Sent as `candidate_office` (itemized) or translated to `office` = `house`/`senate`/`president` (`by_candidate`). |
+| `candidate_office_state` | string | No | State of the targeted race. Sent as `candidate_office_state` (itemized) or `state` (`by_candidate`). Presidential `by_candidate` rows carry no state. |
+| `candidate_office_district` | string | No | Two-digit House district of the targeted race. Sent as `candidate_office_district` (itemized) or `district` (`by_candidate`). Senate and presidential `by_candidate` rows carry no district. |
+| `candidate_party` | string | No | Party of the targeted candidate. Itemized mode only — `by_candidate` rejects it, since the aggregate endpoint has no party filter. |
+| `cycle` | number | No | Two-year election cycle. Itemized mode defaults to the current cycle when omitted. |
 | `min_date` | string | No | Earliest expenditure date (YYYY-MM-DD). Itemized mode only. |
 | `max_date` | string | No | Latest expenditure date (YYYY-MM-DD). Itemized mode only. |
 | `min_amount` | number | No | Minimum amount. Itemized mode only. |
@@ -266,9 +267,13 @@ Search independent expenditures (Schedule E) — spending by outside groups (Sup
 
 **Pagination:** Itemized: keyset. Aggregate: page-based.
 
+**Error modes:**
+- `by_candidate` without `candidate_id` and without a full race scope → `ValidationError` (`by_candidate_requires_scope`). A race scope is `candidate_office` alone for `P`, plus `candidate_office_state` for `S`, plus `candidate_office_district` as well for `H` — the endpoint answers 422 for `house` or `senate` without a state and for `house` without a district, while `president` is a national race that takes neither and returns nothing when a state is supplied.
+- `candidate_party` in `by_candidate` mode → `ValidationError` (`candidate_party_not_supported_by_candidate`).
+
 **Upstream endpoints:**
 - `/v1/schedules/schedule_e/` — itemized (SEEK)
-- `/v1/schedules/schedule_e/by_candidate/` — aggregate by candidate
+- `/v1/schedules/schedule_e/by_candidate/` — aggregate by candidate. Takes `office`/`state`/`district`/`support_oppose`, not the itemized `candidate_office`/`candidate_office_state`/`candidate_office_district`/`support_oppose_indicator`, and has no `candidate_party`.
 
 ---
 
@@ -353,10 +358,11 @@ Search FEC legal documents. Powered by OpenSearch with proximity search and high
 | `respondent` | string | No | Respondent name (enforcement cases). |
 | `regulatory_citation` | string | No | CFR citation (e.g., `11 CFR 112.4`). |
 | `statutory_citation` | string | No | U.S.C. citation (e.g., `52 U.S.C. 30106`). |
-| `min_penalty_amount` | number | No | Minimum penalty amount (enforcement cases). |
-| `max_penalty_amount` | number | No | Maximum penalty amount. |
-| `min_date` | string | No | Earliest document date (YYYY-MM-DD). |
-| `max_date` | string | No | Latest document date (YYYY-MM-DD). |
+| `min_penalty_amount` | number | No | Minimum penalty amount. Sent as `case_min_penalty_amount` — filters enforcement cases (`murs`, `adrs`) only. |
+| `max_penalty_amount` | number | No | Maximum penalty amount. Sent as `case_max_penalty_amount` — filters enforcement cases only. |
+| `date_kind` | enum | No | Which date `min_date`/`max_date` bound: `issue_date`, `request_date`, `open_date`, `close_date`, `document_date`, `rtb_date`, `fd_date`. Must be one the chosen `type` records. Required alongside `type` whenever a bound is given. |
+| `min_date` | string | No | Earliest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
+| `max_date` | string | No | Latest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
 | `from_hit` | number | No | Offset for pagination (0-indexed). Default 0. |
 | `hits_returned` | number | No | Results per page. Default 20, max 200. |
 
@@ -371,7 +377,23 @@ The server normalizes the type-keyed response arrays into a uniform `results` ar
 **Pagination:** Custom model — `from_hit`/`hits_returned` (not page-based). The tool exposes this directly since it differs from other tools. Response includes `total_count` for the queried type(s).
 
 **Error modes:**
-- No `query` or `type` or specific identifier → `InvalidParams`: "Provide at least a search query, document type, or specific identifier (ao_number, case_number)."
+- No scoping filter at all → `ValidationError` (`missing_filter`). Any one of `query`, `type`, `ao_number`, `case_number`, `respondent`, `regulatory_citation`, `statutory_citation`, a penalty bound, or a date bound satisfies it.
+- A date bound without both `type` and `date_kind`, or a `date_kind` with neither bound → `ValidationError` (`date_filter_incomplete`).
+- A `date_kind` the chosen `type` does not record → `ValidationError` (`date_kind_not_valid_for_type`), carrying `valid_date_kinds`.
+
+**Date parameters:** the endpoint has no generic date bound. Each document type carries its own prefix and its own set of dates, so `type` + `date_kind` together select the upstream pair:
+
+| `type` | `date_kind` | Upstream parameters |
+|:-------|:------------|:--------------------|
+| `advisory_opinions` | `issue_date` | `ao_min_issue_date` / `ao_max_issue_date` |
+| `advisory_opinions` | `request_date` | `ao_min_request_date` / `ao_max_request_date` |
+| `advisory_opinions` | `document_date` | `ao_min_document_date` / `ao_max_document_date` |
+| `murs`, `adrs` | `open_date` | `case_min_open_date` / `case_max_open_date` |
+| `murs`, `adrs` | `close_date` | `case_min_close_date` / `case_max_close_date` |
+| `murs`, `adrs` | `document_date` | `case_min_document_date` / `case_max_document_date` |
+| `admin_fines` | `rtb_date` | `af_min_rtb_date` / `af_max_rtb_date` |
+| `admin_fines` | `fd_date` | `af_min_fd_date` / `af_max_fd_date` |
+| `statutes` | — | none; statutes are not date-filterable |
 
 **Upstream endpoints:**
 - `/v1/legal/search/` — unified legal search
