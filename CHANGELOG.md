@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.6.0](changelog/0.6.x/0.6.0.md) — 2026-07-26 · ⚠️ Breaking
+
+Query responses now echo effective search criteria and resolved mode on every call (#5); itemized Schedule A/B/E rows hoist the shared committee object instead of repeating it per row (#11); aggregate modes on the three schedule tools reject itemized-only filters instead of silently ignoring them (#23)
+
 ## [0.5.0](changelog/0.5.x/0.5.0.md) — 2026-07-26 · ⚠️ Breaking
 
 Independent-expenditure and legal-search filters now reach the API instead of being silently dropped (#16, #17); itemized Schedule B and E queries are cycle-scoped (#19, #22); outbound parameter names are checked against the OpenFEC spec

@@ -1,6 +1,6 @@
 {
   "name": "openfec-mcp-server",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
   "author": {
     "name": "cyanheads",
