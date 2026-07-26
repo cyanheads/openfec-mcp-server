@@ -11,6 +11,7 @@ import {
   getOpenFecService,
 } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { currentCycle } from './utils/election-cycle.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
@@ -55,7 +56,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .string()
       .optional()
       .describe('Purpose category code. Itemized only.'),
-    cycle: z.number().optional().describe('Two-year election cycle (e.g., 2024). Even years only.'),
+    cycle: z
+      .number()
+      .optional()
+      .describe(
+        'Two-year election cycle (e.g., 2024). Even years only. Itemized mode defaults to the current cycle when omitted — Schedule B spans all history, and an all-history scan of an active committee times out upstream. Pass an explicit cycle to search an earlier period.',
+      ),
     min_date: z
       .string()
       .optional()
@@ -140,12 +146,13 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     /*  Itemized disbursements (keyset/SEEK)                            */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
+      const cycle = input.cycle ?? currentCycle();
       const params: FecParams = {
         committee_id: input.committee_id,
+        two_year_transaction_period: cycle,
         per_page: input.per_page,
       };
 
-      if (input.cycle) params.two_year_transaction_period = input.cycle;
       if (input.recipient_name) params.recipient_name = input.recipient_name;
       if (input.recipient_state) params.recipient_state = input.recipient_state;
       if (input.recipient_city) params.recipient_city = input.recipient_city;
@@ -170,6 +177,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       const result = await fec.searchDisbursements(params, query, ctx);
       ctx.log.info('Itemized disbursements fetched', {
         committee_id: input.committee_id,
+        cycle,
         count: result.pagination.count,
         returned: result.results.length,
       });

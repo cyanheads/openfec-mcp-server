@@ -40,6 +40,12 @@ import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
+/** The two-year period the itemized branch falls back to when no cycle is given. */
+const CURRENT_CYCLE = (() => {
+  const year = new Date().getFullYear();
+  return year % 2 === 0 ? year : year + 1;
+})();
+
 /** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
 const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
   encodeCursor(
@@ -96,6 +102,43 @@ describe('searchDisbursements', () => {
       expect(result.count).toBe(1);
       expect(getEnrichment(ctx).totalCount).toBe(1);
       expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('scopes an itemized call with no cycle to the current two-year period', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchDisbursements.mock.calls[0]![0].two_year_transaction_period).toBe(
+        CURRENT_CYCLE,
+      );
+    });
+
+    it('keeps an explicit itemized cycle instead of the default', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        cycle: 2020,
+      });
+      await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchDisbursements.mock.calls[0]![0].two_year_transaction_period).toBe(
+        2020,
+      );
     });
 
     it('sets enrichment notice for empty itemized disbursements', async () => {
