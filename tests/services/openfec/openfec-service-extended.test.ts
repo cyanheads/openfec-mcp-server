@@ -1,8 +1,9 @@
 /**
  * @fileoverview Extended service tests covering methods not exercised in the
  * primary test file: getCandidateCommittees, getCommitteeTotals,
- * searchElectionsByZip, URL array params, SEEK edge cases, and transient
- * error classification.
+ * getCommitteeTotalsByEntityType, searchCoordinatedExpenditures,
+ * getLegalDocument, searchElectionsByZip, URL array params, SEEK edge cases,
+ * the outbound parameter-name guard, and transient error classification.
  * @module tests/services/openfec/openfec-service-extended.test
  */
 
@@ -44,6 +45,20 @@ const pageEnvelope = <T>(results: T[], count = 1) => ({
       results,
     }),
 });
+
+/** The JSON error body OpenFEC itself returns for an unknown record. */
+const apiNotFound = () =>
+  new McpError(JsonRpcErrorCode.NotFound, 'Fetch failed. Status: 404', {
+    status: 404,
+    body: '{"message": "The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again."}',
+  });
+
+/** The plain-text 404 the api.data.gov edge returns when the upstream host is unreachable. */
+const edgeNotFound = () =>
+  new McpError(JsonRpcErrorCode.NotFound, 'Fetch failed. Status: 404', {
+    status: 404,
+    body: "404 Not Found: Requested route ('api.open.fec.gov') does not exist.",
+  });
 
 const seekEnvelope = <T>(
   results: T[],
@@ -128,6 +143,183 @@ describe('getCommitteeTotals', () => {
 
     const url = mockFetch.mock.calls[0]![0] as string;
     expect(url).toContain('per_page=1');
+  });
+
+  it('normalizes an OpenFEC 404 to an empty page echoing the paging arguments', async () => {
+    mockFetch.mockRejectedValueOnce(apiNotFound());
+
+    const result = await svc.getCommitteeTotals('C99999999', { page: 2, per_page: 50 }, ctx);
+
+    expect(result.results).toEqual([]);
+    expect(result.pagination).toEqual({ page: 2, pages: 0, count: 0, per_page: 50 });
+  });
+
+  it('propagates an edge routing 404 rather than reporting the committee as empty', async () => {
+    mockFetch.mockRejectedValueOnce(edgeNotFound());
+
+    await expect(svc.getCommitteeTotals('C00703975', {}, ctx)).rejects.toThrow(/404/);
+  });
+
+  it('still propagates a non-404 failure', async () => {
+    mockFetch.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Fetch failed. Status: 503', {
+        status: 503,
+      }),
+    );
+
+    await expect(svc.getCommitteeTotals('C00703975', {}, ctx)).rejects.toThrow(/503/);
+  });
+});
+
+describe('getCommitteeTotalsByEntityType', () => {
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('puts the entity type in the path and the filters in the query', async () => {
+    mockFetch.mockResolvedValueOnce(pageEnvelope([{ committee_id: 'C00401224' }]) as never);
+
+    const result = await svc.getCommitteeTotalsByEntityType(
+      'house-senate',
+      { cycle: 2024, committee_state: 'WA', min_receipts: 1_000_000 },
+      ctx,
+    );
+
+    const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain('/totals/house-senate/');
+    expect(url).toContain('committee_state=WA');
+    expect(url).toContain('min_receipts=1000000');
+    expect(result.results[0]).toHaveProperty('committee_id', 'C00401224');
+  });
+});
+
+describe('searchCoordinatedExpenditures', () => {
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('calls the page-based Schedule F endpoint', async () => {
+    mockFetch.mockResolvedValueOnce(
+      pageEnvelope([{ candidate_id: 'P80001571', expenditure_amount: 9_000_000 }]) as never,
+    );
+
+    const result = await svc.searchCoordinatedExpenditures(
+      { candidate_id: 'P80001571', cycle: 2024, page: 1, per_page: 20 },
+      ctx,
+    );
+
+    const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain('/schedules/schedule_f/');
+    expect(url).toContain('candidate_id=P80001571');
+    expect(result.pagination.page).toBe(1);
+  });
+});
+
+describe('getLegalDocument', () => {
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  const jsonBody = (body: unknown) => ({ json: () => Promise.resolve(body) });
+
+  beforeEach(() => {
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('unwraps the docs array the live endpoint returns', async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonBody({
+        docs: [{ ao_no: '2024-01', documents: [{ category: 'Final Opinion' }] }],
+      }) as never,
+    );
+
+    const doc = await svc.getLegalDocument('advisory_opinions', '2024-01', ctx);
+
+    const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain('/legal/docs/advisory_opinions/2024-01');
+    expect(doc).toMatchObject({ ao_no: '2024-01' });
+  });
+
+  it('accepts the flat single object the OpenAPI spec documents', async () => {
+    mockFetch.mockResolvedValueOnce(jsonBody({ no: 7226, name: 'Example Committee' }) as never);
+
+    const doc = await svc.getLegalDocument('murs', '7226', ctx);
+
+    expect(doc).toEqual({ no: 7226, name: 'Example Committee' });
+  });
+
+  it('returns null for an empty docs array', async () => {
+    mockFetch.mockResolvedValueOnce(jsonBody({ docs: [] }) as never);
+
+    await expect(svc.getLegalDocument('murs', '99999999', ctx)).resolves.toBeNull();
+  });
+
+  it('returns null for an empty flat body', async () => {
+    mockFetch.mockResolvedValueOnce(jsonBody({}) as never);
+
+    await expect(svc.getLegalDocument('statutes', '0', ctx)).resolves.toBeNull();
+  });
+
+  it('keeps a flat record whose own docs property is empty', async () => {
+    mockFetch.mockResolvedValueOnce(jsonBody({ no: 1, name: 'Statute', docs: [] }) as never);
+
+    await expect(svc.getLegalDocument('statutes', '1', ctx)).resolves.toEqual({
+      no: 1,
+      name: 'Statute',
+      docs: [],
+    });
+  });
+
+  it('returns null on an OpenFEC 404', async () => {
+    mockFetch.mockRejectedValueOnce(apiNotFound());
+
+    await expect(svc.getLegalDocument('adrs', '1', ctx)).resolves.toBeNull();
+  });
+
+  it('propagates an edge routing 404 rather than reporting the document as missing', async () => {
+    mockFetch.mockRejectedValueOnce(edgeNotFound());
+
+    await expect(svc.getLegalDocument('murs', '7226', ctx)).rejects.toThrow(/404/);
+  });
+
+  it('propagates an upstream 500 rather than reporting it as missing', async () => {
+    mockFetch.mockRejectedValueOnce(
+      new McpError(JsonRpcErrorCode.InternalError, 'Fetch failed. Status: 500', { status: 500 }),
+    );
+
+    await expect(svc.getLegalDocument('murs', '7226', ctx)).rejects.toThrow(/500/);
+  });
+
+  it('rejects a non-object body as an upstream error page', async () => {
+    mockFetch.mockResolvedValueOnce(jsonBody('<html>Internal Server Error</html>') as never);
+
+    await expect(svc.getLegalDocument('murs', '7226', ctx)).rejects.toThrow(/unexpected response/);
+  });
+
+  it('percent-encodes the path segments', async () => {
+    mockFetch.mockResolvedValueOnce(jsonBody({ docs: [{ no: 1 }] }) as never);
+
+    await svc.getLegalDocument('murs', '72 26/../secret', ctx);
+
+    const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain('/legal/docs/murs/72%2026%2F..%2Fsecret');
   });
 });
 
@@ -350,6 +542,77 @@ describe('outbound parameter-name guard', () => {
 
   it('leaves endpoints without a declared allowlist unchecked', () => {
     expect(() => assertKnownParams('/candidates/', { not_a_real_param: 1 })).not.toThrow();
+  });
+
+  it('accepts every name /schedules/schedule_f/ declares', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_f/', {
+        committee_id: 'C00003418',
+        candidate_id: 'P80001571',
+        cycle: 2024,
+        payee_name: 'MEDIA',
+        min_date: '2024-01-01',
+        max_date: '2024-11-05',
+        min_amount: 1000,
+        max_amount: 9_000_000,
+        form_line_number: 'F3X-25',
+        image_number: '202407209661626669',
+        page: 1,
+        per_page: 20,
+        sort: '-expenditure_amount',
+        sort_hide_null: true,
+        sort_null_only: false,
+        sort_nulls_last: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects a Schedule E filter name aimed at Schedule F', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_f/', { support_oppose_indicator: 'S' }),
+    ).toThrow(/support_oppose_indicator/);
+  });
+
+  it('resolves an interpolated committee-totals path to its spec template', () => {
+    expect(() =>
+      assertKnownParams('/committee/C00703975/totals/', { page: 1, per_page: 20, cycle: 2024 }),
+    ).not.toThrow();
+
+    let err: McpError | undefined;
+    try {
+      assertKnownParams('/committee/C00703975/totals/', { committee_state: 'PA' });
+    } catch (e) {
+      err = e as McpError;
+    }
+    expect(err?.data).toMatchObject({
+      endpoint: '/committee/{committee_id}/totals/',
+      unknown_parameters: ['committee_state'],
+    });
+  });
+
+  it('resolves an interpolated entity-type totals path to its spec template', () => {
+    expect(() =>
+      assertKnownParams('/totals/house-senate/', {
+        committee_state: 'WA',
+        min_receipts: 1_000_000,
+        max_disbursements: 5,
+        organization_type: 'C',
+        committee_designation: 'P',
+        committee_type: 'H',
+        cycle: 2024,
+        page: 1,
+        per_page: 20,
+        sort: '-receipts',
+      }),
+    ).not.toThrow();
+    expect(() => assertKnownParams('/totals/pac/', { q: 'anything' })).toThrow(/does not accept/);
+  });
+
+  it('rejects any query parameter on the legal detail endpoint', () => {
+    expect(() => assertKnownParams('/legal/docs/murs/7226', {})).not.toThrow();
+    expect(() => assertKnownParams('/legal/docs/murs/7226', { q: 'test' })).toThrow(
+      /\/legal\/docs\/\{doc_type\}\/\{no\}/,
+    );
   });
 
   it('fires through the service before any request is made', async () => {

@@ -221,23 +221,63 @@ const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
     af_max_rtb_date af_rtb_fine_amount af_min_fd_date af_max_fd_date af_fd_fine_amount sort
     case_min_penalty_amount case_max_penalty_amount q_proximity max_gaps proximity_preserve_order
     proximity_filter proximity_filter_term filename`),
+
+  /** Takes no query parameter beyond `api_key`; both inputs ride in the path. */
+  '/legal/docs/{doc_type}/{no}': new Set<string>(),
+
+  '/schedules/schedule_f/': paramSet(`
+    image_number min_image_number max_image_number min_amount max_amount min_date max_date
+    candidate_id payee_name committee_id cycle form_line_number page per_page sort
+    sort_hide_null sort_null_only sort_nulls_last`),
+
+  '/committee/{committee_id}/totals/': paramSet(`
+    page per_page cycle sort sort_hide_null sort_null_only sort_nulls_last`),
+
+  '/totals/{entity_type}/': paramSet(`
+    page per_page cycle committee_designation committee_id committee_type committee_state
+    filing_frequency treasurer_name min_disbursements max_disbursements min_receipts max_receipts
+    min_last_cash_on_hand_end_period max_last_cash_on_hand_end_period
+    min_last_debts_owed_by_committee max_last_debts_owed_by_committee sponsor_candidate_id
+    organization_type min_first_f1_date max_first_f1_date sort sort_hide_null sort_null_only
+    sort_nulls_last`),
 };
+
+/**
+ * Interpolated request paths mapped back to the spec template their allowlist
+ * entry is keyed on. `buildUrl` receives the path with the identifier already
+ * substituted, so without this step the guard silently skips every endpoint
+ * that takes one in the path.
+ */
+const PATH_TEMPLATES: readonly (readonly [RegExp, string])[] = [
+  [/^\/legal\/docs\/[^/]+\/[^/]+$/, '/legal/docs/{doc_type}/{no}'],
+  [/^\/committee\/[^/]+\/totals\/$/, '/committee/{committee_id}/totals/'],
+  [
+    /^\/totals\/(presidential|pac|party|pac-party|house-senate|ie-only)\/$/,
+    '/totals/{entity_type}/',
+  ],
+];
+
+/** Resolve a request path to its allowlist key, or return it unchanged. */
+function allowlistKey(path: string): string {
+  return PATH_TEMPLATES.find(([pattern]) => pattern.test(path))?.[1] ?? path;
+}
 
 /**
  * Throw when an outbound parameter name is not one the endpoint accepts.
  * Only the names are reported — values may carry caller data.
  */
 export function assertKnownParams(path: string, params: FecParams): void {
-  const accepted = ENDPOINT_PARAMS[path];
+  const key = allowlistKey(path);
+  const accepted = ENDPOINT_PARAMS[key];
   if (!accepted) return;
   const unknown = Object.keys(params)
-    .filter((key) => !accepted.has(key))
+    .filter((name) => !accepted.has(name))
     .sort();
   if (unknown.length === 0) return;
   throw new McpError(
     JsonRpcErrorCode.InternalError,
-    `Refusing to call ${path} with parameter(s) it does not accept: ${unknown.join(', ')}. OpenFEC would answer 200 and silently ignore them, returning an unfiltered result set.`,
-    { endpoint: path, unknown_parameters: unknown },
+    `Refusing to call ${key} with parameter(s) it does not accept: ${unknown.join(', ')}. OpenFEC would answer 200 and silently ignore them, returning an unfiltered result set.`,
+    { endpoint: key, unknown_parameters: unknown },
   );
 }
 
@@ -473,8 +513,33 @@ export class OpenFecService {
     return this.fetchPage(`/committee/${committeeId}/`, {}, ctx);
   }
 
-  getCommitteeTotals(committeeId: string, params: FecParams, ctx: Context): Promise<PageResult> {
-    return this.fetchPage(`/committee/${committeeId}/totals/`, params, ctx);
+  /**
+   * Per-cycle financial totals for one committee. OpenFEC answers 404 for every
+   * miss here — an ID that does not exist, a cycle the committee did not file,
+   * and a committee that has never filed a Form 3/3X/3P alike — so its own
+   * not-found response is normalized to an empty page. "No totals on file" is a
+   * result the caller reports, not an API-path error.
+   */
+  async getCommitteeTotals(
+    committeeId: string,
+    params: FecParams,
+    ctx: Context,
+  ): Promise<PageResult> {
+    try {
+      return await this.fetchPage(`/committee/${committeeId}/totals/`, params, ctx);
+    } catch (err) {
+      if (!isUpstreamNotFound(err)) throw err;
+      return emptyPage(params);
+    }
+  }
+
+  /** Committee totals grouped by entity type — a page of committees, not one committee. */
+  getCommitteeTotalsByEntityType(
+    entityType: string,
+    params: FecParams,
+    ctx: Context,
+  ): Promise<PageResult> {
+    return this.fetchPage(`/totals/${entityType}/`, params, ctx);
   }
 
   /* ---------------------------------------------------------------- */
@@ -528,6 +593,14 @@ export class OpenFecService {
 
   getExpendituresByCandidate(params: FecParams, ctx: Context): Promise<PageResult> {
     return this.fetchPage('/schedules/schedule_e/by_candidate/', params, ctx);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Coordinated Expenditures (Schedule F)                           */
+  /* ---------------------------------------------------------------- */
+
+  searchCoordinatedExpenditures(params: FecParams, ctx: Context): Promise<PageResult> {
+    return this.fetchPage('/schedules/schedule_f/', params, ctx);
   }
 
   /* ---------------------------------------------------------------- */
@@ -589,6 +662,42 @@ export class OpenFecService {
     return this.fetchLegalSearch(params, ctx);
   }
 
+  /**
+   * Fetch one legal document by type and number. Neither of the two envelopes
+   * this endpoint answers with is the `results` array `fetchPage` expects, so
+   * it needs its own fetch. Resolves to null when no such record exists.
+   */
+  async getLegalDocument(
+    docType: string,
+    no: string,
+    ctx: Context,
+  ): Promise<Record<string, unknown> | null> {
+    const path = `/legal/docs/${encodeURIComponent(docType)}/${encodeURIComponent(no)}`;
+    const url = this.buildUrl(path, {});
+    const reqCtx = toRequestContext(ctx);
+    try {
+      return await withRetry(
+        async () => {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+            signal: ctx.signal,
+          });
+          return unwrapLegalDocument(await response.json());
+        },
+        {
+          maxRetries: this.config.fecMaxRetries,
+          baseDelayMs: 1_000,
+          operation: `FEC ${path}`,
+          context: reqCtx,
+          signal: ctx.signal,
+          isTransient: isTransientFecError,
+        },
+      );
+    } catch (err) {
+      if (isUpstreamNotFound(err)) return null;
+      rethrowSanitized(err);
+    }
+  }
+
   /* ---------------------------------------------------------------- */
   /*  Calendar                                                        */
   /* ---------------------------------------------------------------- */
@@ -604,6 +713,70 @@ export class OpenFecService {
   getElectionDates(params: FecParams, ctx: Context): Promise<PageResult> {
     return this.fetchPage('/election-dates/', params, ctx);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Upstream "no such record" handling                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * True when OpenFEC itself answered "no such record" — a 404 whose body is the
+ * API's own JSON error object. Callers treat that as an empty result rather
+ * than a failure, since the generic status hint ("verify the API path") points
+ * at the wrong thing when the real problem is an unknown ID.
+ *
+ * The body check is load-bearing, not decoration: the api.data.gov edge also
+ * answers 404 with a plain-text routing error when the whole upstream host is
+ * unreachable, and reporting that as "this committee has no totals" would be a
+ * confidently wrong answer. Anything that is not the API's JSON error shape
+ * stays a failure and propagates.
+ */
+function isUpstreamNotFound(err: unknown): boolean {
+  if (!(err instanceof McpError) || err.code !== JsonRpcErrorCode.NotFound) return false;
+  const body = (err.data as { body?: unknown } | undefined)?.body;
+  if (typeof body !== 'string') return false;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return typeof parsed === 'object' && parsed !== null && 'message' in parsed;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Narrow a `/legal/docs/{doc_type}/{no}` body to the single record it carries.
+ *
+ * Live responses wrap the record in a `docs` array; `docs/openapi-spec.json`
+ * documents a flat object with the same fields at the top level. Both shapes
+ * are accepted. A `docs` array holding a record wins, since the flat schema
+ * declares a `docs` property of its own — an empty one there is not evidence
+ * of a miss, only a body that is nothing but an empty `docs` is.
+ */
+function unwrapLegalDocument(body: unknown): Record<string, unknown> | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new Error('FEC API returned an unexpected response (possible HTML error page)');
+  }
+  const record = body as Record<string, unknown>;
+  const first = Array.isArray(record.docs) ? record.docs[0] : undefined;
+  if (typeof first === 'object' && first !== null && !Array.isArray(first)) {
+    return first as Record<string, unknown>;
+  }
+  const keys = Object.keys(record);
+  if (keys.length === 0 || (keys.length === 1 && keys[0] === 'docs')) return null;
+  return record;
+}
+
+/** A zero-result page echoing the paging arguments the request carried. */
+function emptyPage(params: FecParams): PageResult {
+  return {
+    pagination: {
+      page: Number(params.page) || 1,
+      pages: 0,
+      count: 0,
+      per_page: Number(params.per_page) || 20,
+    },
+    results: [],
+  };
 }
 
 /* ------------------------------------------------------------------ */
