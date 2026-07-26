@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.15](changelog/0.4.x/0.4.15.md) — 2026-07-26
+
+Page-based aggregate modes and elections search reach page 2 (#12); election resources surface pagination instead of dropping it (#12); candidate totals sub-fetch pages independently and every cycle renders (#13, #18); itemized next_cursor delimited for text-only clients (#21)
+
 ## [0.4.14](changelog/0.4.x/0.4.14.md) — 2026-07-26
 
 Pagination cursors bind to query identity, rejecting cross-query replay (#15, #20) and adding descending sort variants for itemized search (#10); mcp-ts-core ^0.11.0, TypeScript ^7, Socket supply-chain scanning
