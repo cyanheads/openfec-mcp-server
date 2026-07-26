@@ -33,12 +33,27 @@ async function fetchElection(
     state: params.state,
     district: params.district,
   });
+
+  /**
+   * The URI carries no page argument, so a race with more candidates than one
+   * upstream page always truncates here. Return the pagination block and name
+   * the tool that can walk the remaining pages rather than hiding the gap.
+   */
+  const truncation =
+    result.pagination.pages > 1
+      ? {
+          truncation_notice: `Showing page 1 of ${result.pagination.pages} (${result.pagination.count} candidates total). This resource returns only the first page — use the openfec_lookup_elections tool with mode "search" and a page argument to retrieve the rest.`,
+        }
+      : {};
+
   return {
     cycle: params.cycle,
     office: params.office,
     state: params.state,
     district: params.district,
     candidates: result.results,
+    pagination: result.pagination,
+    ...truncation,
   };
 }
 

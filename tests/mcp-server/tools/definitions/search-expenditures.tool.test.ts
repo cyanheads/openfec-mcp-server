@@ -138,6 +138,51 @@ describe('searchExpenditures', () => {
       expect(result.pagination).toBeDefined();
     });
 
+    it('forwards page to the by_candidate endpoint', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { page: 2, pages: 17, count: 329, per_page: 20 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'S6FL00123',
+        page: 2,
+      });
+      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getExpendituresByCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 2 }),
+        ctx,
+      );
+      expect(result.pagination?.page).toBe(2);
+    });
+
+    it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
+      const cursor = cursorFor(
+        { mode: 'itemized', committee_id: 'C00111111', page: 1 },
+        { last_index: '42' },
+      );
+
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 200, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+        page: 5,
+        cursor,
+      });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      const [callArgs] = mockService.searchExpenditures.mock.calls[0]!;
+      expect(callArgs.page).toBeUndefined();
+      expect(callArgs.last_index).toBe('42');
+    });
+
     it('maps support_oppose to support_oppose_indicator in params', async () => {
       mockService.searchExpenditures.mockResolvedValueOnce({
         pagination: { count: 0, per_page: 20 },
@@ -314,6 +359,19 @@ describe('searchExpenditures', () => {
       expect(text).toContain('RIVAL, BOB');
       expect(text).toContain('AMERICANS FOR PROGRESS');
       expect(text).toContain('MEDIA PARTNERS LLC');
+    });
+
+    it('delimits next_cursor so its end is unambiguous', () => {
+      const cursor = 'eyJxIjp7InNjb3BlIjoib3BlbmZlY19zZWFyY2hfZXhwZW5kaXR1cmVzIn19=';
+      const blocks = searchExpenditures.format!({
+        results: [expenditureRecord()],
+        next_cursor: cursor,
+        count: 200,
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain(`next_cursor: \`${cursor}\``);
+      expect(text).not.toContain(`${cursor}_`);
     });
 
     it('renders by_candidate aggregate results', () => {

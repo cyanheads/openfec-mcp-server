@@ -46,10 +46,11 @@ interface CursorPayload {
 
 /**
  * Arguments left out of the cursor identity. `cursor` is not part of the query
- * it resumes, and `per_page` only sets batch size — neither changes which rows
- * the keyset walks.
+ * it resumes, `per_page` only sets batch size, and `page` addresses the
+ * page-based aggregate modes rather than the keyset — none of them change which
+ * rows the keyset walks.
  */
-const CURSOR_IDENTITY_EXCLUDES: ReadonlySet<string> = new Set(['cursor', 'per_page']);
+const CURSOR_IDENTITY_EXCLUDES: ReadonlySet<string> = new Set(['cursor', 'page', 'per_page']);
 
 const RESTART_HINT =
   'Omit cursor to restart from the first page, then paginate only with a next_cursor value returned by this same tool.';

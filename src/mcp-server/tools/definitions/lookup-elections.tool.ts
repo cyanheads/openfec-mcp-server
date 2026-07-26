@@ -85,6 +85,21 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .describe(
         'Expand to full election period (4yr president, 6yr senate, 2yr house). Default true. Ignored for ZIP-based searches.',
       ),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe(
+        'Page number (1-indexed). Search mode only — summary mode returns a single aggregate row. Read pagination.pages in the response to see how many pages exist.',
+      ),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe('Results per page. Search mode only.'),
   }),
 
   output: z.object({
@@ -168,6 +183,10 @@ export const lookupElections = tool('openfec_lookup_elections', {
       };
     }
 
+    // Paging applies to search mode only — /elections/summary/ accepts no page params
+    params.page = input.page;
+    params.per_page = input.per_page;
+
     // /elections/search/ supports zip but not election_full; /elections/ supports election_full
     ctx.log.info('Searching elections', {
       office: input.office,
@@ -211,6 +230,9 @@ export const lookupElections = tool('openfec_lookup_elections', {
       );
     }
 
+    const { page, pages, count, per_page } = result.pagination;
+    const paginationLine = `\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`;
+
     // Summary mode returns a single flat object with aggregate totals
     const first = result.results[0];
     if (
@@ -224,7 +246,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       const skipInFormat = new Set([noteKey]);
       const body = renderRecord(first, skipInFormat);
       const caveat = note ? `\n\n> **Note on independent_expenditures:** ${note}` : '';
-      return [{ type: 'text', text: `**Election Summary**\n${body}${caveat}` }];
+      return [{ type: 'text', text: `**Election Summary**\n${body}${caveat}\n${paginationLine}` }];
     }
 
     const headerKeys = new Set(['candidate_name', 'candidate_id']);
@@ -237,8 +259,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`);
+    lines.push(paginationLine);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

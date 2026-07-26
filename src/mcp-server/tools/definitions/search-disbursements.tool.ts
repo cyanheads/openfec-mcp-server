@@ -77,6 +77,14 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .describe(
         'Sort field. A "-" prefix sorts descending: use "-disbursement_amount" for the biggest payments first, since the ascending form leads with the most negative rows (refunds and voided payments). Itemized only; OpenFEC sorts by "-disbursement_date" when omitted.',
       ),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe(
+        'Page number (1-indexed) for the aggregate modes. Ignored in itemized mode, which paginates with cursor. Read pagination.pages in the response to see how many pages exist.',
+      ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
@@ -186,6 +194,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     /* ---------------------------------------------------------------- */
     const params: FecParams = {
       committee_id: input.committee_id,
+      page: input.page,
       per_page: input.per_page,
       sort: '-total',
       sort_hide_null: true,
@@ -234,7 +243,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         lines.push(`**${name}**\n${renderRecord(r, new Set(['recipient_name']))}`);
       }
       if (result.next_cursor) {
-        lines.push(`\n_More results available — next_cursor: ${result.next_cursor}_`);
+        lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);
       }
     } else {
       for (const r of result.results) {

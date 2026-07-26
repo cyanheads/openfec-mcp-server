@@ -134,6 +134,67 @@ describe('searchCandidates', () => {
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
 
+    it('pages the totals sub-fetch on its own terms instead of the candidate search page', async () => {
+      const candidates = [
+        candidateRecord({ candidate_id: 'S2CA01110', name: 'SMITH, A' }),
+        candidateRecord({ candidate_id: 'S8MO00301', name: 'SMITH, B' }),
+      ];
+      mockService.searchCandidates.mockResolvedValueOnce({
+        pagination: { page: 2, pages: 5, count: 90, per_page: 10 },
+        results: candidates,
+      });
+      mockService.getCandidateTotals
+        .mockResolvedValueOnce({
+          pagination: { page: 1, pages: 2, count: 13, per_page: 100 },
+          results: [totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024 })],
+        })
+        .mockResolvedValueOnce({
+          pagination: { page: 2, pages: 2, count: 13, per_page: 100 },
+          results: [totalsRecord({ candidate_id: 'S8MO00301', cycle: 2020 })],
+        });
+
+      const input = searchCandidates.input.parse({
+        query: 'smith',
+        office: 'S',
+        per_page: 10,
+        page: 2,
+        include_totals: true,
+      });
+      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getCandidateTotals).toHaveBeenCalledTimes(2);
+      const [first, second] = mockService.getCandidateTotals.mock.calls.map((c) => c[0]);
+      expect(first).toMatchObject({
+        candidate_id: ['S2CA01110', 'S8MO00301'],
+        page: 1,
+        per_page: 100,
+      });
+      expect(second).toMatchObject({ page: 2, per_page: 100 });
+      expect(result.totals).toHaveLength(2);
+      expect(result.missing_totals).toBeUndefined();
+    });
+
+    it('reports candidates left uncovered when the totals fetch hits its page cap', async () => {
+      mockService.searchCandidates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 2 },
+        results: [
+          candidateRecord({ candidate_id: 'S2CA01110' }),
+          candidateRecord({ candidate_id: 'S8MO00301' }),
+        ],
+      });
+      mockService.getCandidateTotals.mockResolvedValue({
+        pagination: { page: 1, pages: 40, count: 4_000, per_page: 100 },
+        results: [totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024 })],
+      });
+
+      const input = searchCandidates.input.parse({ query: 'smith', include_totals: true });
+      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+
+      // Capped at 5 pages rather than walking all 40
+      expect(mockService.getCandidateTotals).toHaveBeenCalledTimes(5);
+      expect(result.missing_totals).toEqual(['S8MO00301']);
+    });
+
     it('skips totals when include_totals=false', async () => {
       mockService.getCandidate.mockResolvedValueOnce({
         pagination: { ...PAGE, count: 1 },
@@ -204,6 +265,36 @@ describe('searchCandidates', () => {
       expect(text).toContain('cash_on_hand_end_period:');
       expect(text).toContain('debts_owed_by_committee:');
       expect(text).toContain('coverage_end_date: 2024-06-30');
+    });
+
+    it('renders every totals row for a candidate, one per cycle', () => {
+      const blocks = searchCandidates.format!({
+        candidates: [candidateRecord()],
+        totals: [
+          totalsRecord({ cycle: 2016, receipts: 1_000_000 }),
+          totalsRecord({ cycle: 2008, receipts: 2_000_000 }),
+        ],
+        pagination: { ...PAGE, count: 1 },
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('— Financial Totals (cycle 2016) —');
+      expect(text).toContain('— Financial Totals (cycle 2008) —');
+      expect(text).toContain('receipts: 1000000');
+      expect(text).toContain('receipts: 2000000');
+    });
+
+    it('renders the uncovered candidates when totals are incomplete', () => {
+      const blocks = searchCandidates.format!({
+        candidates: [candidateRecord()],
+        totals: [],
+        missing_totals: ['S8MO00301', 'S0IL00402'],
+        pagination: { ...PAGE, count: 1 },
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain('S8MO00301, S0IL00402');
+      expect(text).toContain('candidate_id');
     });
   });
 });

@@ -165,6 +165,52 @@ describe('searchDisbursements', () => {
       expect(result.pagination).toBeDefined();
     });
 
+    it('forwards page to the aggregate endpoint', async () => {
+      mockService.getDisbursementAggregates.mockResolvedValueOnce({
+        pagination: { page: 4, pages: 684, count: 13_675, per_page: 20 },
+        results: [aggregateRecord()],
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'by_recipient',
+        committee_id: 'C00703975',
+        page: 4,
+      });
+      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getDisbursementAggregates).toHaveBeenCalledWith(
+        'by_recipient',
+        expect.objectContaining({ page: 4 }),
+        ctx,
+      );
+      expect(result.pagination?.page).toBe(4);
+    });
+
+    it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
+      const cursor = cursorFor(
+        { mode: 'itemized', committee_id: 'C00703975', page: 1 },
+        { last_index: '500' },
+      );
+
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 100, per_page: 20 },
+        results: [disbursementRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        page: 9,
+        cursor,
+      });
+      await searchDisbursements.handler(input, ctx as unknown as Context);
+
+      const [callArgs] = mockService.searchDisbursements.mock.calls[0]!;
+      expect(callArgs.page).toBeUndefined();
+      expect(callArgs.last_index).toBe('500');
+    });
+
     it('passes decoded cursor indexes into itemized params', async () => {
       const query = { mode: 'itemized', committee_id: 'C00703975' };
       const cursor = cursorFor(query, {
@@ -303,6 +349,19 @@ describe('searchDisbursements', () => {
       expect(text).toContain('BIDEN FOR PRESIDENT');
       expect(text).toContain('MEDIA BUY - TV');
       expect(text).toContain('2024-05-10');
+    });
+
+    it('delimits next_cursor so its end is unambiguous', () => {
+      const cursor = 'eyJxIjp7InNjb3BlIjoib3BlbmZlY19zZWFyY2hfZGlzYnVyc2VtZW50cyJ9fQ=';
+      const blocks = searchDisbursements.format!({
+        results: [disbursementRecord()],
+        next_cursor: cursor,
+        count: 100,
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain(`next_cursor: \`${cursor}\``);
+      expect(text).not.toContain(`${cursor}_`);
     });
 
     it('renders aggregate disbursements with purpose and count', () => {

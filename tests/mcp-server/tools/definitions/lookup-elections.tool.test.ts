@@ -23,6 +23,7 @@ const mockService = {
   getExpendituresByCandidate: vi.fn(),
   searchFilings: vi.fn(),
   searchElections: vi.fn(),
+  searchElectionsByZip: vi.fn(),
   getElectionSummary: vi.fn(),
   searchLegal: vi.fn(),
   getCalendarDates: vi.fn(),
@@ -116,6 +117,68 @@ describe('lookupElectionsTool', () => {
       expect(row).toHaveProperty('independent_expenditures', 2_695_716_328_841.73);
       expect(row).toHaveProperty('_independent_expenditures_note');
       expect(String(row!._independent_expenditures_note)).toContain('Unreconciled');
+    });
+
+    it('forwards page and per_page in search mode', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { page: 3, pages: 44, count: 869, per_page: 20 },
+        results: [{ candidate_name: 'SMITH, JANE', candidate_id: 'P00001234' }],
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        office: 'P',
+        cycle: 2024,
+        page: 3,
+        per_page: 20,
+      });
+      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchElections).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 3, per_page: 20 }),
+        ctx,
+      );
+      expect(result.pagination.page).toBe(3);
+    });
+
+    it('forwards page and per_page on the ZIP search path', async () => {
+      mockService.searchElectionsByZip.mockResolvedValueOnce({
+        pagination: { page: 2, pages: 3, count: 45, per_page: 20 },
+        results: [{ candidate_name: 'SMITH, JANE' }],
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        office: 'H',
+        cycle: 2024,
+        zip: '98101',
+        page: 2,
+      });
+      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchElectionsByZip).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 2, per_page: 20 }),
+        ctx,
+      );
+    });
+
+    it('omits page and per_page in summary mode — the endpoint accepts neither', async () => {
+      mockService.getElectionSummary.mockResolvedValueOnce({
+        count: 50,
+        receipts: 1,
+        disbursements: 1,
+        independent_expenditures: 1,
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        mode: 'summary',
+        office: 'P',
+        cycle: 2024,
+        page: 4,
+      });
+      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+
+      const callParams = mockService.getElectionSummary.mock.calls[0]![0];
+      expect(callParams).not.toHaveProperty('page');
+      expect(callParams).not.toHaveProperty('per_page');
     });
 
     it('throws on odd cycle year', async () => {
@@ -253,6 +316,22 @@ describe('lookupElectionsTool', () => {
       expect(text).toContain('Unreconciled');
       // The raw note key should NOT appear as a separate field line
       expect(text).not.toContain('_independent_expenditures_note:');
+    });
+
+    it('renders the pagination trailer in summary mode, matching search mode', () => {
+      const blocks = lookupElectionsTool.format!({
+        results: [
+          {
+            count: 50,
+            receipts: 100_000_000,
+            disbursements: 99_000_000,
+            independent_expenditures: 1_000,
+          },
+        ],
+        pagination: { page: 1, pages: 1, count: 1, per_page: 1 },
+      });
+
+      expect(blocks[0]!.text).toContain('1 result(s) · page 1/1 · 1 per page');
     });
 
     it('renders empty state', () => {

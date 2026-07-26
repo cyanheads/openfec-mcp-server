@@ -144,6 +144,52 @@ describe('searchContributions', () => {
       expect(result.pagination).toBeDefined();
     });
 
+    it('forwards page to the aggregate endpoint', async () => {
+      mockService.getContributionAggregates.mockResolvedValueOnce({
+        pagination: { page: 3, pages: 5, count: 56, per_page: 20 },
+        results: [aggregateRecord()],
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'by_state',
+        committee_id: 'C00703975',
+        page: 3,
+      });
+      const result = await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(mockService.getContributionAggregates).toHaveBeenCalledWith(
+        'by_state',
+        expect.objectContaining({ page: 3 }),
+        ctx,
+      );
+      expect(result.pagination?.page).toBe(3);
+    });
+
+    it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
+      const cursor = cursorFor(
+        { mode: 'itemized', committee_id: 'C00703975', page: 1 },
+        { last_index: '999' },
+      );
+
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 50, per_page: 20 },
+        results: [contributionRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        page: 7,
+        cursor,
+      });
+      await searchContributions.handler(input, ctx as unknown as Context);
+
+      const [callArgs] = mockService.searchContributions.mock.calls[0]!;
+      expect(callArgs.page).toBeUndefined();
+      expect(callArgs.last_index).toBe('999');
+    });
+
     it('routes to by_size_candidate when candidate_id provided', async () => {
       mockService.getContributionAggregates.mockResolvedValueOnce({
         pagination: { ...PAGE, count: 1 },
@@ -292,6 +338,19 @@ describe('searchContributions', () => {
       expect(text).toContain('BIDEN FOR PRESIDENT');
       expect(text).toContain('ACME CORP');
       expect(text).toContain('2024-03-15');
+    });
+
+    it('delimits next_cursor so its end is unambiguous', () => {
+      const cursor = 'eyJxIjp7InNjb3BlIjoib3BlbmZlY19zZWFyY2hfY29udHJpYnV0aW9ucyJ9fQ=';
+      const blocks = searchContributions.format!({
+        results: [contributionRecord()],
+        next_cursor: cursor,
+        count: 50,
+      });
+
+      const text = blocks[0]!.text;
+      expect(text).toContain(`next_cursor: \`${cursor}\``);
+      expect(text).not.toContain(`${cursor}_`);
     });
 
     it('renders aggregate results', () => {

@@ -78,9 +78,10 @@ describe('cursorQuery', () => {
     });
   });
 
-  it('excludes cursor and per_page, which do not shape the keyset', () => {
+  it('excludes cursor, page, and per_page, which do not shape the keyset', () => {
     const query = cursorQuery('openfec_search_disbursements', {
       committee_id: 'C00703975',
+      page: 3,
       per_page: 50,
       cursor: 'abc',
     });
@@ -207,6 +208,19 @@ describe('cursor validation', () => {
     );
     const { changed_arguments } = err.data as { changed_arguments: string[] };
     expect(changed_arguments).toEqual(['committee_id (cursor: "C00431056", call: "C00703975")']);
+  });
+
+  it('accepts a cursor replayed with page changed', () => {
+    const cursor = encodeCursor(
+      { last_index: '99' },
+      cursorQuery('openfec_search_contributions', { committee_id: 'C00431056', page: 1 }),
+    );
+
+    const decoded = decodeCursor(
+      cursor,
+      cursorQuery('openfec_search_contributions', { committee_id: 'C00431056', page: 4 }),
+    );
+    expect(decoded).toEqual({ last_index: '99' });
   });
 
   it('accepts a cursor replayed with per_page changed', () => {

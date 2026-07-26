@@ -119,6 +119,14 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Sort field. A "-" prefix sorts descending: use "-expenditure_amount" for the largest outside spending first, since the ascending form leads with the most negative rows (corrections and voided entries). Itemized only; OpenFEC sorts by "-expenditure_date" when omitted.',
       ),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe(
+        'Page number (1-indexed) for by_candidate mode. Ignored in itemized mode, which paginates with cursor. Read pagination.pages in the response to see how many pages exist.',
+      ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
@@ -243,7 +251,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       });
     }
 
-    const params: FecParams = { per_page: input.per_page };
+    const params: FecParams = { page: input.page, per_page: input.per_page };
 
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
@@ -297,7 +305,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       );
     }
     if (isItemized && result.next_cursor) {
-      lines.push(`\n_More results available — next_cursor: ${result.next_cursor}_`);
+      lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);
     }
 
     if (result.pagination) {

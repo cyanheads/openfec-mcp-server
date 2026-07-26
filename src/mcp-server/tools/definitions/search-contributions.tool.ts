@@ -128,6 +128,14 @@ export const searchContributions = tool('openfec_search_contributions', {
       .describe(
         'Sort field. A "-" prefix sorts descending: use "-contribution_receipt_amount" for the largest receipts first, since the ascending form leads with the most negative rows (refunds, reattributions, redesignations). Itemized only; OpenFEC sorts by "-contribution_receipt_date" when omitted.',
       ),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .default(1)
+      .describe(
+        'Page number (1-indexed) for the aggregate modes. Ignored in itemized mode, which paginates with cursor. Read pagination.pages in the response to see how many pages exist.',
+      ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
@@ -256,7 +264,12 @@ export const searchContributions = tool('openfec_search_contributions', {
     const useByCandidate = (mode === 'by_size' || mode === 'by_state') && input.candidate_id;
     const cycle = input.cycle ?? (useByCandidate ? currentCycle() : undefined);
 
-    const params: FecParams = { per_page: input.per_page, sort: '-total', sort_hide_null: true };
+    const params: FecParams = {
+      page: input.page,
+      per_page: input.per_page,
+      sort: '-total',
+      sort_hide_null: true,
+    };
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
     if (cycle) params.cycle = cycle;
@@ -304,7 +317,7 @@ export const searchContributions = tool('openfec_search_contributions', {
         lines.push(`**${name}**\n${renderRecord(r, new Set(['contributor_name']))}`);
       }
       if (result.next_cursor) {
-        lines.push(`\n_More results available — next_cursor: ${result.next_cursor}_`);
+        lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);
       }
     } else {
       for (const r of result.results) {

@@ -69,11 +69,30 @@ describe('electionResource', () => {
       state: undefined,
       district: undefined,
       candidates,
+      pagination: { page: 1, pages: 1, count: 2, per_page: 20 },
     });
+    expect(result).not.toHaveProperty('truncation_notice');
     expect(mockService.searchElections).toHaveBeenCalledWith(
       { cycle: '2024', office: 'president', election_full: true },
       ctx,
     );
+  });
+
+  it('discloses truncation and names the paging tool when more pages exist', async () => {
+    mockService.searchElections.mockResolvedValueOnce({
+      pagination: { page: 1, pages: 44, count: 869, per_page: 20 },
+      results: [{ candidate_id: 'P80001571' }],
+    });
+
+    const ctx = createMockContext({ uri: new URL('openfec:///election/2024/P') });
+    const params = electionResource.params.parse({ cycle: '2024', office: 'P' });
+    const result = await electionResource.handler(params, ctx);
+
+    expect(result.pagination).toEqual({ page: 1, pages: 44, count: 869, per_page: 20 });
+    const notice = (result as { truncation_notice?: string }).truncation_notice;
+    expect(notice).toContain('page 1 of 44');
+    expect(notice).toContain('869 candidates total');
+    expect(notice).toContain('openfec_lookup_elections');
   });
 
   it('passes state via electionStateResource', async () => {

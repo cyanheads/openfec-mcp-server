@@ -26,7 +26,7 @@ All resource data is also reachable via tools. Resources add convenience for cli
 |:-------------|:------------|:-----------|
 | `openfec://candidate/{candidate_id}` | Candidate profile with current financial totals | No |
 | `openfec://committee/{committee_id}` | Committee profile with type, designation, and financial summary | No |
-| `openfec://election/{cycle}/{office}` | Election race summary. `state` and `district` appended as path segments when applicable (e.g., `openfec://election/2024/senate/AZ`). | No |
+| `openfec://election/{cycle}/{office}` | Election race summary. `state` and `district` appended as path segments when applicable (e.g., `openfec://election/2024/senate/AZ`). | First page only — returns the upstream `pagination` block, plus a `truncation_notice` pointing at `openfec_lookup_elections` when more pages exist |
 
 ### Prompts
 
@@ -81,13 +81,15 @@ Find federal candidates and retrieve their details, history, and financial total
 | `incumbent_challenge` | `I` \| `C` \| `O` | No | Incumbent status: I=incumbent, C=challenger, O=open seat. |
 | `candidate_status` | `C` \| `F` \| `N` \| `P` | No | Candidate status: C=present candidate, F=future candidate, N=not yet a candidate, P=prior candidate. |
 | `has_raised_funds` | boolean | No | Only candidates whose committee has received receipts for this office. Useful for filtering out paperwork-only candidates. |
-| `include_totals` | boolean | No | Include financial totals (receipts, disbursements, cash on hand, debt). Defaults to true when fetching a single candidate by ID. Adds a second API call. |
-| `page` | number | No | Page number (1-indexed). Default 1. |
+| `include_totals` | boolean | No | Include financial totals (receipts, disbursements, cash on hand, debt). Defaults to true when fetching a single candidate by ID. Adds at least one further API call — see the totals sub-fetch note below. |
+| `page` | number | No | Page number (1-indexed). Default 1. Addresses the candidate list only. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 
-**Output:** Candidate records with: `candidate_id`, `name`, `party`/`party_full`, `state`, `office`/`office_full`, `district_number`, `incumbent_challenge`/`incumbent_challenge_full`, `cycles`, `election_years`, `candidate_status`, `first_file_date`, `has_raised_funds`. When `include_totals` is true: `receipts`, `disbursements`, `cash_on_hand_end_period`, `debts_owed_by_committee`, `individual_itemized_contributions`, `coverage_start_date`, `coverage_end_date`.
+**Output:** Candidate records with: `candidate_id`, `name`, `party`/`party_full`, `state`, `office`/`office_full`, `district_number`, `incumbent_challenge`/`incumbent_challenge_full`, `cycles`, `election_years`, `candidate_status`, `first_file_date`, `has_raised_funds`. When `include_totals` is true: `receipts`, `disbursements`, `cash_on_hand_end_period`, `debts_owed_by_committee`, `individual_itemized_contributions`, `coverage_start_date`, `coverage_end_date`. `missing_totals` lists any candidate IDs the totals sub-fetch could not cover.
 
 **Pagination:** Page-based. Response includes `page`, `pages`, `count`, `per_page`.
+
+**Totals sub-fetch:** `/v1/candidates/totals/` is a separately paged endpoint, not a view onto the candidate list — one candidate yields one row per cycle, so N candidates routinely produce more than N rows. The sub-fetch therefore ignores the candidate search's `page`/`per_page` and walks the totals endpoint's own pages at 100 per page, capped at 5 pages. If the cap is reached before every requested candidate is covered, the uncovered IDs are returned in `missing_totals` and rendered in the text output.
 
 **Error modes:**
 - Invalid `candidate_id` format → `InvalidParams`: "Invalid candidate ID format. FEC candidate IDs start with H (House), S (Senate), or P (President) followed by digits (e.g., 'P00003392')."
@@ -157,6 +159,7 @@ Search itemized individual contributions (Schedule A) or get aggregate breakdown
 | `max_amount` | number | No | Maximum contribution amount in dollars. Itemized mode only. |
 | `is_individual` | boolean | No | Only individual contributions (excludes committee-to-committee transfers). Itemized mode only. |
 | `sort` | `contribution_receipt_date` \| `contribution_receipt_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
+| `page` | number | No | Page number (1-indexed). Default 1. Aggregate modes only — itemized mode paginates with `cursor`. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 | `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode uses keyset pagination — pass the cursor to get the next page. Valid only for an otherwise-identical call. |
 
@@ -206,6 +209,7 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 | `min_amount` | number | No | Minimum amount. Itemized mode only. |
 | `max_amount` | number | No | Maximum amount. Itemized mode only. |
 | `sort` | `disbursement_date` \| `disbursement_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
+| `page` | number | No | Page number (1-indexed). Default 1. Aggregate modes only — itemized mode paginates with `cursor`. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 | `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode only. Valid only for an otherwise-identical call. |
 
@@ -252,6 +256,7 @@ Search independent expenditures (Schedule E) — spending by outside groups (Sup
 | `is_notice` | boolean | No | Only 24/48-hour notice filings (near-election spending). Itemized mode only. |
 | `most_recent` | boolean | No | Only the most recent version of amended filings. Default true. Itemized mode only. |
 | `sort` | `expenditure_date` \| `expenditure_amount` \| `office_total_ytd`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
+| `page` | number | No | Page number (1-indexed). Default 1. `by_candidate` mode only — itemized mode paginates with `cursor`. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 | `cursor` | string | No | Opaque pagination cursor. Itemized mode only. Valid only for an otherwise-identical call. |
 
@@ -313,6 +318,8 @@ Look up federal election races and candidate financial summaries. Answers "who's
 | `district` | string | No | Two-digit district number. Required for House races. |
 | `zip` | string | No | ZIP code — finds races covering this ZIP. Search mode only. |
 | `election_full` | boolean | No | Expand to full election period: 4 years for President, 6 for Senate, 2 for House. Default true. |
+| `page` | number | No | Page number (1-indexed). Default 1. Search mode only — `/v1/elections/summary/` accepts no page parameters. |
+| `per_page` | number | No | Results per page. Default 20, max 100. Search mode only. |
 
 **Output:**
 - *Search:* Candidate records in the race with: `candidate_id`, `candidate_name`, `candidate_pcc_id`, `candidate_pcc_name`, `party_full`, `incumbent_challenge_full`, `total_receipts`, `total_disbursements`, `cash_on_hand_end_period`, `coverage_end_date`, `committee_ids`.
@@ -455,7 +462,7 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | `fetchJson<T>(path, params)` | `fetchWithTimeout` → JSON parse → validate envelope → return `{ pagination, results }`. |
 | `fetchSeek<T>(path, params, query)` | Like `fetchJson` but returns `{ pagination, results, nextCursor }` from `last_indexes`, with the cursor bound to `query`. |
 | `fetchLegal<T>(params)` | Special handling for legal search response shape. |
-| `cursorQuery(scope, input)` | Normalize a tool's arguments into the `{ scope, args }` identity its cursors are bound to (`cursor` and `per_page` excluded). |
+| `cursorQuery(scope, input)` | Normalize a tool's arguments into the `{ scope, args }` identity its cursors are bound to (`cursor`, `page`, and `per_page` excluded). |
 | `encodeCursor(lastIndexes, query)` | Base64-encode `last_indexes` plus the issuing query into an opaque cursor string. |
 | `decodeCursor(cursor, expected)` | Validate the cursor and decode it back to `last_indexes`. Throws `validationError` with `reason: 'invalid_cursor'` (malformed) or `'cursor_query_mismatch'` (issued for a different query). |
 
@@ -538,7 +545,7 @@ Contributions, disbursements, expenditures, elections, and calendar each use a `
 
 Schedule A/B/E use keyset pagination with `last_indexes` containing multiple cursor fields. Rather than exposing these internal details, the server base64-encodes them into a single `cursor` string. The LLM passes it back verbatim without needing to understand the structure.
 
-The encoded payload also carries the query that issued it — the tool name plus the caller's arguments, minus `cursor` and `per_page` (neither changes which rows the keyset walks). `decodeCursor` validates the structure and compares that identity against the current call, because `last_indexes` keys are sort-specific and OpenFEC silently ignores keys that do not match the active sort: without the check, a cursor replayed under a changed sort or filter is accepted and restarts at page one with no signal. A malformed cursor fails as `invalid_cursor`; a valid cursor from a different query fails as `cursor_query_mismatch`, naming the arguments that changed. The identity is a generic serialization of the arguments rather than a per-field allowlist, so new filters and sort values need no matching change here.
+The encoded payload also carries the query that issued it — the tool name plus the caller's arguments, minus `cursor`, `page`, and `per_page` (none of them changes which rows the keyset walks — `page` addresses the page-based aggregate modes). `decodeCursor` validates the structure and compares that identity against the current call, because `last_indexes` keys are sort-specific and OpenFEC silently ignores keys that do not match the active sort: without the check, a cursor replayed under a changed sort or filter is accepted and restarts at page one with no signal. A malformed cursor fails as `invalid_cursor`; a valid cursor from a different query fails as `cursor_query_mismatch`, naming the arguments that changed. The identity is a generic serialization of the arguments rather than a per-field allowlist, so new filters and sort values need no matching change here.
 
 ### 3. `two_year_transaction_period` abstraction
 

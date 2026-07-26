@@ -19,6 +19,16 @@ import {
 } from './utils/format-helpers.js';
 import { validateCandidateId } from './utils/id-validators.js';
 
+/**
+ * `/candidates/totals/` is its own paged endpoint, not a view onto the candidate
+ * search: one candidate yields one row per cycle, so N candidates routinely
+ * produce more than N rows. The sub-fetch walks that endpoint's own pages at the
+ * API's maximum page size, capped so a single tool call cannot fan out without
+ * bound. 100 candidates × 5 pages covers every realistic candidate page.
+ */
+const TOTALS_PER_PAGE = 100;
+const TOTALS_MAX_PAGES = 5;
+
 export const searchCandidates = tool('openfec_search_candidates', {
   description:
     'Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. Candidate IDs start with H (House), S (Senate), or P (President) followed by digits.',
@@ -89,7 +99,13 @@ export const searchCandidates = tool('openfec_search_candidates', {
       )
       .optional()
       .describe(
-        'Financial totals (receipts, disbursements, cash_on_hand) when include_totals is true.',
+        'Financial totals (receipts, disbursements, cash_on_hand) when include_totals is true. One row per candidate per cycle.',
+      ),
+    missing_totals: z
+      .array(z.string().describe('FEC candidate ID with no totals row in this response.'))
+      .optional()
+      .describe(
+        'Candidates whose financial totals were not retrieved because the totals fetch hit its page cap. Re-query each one on its own with candidate_id to get its totals.',
       ),
     pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
@@ -149,27 +165,44 @@ export const searchCandidates = tool('openfec_search_candidates', {
 
     // Fetch financial totals if requested
     let totals: Record<string, unknown>[] | undefined;
+    let missingTotals: string[] | undefined;
     if (shouldIncludeTotals && candidates.length > 0) {
+      const requestedIds = input.candidate_id
+        ? [input.candidate_id]
+        : candidates.map((c) => str(c, 'candidate_id')).filter(Boolean);
+
       const totalsParams: FecParams = {
-        candidate_id: input.candidate_id,
+        // The API accepts repeated candidate_id params (?candidate_id=X&candidate_id=Y)
+        candidate_id: requestedIds,
         cycle: input.cycle,
         election_year: input.election_year,
-        page: input.page,
-        per_page: input.per_page,
+        per_page: TOTALS_PER_PAGE,
       };
 
-      // For search results, collect all candidate IDs for the totals call
-      if (!input.candidate_id) {
-        const ids = candidates.map((c) => str(c, 'candidate_id')).filter(Boolean);
-        if (ids.length > 0) {
-          // The API accepts repeated candidate_id params (?candidate_id=X&candidate_id=Y)
-          totalsParams.candidate_id = ids;
-        }
-      }
+      ctx.log.info('Fetching candidate totals', { candidate_ids: requestedIds.length });
 
-      ctx.log.info('Fetching candidate totals', { candidate_id: totalsParams.candidate_id });
-      const totalsResult = await fec.getCandidateTotals(totalsParams, ctx);
-      totals = totalsResult.results as Record<string, unknown>[];
+      const rows: Record<string, unknown>[] = [];
+      let totalsPages = 1;
+      let page = 1;
+      do {
+        const totalsResult = await fec.getCandidateTotals({ ...totalsParams, page }, ctx);
+        rows.push(...(totalsResult.results as Record<string, unknown>[]));
+        totalsPages = totalsResult.pagination.pages;
+        page += 1;
+      } while (page <= totalsPages && page <= TOTALS_MAX_PAGES);
+
+      totals = rows;
+
+      if (totalsPages > TOTALS_MAX_PAGES) {
+        const covered = new Set(rows.map((r) => str(r, 'candidate_id')));
+        const uncovered = requestedIds.filter((id) => !covered.has(id));
+        if (uncovered.length > 0) missingTotals = uncovered;
+        ctx.log.warning('Candidate totals fetch capped before covering every candidate', {
+          fetched_pages: TOTALS_MAX_PAGES,
+          total_pages: totalsPages,
+          missing: uncovered.length,
+        });
+      }
     }
 
     ctx.enrich.total(candidateResult.pagination.count);
@@ -182,6 +215,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
     return {
       candidates,
       totals,
+      missing_totals: missingTotals,
       pagination: candidateResult.pagination,
       search_criteria: candidates.length === 0 ? buildSearchCriteria(input) : undefined,
     };
@@ -195,12 +229,14 @@ export const searchCandidates = tool('openfec_search_candidates', {
       );
     }
 
-    const totalsMap = new Map<string, Record<string, unknown>>();
-    if (result.totals) {
-      for (const t of result.totals) {
-        const id = str(t, 'candidate_id');
-        if (id) totalsMap.set(id, t);
-      }
+    /** One candidate has one totals row per cycle — group, never overwrite. */
+    const totalsMap = new Map<string, Record<string, unknown>[]>();
+    for (const t of result.totals ?? []) {
+      const id = str(t, 'candidate_id');
+      if (!id) continue;
+      const rows = totalsMap.get(id);
+      if (rows) rows.push(t);
+      else totalsMap.set(id, [t]);
     }
 
     const headerKeys = new Set(['candidate_id', 'name']);
@@ -212,15 +248,23 @@ export const searchCandidates = tool('openfec_search_candidates', {
       const fields = renderRecord(c, headerKeys);
       if (fields) block += `\n${fields}`;
 
-      const t = totalsMap.get(id);
-      if (t) {
-        block += '\n  — Financial Totals —';
+      for (const t of totalsMap.get(id) ?? []) {
+        const cycle = t.cycle;
+        const label =
+          typeof cycle === 'number' || typeof cycle === 'string' ? ` (cycle ${cycle})` : '';
+        block += `\n  — Financial Totals${label} —`;
         const totalsFields = renderRecord(t, new Set(['candidate_id']));
         if (totalsFields) block += `\n${totalsFields}`;
       }
 
       return block;
     });
+
+    if (result.missing_totals?.length) {
+      lines.push(
+        `\n_Financial totals were not retrieved for ${result.missing_totals.length} candidate(s): ${result.missing_totals.join(', ')}. Query each one on its own with candidate_id to get its totals._`,
+      );
+    }
 
     const { page, pages, count, per_page } = result.pagination;
     lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
