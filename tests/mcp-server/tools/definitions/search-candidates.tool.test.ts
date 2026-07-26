@@ -87,6 +87,9 @@ describe('searchCandidates', () => {
       expect(result.pagination.count).toBe(1);
       expect(getEnrichment(ctx).totalCount).toBe(1);
       expect(getEnrichment(ctx).notice).toBeUndefined();
+      // The echo lands on non-empty responses too, so filters can be verified.
+      expect(result.search_criteria).toMatchObject({ query: 'Biden' });
+      expect(result.search_criteria).not.toHaveProperty('per_page');
     });
 
     it('fetches a single candidate by ID', async () => {
@@ -227,10 +230,21 @@ describe('searchCandidates', () => {
   });
 
   describe('format', () => {
+    it('renders the criteria echo on a non-empty response', () => {
+      const blocks = searchCandidates.format!({
+        candidates: [candidateRecord()],
+        pagination: { ...PAGE, count: 1 },
+        search_criteria: { query: 'Biden', office: 'P' },
+      });
+
+      expect(blocks[0]!.text).toContain('_Search criteria: query=Biden · office=P_');
+    });
+
     it('renders candidate lines with pagination', () => {
       const blocks = searchCandidates.format!({
         candidates: [candidateRecord()],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: {},
       });
 
       const text = blocks[0]!.text;

@@ -12,6 +12,7 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
@@ -312,7 +313,7 @@ export const searchLegal = tool('openfec_search_legal', {
     return {
       results: trimmed,
       total_count: data.totalCount,
-      search_criteria: trimmed.length === 0 ? buildSearchCriteria(input) : undefined,
+      search_criteria: buildSearchCriteria(input),
     };
   },
 
@@ -358,6 +359,9 @@ export const searchLegal = tool('openfec_search_legal', {
     }
 
     sections.push(`\n_${result.total_count} total matching document(s)_`);
+
+    const criteria = formatSearchCriteria(result.search_criteria);
+    if (criteria) sections.push(criteria);
 
     return [{ type: 'text', text: sections.join('\n\n') }];
   },

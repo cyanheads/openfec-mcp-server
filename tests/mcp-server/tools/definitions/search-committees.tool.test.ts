@@ -77,6 +77,9 @@ describe('searchCommittees', () => {
       expect(result.pagination.count).toBe(1);
       expect(getEnrichment(ctx).totalCount).toBe(1);
       expect(getEnrichment(ctx).notice).toBeUndefined();
+      // The echo lands on non-empty responses too, so filters can be verified.
+      expect(result.search_criteria).toMatchObject({ query: 'Biden' });
+      expect(result.search_criteria).not.toHaveProperty('per_page');
     });
 
     it('sets enrichment notice when search returns empty results', async () => {
@@ -119,10 +122,21 @@ describe('searchCommittees', () => {
   });
 
   describe('format', () => {
+    it('renders the criteria echo on a non-empty response', () => {
+      const blocks = searchCommittees.format!({
+        committees: [committeeRecord()],
+        pagination: { ...PAGE, count: 1 },
+        search_criteria: { query: 'Biden', state: 'DE' },
+      });
+
+      expect(blocks[0]!.text).toContain('_Search criteria: query=Biden · state=DE_');
+    });
+
     it('renders committee lines with type, designation, party, and state', () => {
       const blocks = searchCommittees.format!({
         committees: [committeeRecord()],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: {},
       });
 
       const text = blocks[0]!.text;

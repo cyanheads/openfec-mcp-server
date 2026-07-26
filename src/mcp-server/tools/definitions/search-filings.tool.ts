@@ -11,6 +11,7 @@ import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
+  formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
@@ -126,7 +127,7 @@ export const searchFilings = tool('openfec_search_filings', {
     return {
       results: result.results,
       pagination: result.pagination,
-      search_criteria: result.results.length === 0 ? buildSearchCriteria(input) : undefined,
+      search_criteria: buildSearchCriteria(input),
     };
   },
 
@@ -151,6 +152,9 @@ export const searchFilings = tool('openfec_search_filings', {
 
     const { page, pages, count, per_page } = result.pagination;
     lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
+
+    const criteria = formatSearchCriteria(result.search_criteria);
+    if (criteria) lines.push(criteria);
 
     return [{ type: 'text', text: lines.join('\n\n') }];
   },

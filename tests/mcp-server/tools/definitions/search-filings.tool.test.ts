@@ -64,6 +64,23 @@ describe('searchFilings', () => {
       expect(result.pagination.count).toBe(2);
       expect(getEnrichment(ctx).totalCount).toBe(2);
       expect(getEnrichment(ctx).notice).toBeUndefined();
+      expect(result.search_criteria).toBeDefined();
+    });
+
+    it('echoes the applied filters on a non-empty response', async () => {
+      mockService.searchFilings.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ form_type: 'F3P', committee_id: 'C00703975' }],
+      });
+
+      const input = searchFilings.input.parse({ committee_id: 'C00703975', form_type: 'F3P' });
+      const result = await searchFilings.handler(input, ctx as unknown as Context);
+
+      expect(result.search_criteria).toMatchObject({
+        committee_id: 'C00703975',
+        form_type: 'F3P',
+      });
+      expect(result.search_criteria).not.toHaveProperty('page');
     });
 
     it('sets enrichment notice when search returns empty results', async () => {
@@ -137,6 +154,18 @@ describe('searchFilings', () => {
   });
 
   describe('format', () => {
+    it('renders the criteria echo on a non-empty response', () => {
+      const blocks = searchFilings.format!({
+        results: [{ form_type: 'F3P', committee_id: 'C00703975' }],
+        pagination: { ...PAGE, count: 1 },
+        search_criteria: { committee_id: 'C00703975', form_type: 'F3P' },
+      });
+
+      expect(blocks[0]!.text).toContain(
+        '_Search criteria: committee_id=C00703975 · form_type=F3P_',
+      );
+    });
+
     it('renders filing info with form type, committee, report, and financials', () => {
       const blocks = searchFilings.format!({
         results: [

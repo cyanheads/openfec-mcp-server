@@ -9,6 +9,7 @@ import {
   buildSearchCriteria,
   fmt$,
   formatEmptyResult,
+  formatSearchCriteria,
   renderRecord,
   str,
 } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
@@ -44,10 +45,17 @@ describe('buildSearchCriteria', () => {
       cursor: 'abc',
       from_hit: 0,
       hits_returned: 20,
-      most_recent: true,
-      election_full: true,
     });
     expect(Object.keys(result)).toEqual(['query']);
+  });
+
+  it('keeps query-shaping booleans that narrow the result set', () => {
+    const result = buildSearchCriteria({ most_recent: false, election_full: true, page: 2 });
+    expect(result).toEqual({ most_recent: false, election_full: true });
+  });
+
+  it('keeps the requested mode so the echo records which query was asked for', () => {
+    expect(buildSearchCriteria({ mode: 'by_state' }).mode).toBe('by_state');
   });
 
   it('returns empty object for all-stripped input', () => {
@@ -95,6 +103,35 @@ describe('formatEmptyResult', () => {
   it('JSON-serializes object values in criteria', () => {
     const blocks = formatEmptyResult({ filters: { a: 1 } }, 'Hint.');
     expect(blocks[0]!.text).toContain('{"a":1}');
+  });
+
+  it('renders the resolved mode when one is supplied', () => {
+    const blocks = formatEmptyResult({ state: 'CA' }, 'Hint.', 'by_state');
+    expect(blocks[0]!.text).toContain('**Mode:** by_state');
+  });
+
+  it('omits the mode line for single-mode tools', () => {
+    expect(formatEmptyResult({ state: 'CA' }, 'Hint.')[0]!.text).not.toContain('**Mode:**');
+  });
+});
+
+describe('formatSearchCriteria', () => {
+  it('renders one compact line of key=value pairs', () => {
+    expect(formatSearchCriteria({ committee_id: 'C00703975', cycle: 2024 })).toBe(
+      '_Search criteria: committee_id=C00703975 · cycle=2024_',
+    );
+  });
+
+  it('returns null for an empty criteria object', () => {
+    expect(formatSearchCriteria({})).toBeNull();
+  });
+
+  it('returns null when criteria are absent', () => {
+    expect(formatSearchCriteria(undefined)).toBeNull();
+  });
+
+  it('JSON-serializes object values', () => {
+    expect(formatSearchCriteria({ filters: { a: 1 } })).toContain('filters={"a":1}');
   });
 });
 

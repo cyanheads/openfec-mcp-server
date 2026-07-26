@@ -7,16 +7,13 @@
 
 import { z } from '@cyanheads/mcp-ts-core';
 
-/** Pagination and internal params excluded from search criteria echo. */
-const PAGINATION_KEYS = new Set([
-  'page',
-  'per_page',
-  'cursor',
-  'from_hit',
-  'hits_returned',
-  'most_recent',
-  'election_full',
-]);
+/**
+ * Pagination params excluded from the search criteria echo — they address a
+ * page, they don't narrow the result set. Everything else the caller sent is a
+ * filter and belongs in the echo, including query-shaping booleans such as
+ * `most_recent` and `election_full`.
+ */
+const PAGINATION_KEYS = new Set(['page', 'per_page', 'cursor', 'from_hit', 'hits_returned']);
 
 /**
  * Build a search criteria summary from tool input.
@@ -36,12 +33,16 @@ export function buildSearchCriteria(input: Record<string, unknown>): Record<stri
 /**
  * Render an empty-result format block with echoed search criteria and a
  * domain-specific suggestion. Used by all tool format() functions.
+ * `mode` is the resolved query mode for multi-mode tools; omit it elsewhere.
  */
 export function formatEmptyResult(
   criteria: Record<string, unknown> | undefined,
   hint: string,
+  mode?: string,
 ): { type: 'text'; text: string }[] {
   const lines: string[] = ['No results found.'];
+
+  if (mode) lines.push('', `**Mode:** ${mode}`);
 
   if (criteria && Object.keys(criteria).length > 0) {
     lines.push('', '**Search criteria used:**');
@@ -55,12 +56,24 @@ export function formatEmptyResult(
   return [{ type: 'text', text: lines.join('\n') }];
 }
 
-/** Reusable optional search_criteria output field schema. */
+/**
+ * Render the criteria echo as one compact line for non-empty responses, so the
+ * markdown surface carries the same applied-filter record as structuredContent.
+ * Returns null when there is nothing to echo.
+ */
+export function formatSearchCriteria(criteria: Record<string, unknown> | undefined): string | null {
+  if (!criteria) return null;
+  const parts = Object.entries(criteria).map(
+    ([key, value]) => `${key}=${typeof value === 'object' ? JSON.stringify(value) : String(value)}`,
+  );
+  return parts.length > 0 ? `_Search criteria: ${parts.join(' · ')}_` : null;
+}
+
+/** Reusable search_criteria output field schema — always populated. */
 export const SearchCriteriaSchema = z
   .looseObject({})
-  .optional()
   .describe(
-    'Echo of the search filters that produced this result set. Populated when results are empty to help diagnose why nothing matched.',
+    'Echo of the search filters this call applied, as the server parsed them, minus paging arguments. Always present — compare it against what you sent to confirm every filter was honoured.',
   );
 
 /** Format a number as USD or return 'N/A' for non-numeric values. */

@@ -60,6 +60,7 @@ describe('searchLegalTool', () => {
       expect(result.total_count).toBe(1);
       expect(mockService.searchLegal).toHaveBeenCalledOnce();
       expect(getEnrichment(ctx).notice).toBeUndefined();
+      expect(result.search_criteria).toMatchObject({ query: 'contribution limits' });
     });
 
     it('sets enrichment totalCount from service result', async () => {
@@ -303,6 +304,16 @@ describe('searchLegalTool', () => {
   });
 
   describe('format', () => {
+    it('renders the criteria echo on a non-empty response', () => {
+      const blocks = searchLegalTool.format!({
+        results: [{ document_type: 'mur', case_no: 'MUR-7890' }],
+        total_count: 1,
+        search_criteria: { query: 'contribution limits', type: 'murs' },
+      });
+
+      expect(blocks[0]!.text).toContain('_Search criteria: query=contribution limits · type=murs_');
+    });
+
     it('groups by document_type with labels', () => {
       const blocks = searchLegalTool.format!({
         results: [
