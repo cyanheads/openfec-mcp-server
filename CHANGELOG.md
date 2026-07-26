@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.14](changelog/0.4.x/0.4.14.md) — 2026-07-26
+
+Pagination cursors bind to query identity, rejecting cross-query replay (#15, #20) and adding descending sort variants for itemized search (#10); mcp-ts-core ^0.11.0, TypeScript ^7, Socket supply-chain scanning
+
 ## [0.4.13](changelog/0.4.x/0.4.13.md) — 2026-06-20
 
 mcp-ts-core ^0.10.9 maintenance: framework dep bump, fresh-scaffold + dependency-specifier + plugin-manifest devcheck guards, ctx.content skill docs, biome 2.5 + dev-dep refresh
