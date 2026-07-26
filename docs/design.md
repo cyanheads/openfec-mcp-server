@@ -10,12 +10,15 @@ All tools are read-only and idempotent (`readOnlyHint: true`, `idempotentHint: t
 |:-----|:------------|:-----------|:------------|
 | `openfec_search_candidates` | Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. | `query`, `candidate_id`, `state`, `office`, `party`, `cycle`, `include_totals` | readOnly, idempotent |
 | `openfec_search_committees` | Find political committees (campaign, PAC, Super PAC, party) by name, type, candidate affiliation, or state. | `query`, `committee_id`, `candidate_id`, `state`, `committee_type`, `designation`, `cycle` | readOnly, idempotent |
+| `openfec_get_committee_totals` | Pre-aggregated committee financial totals — one committee's per-cycle summary, or a ranked search across every committee of one entity type. | `mode`, `committee_id`, `entity_type`, `cycle`, `committee_state`, `min_receipts`, `sort` | readOnly, idempotent |
 | `openfec_search_contributions` | Search itemized individual contributions (Schedule A) or get aggregate breakdowns by size, state, employer, or occupation. | `mode`, `committee_id`, `candidate_id`, `contributor_name`, `contributor_state`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_disbursements` | Search itemized committee spending (Schedule B) or get aggregate breakdowns by purpose or recipient. | `mode`, `committee_id`, `recipient_name`, `disbursement_description`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_expenditures` | Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. | `mode`, `committee_id`, `candidate_id`, `support_oppose`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
+| `openfec_search_coordinated_expenditures` | Search coordinated party expenditures (Schedule F) — party committee spending made on behalf of a candidate, in coordination with that campaign. | `committee_id`, `candidate_id`, `cycle`, `payee_name`, `min_date`, `max_date`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_filings` | Search FEC filings and reports by committee, candidate, form type, or date range. | `committee_id`, `candidate_id`, `form_type`, `report_type`, `cycle`, `most_recent` | readOnly, idempotent |
 | `openfec_lookup_elections` | Look up federal election races and candidate financial summaries. Find who's running with fundraising totals. | `mode`, `office`, `cycle`, `state`, `district` | readOnly, idempotent |
 | `openfec_search_legal` | Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, and administrative fines. | `query`, `type`, `ao_number`, `case_number`, `respondent` | readOnly, idempotent |
+| `openfec_get_legal_document` | Fetch one legal document in full by type and number — the detail counterpart to the compact search results. | `doc_type`, `no` | readOnly, idempotent |
 | `openfec_lookup_calendar` | Look up FEC calendar events, filing deadlines, and election dates. | `mode`, `state`, `min_date`, `max_date` | readOnly, idempotent |
 
 ### Resources
@@ -132,6 +135,44 @@ Find political committees — campaign committees, PACs, Super PACs, party commi
 **Upstream endpoints:**
 - `/v1/committees/` — search with filters
 - `/v1/committees/{committee_id}/` — single committee lookup
+
+---
+
+### `openfec_get_committee_totals`
+
+Pre-aggregated committee finances. Answers "how much has this committee raised this cycle?" in one call instead of paginating Schedule A.
+
+**Input schema:**
+
+| Parameter | Type | Required | Description |
+|:----------|:-----|:---------|:------------|
+| `mode` | enum | No | `single` (default) — one committee's totals, one row per cycle. `by_entity_type` — a page of committees of one entity type. |
+| `committee_id` | string | Yes in `single` | Committee ID. In `by_entity_type` mode it narrows the grouped search to that one committee. |
+| `entity_type` | enum | Yes in `by_entity_type` | `presidential`, `pac`, `party`, `pac-party`, `house-senate`, `ie-only`. |
+| `cycle` | number | No | Two-year election cycle. Omit in `single` mode for every cycle on record. |
+| `committee_state` | string | No | Two-letter state code. `by_entity_type` only. |
+| `committee_type` | string | No | Committee type code. `by_entity_type` only. |
+| `committee_designation` | string | No | Committee designation. `by_entity_type` only. |
+| `organization_type` | string | No | Sponsoring organization type. `by_entity_type` only. |
+| `min_receipts` / `max_receipts` | number | No | Total receipts bound in dollars. `by_entity_type` only. |
+| `min_disbursements` / `max_disbursements` | number | No | Total disbursements bound in dollars. `by_entity_type` only. |
+| `sort` | enum | No | `cycle`, `receipts`, `disbursements`, `last_cash_on_hand_end_period`, each with a `-` descending form. |
+| `page` | number | No | Page number. Default 1. |
+| `per_page` | number | No | Results per page. Default 20, max 100. |
+
+**Output:** Committee totals rows with `committee_id`, `committee_name`, `cycle`, `receipts`, `disbursements`, `last_cash_on_hand_end_period`, `last_debts_owed_by_committee`, the individual/PAC/party contribution breakdown, and `coverage_start_date`/`coverage_end_date`. `mode` echoes the resolved mode; `search_criteria` echoes every filter applied, minus paging.
+
+**Pagination:** Page-based in both modes. A long-running committee can hold more cycles than one page.
+
+**Error modes:**
+- `single` mode without a `committee_id` → `ValidationError` (`committee_id_required_for_single_mode`).
+- `by_entity_type` mode without an `entity_type` → `ValidationError` (`entity_type_required_for_group_mode`), carrying `valid_entity_types`.
+- A grouped-search filter supplied alongside `single` mode → `ValidationError` (`inputs_not_applicable_to_mode`). The single-committee endpoint accepts only paging, `cycle`, and `sort`, so applying one would have returned unfiltered totals.
+- `single` mode matching no row → `NotFound` (`committee_totals_not_found`). The endpoint answers 404 for every empty case — unknown ID, a cycle the committee did not file, a committee that files no financial report — so all three land here; the message names the cycle when one was given.
+
+**Upstream endpoints:**
+- `/v1/committee/{committee_id}/totals/` — one committee, one row per cycle
+- `/v1/totals/{entity_type}/` — grouped search across committees of one entity type
 
 ---
 
@@ -284,6 +325,35 @@ Itemized rows drop the nested `candidate` sub-object, whose three fields are the
 
 ---
 
+### `openfec_search_coordinated_expenditures`
+
+Search coordinated party expenditures (Schedule F) — spending a party committee makes on behalf of a candidate it supports, in coordination with that campaign. Distinct from Schedule E, which by definition cannot be coordinated, and from direct contributions: coordinated expenditures carry their own statutory limits.
+
+**Input schema:**
+
+| Parameter | Type | Required | Description |
+|:----------|:-----|:---------|:------------|
+| `committee_id` | string | No | Spending party committee ID. |
+| `candidate_id` | string | No | Benefiting candidate ID. |
+| `cycle` | number | No | Two-year election cycle. Omitting it searches every cycle on record. |
+| `payee_name` | string | No | Full-text payee name search. |
+| `min_date` / `max_date` | string | No | Expenditure date bound (YYYY-MM-DD). |
+| `min_amount` / `max_amount` | number | No | Expenditure amount bound in dollars. |
+| `sort` | enum | No | `expenditure_date` or `expenditure_amount`, each with a `-` descending form. |
+| `page` | number | No | Page number. Default 1. |
+| `per_page` | number | No | Results per page. Default 20, max 100. |
+
+**Output:** Coordinated expenditure records with `expenditure_date`, `expenditure_amount`, `expenditure_type_full`, `expenditure_purpose_full`, `payee_name`, `candidate_id`/`candidate_name`/`candidate_office`, `aggregate_general_election_expenditure`, `subordinate_committee_id`, `filing_form`, `image_number`, and `pdf_url`.
+
+**Pagination:** Page-based — unlike Schedules A, B, and E, this endpoint has no `last_index` keyset. Unscoped queries return promptly (roughly 82K rows across all history), so no cycle default is applied.
+
+**Payload shaping:** Rows embed up to two committee objects. `committee` — the spender — is hoisted out once when the caller scoped the query to a single `committee_id`, following the Schedule B/E convention. `subordinate_committee` is dropped outright: across a 100-row sample it was null on 39 rows, the spender again on 60, and a different committee on 1, and in every case the row's own `subordinate_committee_id` matched it — so the ID is the recovery path, resolvable through `openfec_search_committees`.
+
+**Upstream endpoints:**
+- `/v1/schedules/schedule_f/` — itemized coordinated expenditures
+
+---
+
 ### `openfec_search_filings`
 
 Search FEC filings and reports. Covers all disclosure documents: financial reports (F3/F3P/F3X), statements of candidacy, organizational filings, and amendments.
@@ -409,6 +479,33 @@ The server normalizes the type-keyed response arrays into a uniform `results` ar
 
 ---
 
+### `openfec_get_legal_document`
+
+Fetch one legal document in full. The detail counterpart to `openfec_search_legal`, which trims every result unconditionally and offered no way to recover what it cut.
+
+**Input schema:**
+
+| Parameter | Type | Required | Description |
+|:----------|:-----|:---------|:------------|
+| `doc_type` | enum | Yes | `advisory_opinions`, `murs`, `adrs`, `admin_fines`, `statutes` — the plural of a search result's `document_type` discriminator. |
+| `no` | string | Yes | Document number from the matching search result's `no` field. Advisory opinions are year-serial (`2024-01`); MURs, ADRs, and admin fines are digit strings (`8363`); statutes are U.S. Code section numbers (`30123`). |
+
+**Output:** `document` — the complete record, carrying the full `documents` array that search replaces with a count and category summary, the complete `commission_votes` it reduces to a vote date and a truncated action, and the `dispositions` and scalar/date fields. Fields present vary by document type. `search_criteria` echoes both inputs. `attachedDocumentCount` enrichment reports the length of `documents`, so it can be checked against the `document_count` the search result reported.
+
+**Not returned:** `highlights` and `document_highlights`. Those are a relevance artifact `/legal/search/` computes against a query, not data attached to a canonical record — the detail endpoint has no such field.
+
+**Reachability:** search results carry the *singular* `document_type` (`mur`) while this path segment is *plural* (`murs`). The mapping is a trailing `s` in every case, and the tool description states it, because a caller chaining a search result cannot infer it from the schema alone. The number is always the result's `no`: `/legal/search/` records carry no `case_no` key at all, and `ao_no` is present only on advisory opinions, where it duplicates `no`.
+
+**Error modes:**
+- No record at the given `doc_type`/`no` → `NotFound` (`legal_document_not_found`).
+
+**Response envelope:** the live endpoint wraps the record in a `docs` array; `docs/openapi-spec.json` documents a flat single object with the same fields at the top level. The service accepts both, preferring the array form when present.
+
+**Upstream endpoints:**
+- `/v1/legal/docs/{doc_type}/{no}` — single legal document
+
+---
+
 ### `openfec_lookup_calendar`
 
 Look up FEC calendar events, filing deadlines, and election dates.
@@ -464,16 +561,20 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | `searchCandidates(params)` | `/candidates/`, `/candidates/{id}/` | Offset |
 | `getCandidateTotals(params)` | `/candidates/totals/` | Offset |
 | `searchCommittees(params)` | `/committees/`, `/committees/{id}/` | Offset |
+| `getCommitteeTotals(id, params)` | `/committee/{id}/totals/` | Offset |
+| `getCommitteeTotalsByEntityType(type, params)` | `/totals/{entity_type}/` | Offset |
 | `searchContributions(params)` | `/schedules/schedule_a/` | Seek |
 | `getContributionAggregates(mode, params)` | `/schedules/schedule_a/by_*` | Offset |
 | `searchDisbursements(params)` | `/schedules/schedule_b/` | Seek |
 | `getDisbursementAggregates(mode, params)` | `/schedules/schedule_b/by_*` | Offset |
 | `searchExpenditures(params)` | `/schedules/schedule_e/` | Seek |
 | `getExpendituresByCandidate(params)` | `/schedules/schedule_e/by_candidate/` | Offset |
+| `searchCoordinatedExpenditures(params)` | `/schedules/schedule_f/` | Offset |
 | `searchFilings(params)` | `/filings/` | Offset |
 | `searchElections(params)` | `/elections/` | Offset |
 | `getElectionSummary(params)` | `/elections/summary/` | Offset |
 | `searchLegal(params)` | `/legal/search/` | Custom |
+| `getLegalDocument(docType, no)` | `/legal/docs/{doc_type}/{no}` | None (single record) |
 | `getCalendarDates(params)` | `/calendar-dates/` | Offset |
 | `getReportingDates(params)` | `/reporting-dates/` | Offset |
 | `getElectionDates(params)` | `/election-dates/` | Offset |
@@ -520,12 +621,14 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 |:-----|:-----------|:-------------|
 | Candidate | search, get by ID, financial totals | `/candidates/`, `/candidates/{id}/`, `/candidates/totals/` |
 | Committee | search, get by ID | `/committees/`, `/committees/{id}/` |
+| Committee Totals | one committee's per-cycle totals, grouped search by entity type | `/committee/{id}/totals/`, `/totals/{entity_type}/` |
 | Contribution | itemized search, aggregate by size/state/employer/occupation | `/schedules/schedule_a/`, `/schedules/schedule_a/by_*` |
 | Disbursement | itemized search, aggregate by purpose/recipient | `/schedules/schedule_b/`, `/schedules/schedule_b/by_*` |
 | Independent Expenditure | itemized search, aggregate by candidate | `/schedules/schedule_e/`, `/schedules/schedule_e/by_candidate/` |
+| Coordinated Party Expenditure | itemized search | `/schedules/schedule_f/` |
 | Filing | search | `/filings/` |
 | Election | candidate race lookup, aggregate summary | `/elections/`, `/elections/summary/` |
-| Legal Document | search (AOs, MURs, ADRs, admin fines, statutes) | `/legal/search/` |
+| Legal Document | search (AOs, MURs, ADRs, admin fines, statutes), fetch one in full | `/legal/search/`, `/legal/docs/{doc_type}/{no}` |
 | Calendar Event | events, filing deadlines, election dates | `/calendar-dates/`, `/reporting-dates/`, `/election-dates/` |
 
 ### Excluded from initial scope
@@ -534,7 +637,6 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 |:-----|:-------|
 | Loans (Schedule C) | Niche. Add if demand warrants. |
 | Debts (Schedule D) | Niche. Debt data partially available via candidate totals. |
-| Party Coordinated Expenditures (Schedule F) | Very low volume, specialized. |
 | E-filing (real-time) | Short retention (~4 months), different data model. |
 | Communication Costs (F7) | Rare filing type. |
 | Electioneering Communications | Overlaps with independent expenditures for most use cases. |
@@ -574,7 +676,7 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 
 ### 1. Mode-based consolidation over separate tools
 
-Contributions, disbursements, expenditures, elections, and calendar each use a `mode` parameter rather than separate tools for itemized vs. aggregate queries. This keeps the tool count at 9 (manageable for LLM tool selection) while preserving full access to ~25 underlying API endpoints.
+Contributions, disbursements, expenditures, elections, calendar, and committee totals each use a `mode` parameter rather than separate tools for itemized vs. aggregate queries. This keeps the tool count at 12 (manageable for LLM tool selection) while preserving full access to ~25 underlying API endpoints.
 
 ### 2. Opaque cursor for keyset pagination
 
@@ -600,7 +702,7 @@ The API sets `Cache-Control: public, max-age=3600`. Server-side caching is worth
 
 ### 7. Every response states the query it ran
 
-All nine tools return `search_criteria` on every response, not only empty ones, and the five multi-mode tools also return the resolved `mode`. A caller cannot otherwise tell that a cycle defaulted, that `by_size` resolved to `by_size_candidate` against a different endpoint, or which of several row shapes it is holding. `search_criteria` echoes the **effective** filters — the caller's parsed input with every server-applied default folded in — minus paging arguments (`page`, `per_page`, `cursor`, `from_hit`, `hits_returned`); query-shaping booleans such as `most_recent` and `election_full` stay in, because they narrow the result set. Echoing the raw input instead would reproduce the failure the field exists to close: the itemized branches fall back to the current cycle and to `most_recent: true`, and a caller who omitted both would see neither in the echo while both shaped the result. The itemized keyset cursor is bound to the same effective values, so an omitted default and an explicit one resolve to one cursor identity rather than two. `format()` renders both fields, so `content[]`-only clients see the same record as `structuredContent` clients.
+All twelve tools return `search_criteria` on every response, not only empty ones, and the six multi-mode tools also return the resolved `mode`. A caller cannot otherwise tell that a cycle defaulted, that `by_size` resolved to `by_size_candidate` against a different endpoint, or which of several row shapes it is holding. `search_criteria` echoes the **effective** filters — the caller's parsed input with every server-applied default folded in — minus paging arguments (`page`, `per_page`, `cursor`, `from_hit`, `hits_returned`); query-shaping booleans such as `most_recent` and `election_full` stay in, because they narrow the result set. Echoing the raw input instead would reproduce the failure the field exists to close: the itemized branches fall back to the current cycle and to `most_recent: true`, and a caller who omitted both would see neither in the echo while both shaped the result. The itemized keyset cursor is bound to the same effective values, so an omitted default and an explicit one resolve to one cursor identity rather than two. `format()` renders both fields, so `content[]`-only clients see the same record as `structuredContent` clients.
 
 ### 8. Mode-inapplicable inputs are rejected, never dropped
 
@@ -609,6 +711,20 @@ Every multi-mode tool checks input presence for filters its resolved mode cannot
 ### 9. The nested committee object is hoisted, not duplicated per row
 
 OpenFEC embeds a ~40-field committee object in every itemized Schedule A/B/E row. When the query is scoped to one `committee_id` it is identical across the page, so it is lifted into a single top-level `committee` field. Schedule A and B require a `committee_id`, so the hoist is unconditional there; Schedule E does not, so it hoists only when the caller supplied one — a candidate- or race-scoped Schedule E page spans several spending committees, and attributing those rows to one of them would be worse than the payload cost. Schedule A's donor-side `contributor` object is deliberately untouched: it varies per row and carries treasurer, designated-agent, and cycle-history data that appears nowhere else. Schedule E's nested `candidate` object is dropped outright — its three fields are the row's own `candidate_id`, an internal `idx`, and a `two_year_period` that restates the query's cycle.
+
+### 10. The outbound parameter guard resolves interpolated paths to their spec template
+
+`assertKnownParams` is keyed on the paths `docs/openapi-spec.json` declares, but `buildUrl` receives paths with the identifier already substituted — `/committee/C00703975/totals/`, not `/committee/{committee_id}/totals/`. Since the guard returns early for a path it has no entry for, registering the template alone would have been dead configuration: every path-parameterized endpoint would silently skip the check that exists because OpenFEC answers 200 and drops a parameter name it does not recognize. A short regex table maps each interpolated form back to its template before lookup. The `/totals/{entity_type}/` pattern is anchored to the six enum values rather than a wildcard segment, so a different `/totals/…` endpoint is not checked against the wrong allowlist.
+
+### 11. Committee totals dispatch on mode across two unrelated endpoints
+
+`/committee/{committee_id}/totals/` and `/totals/{entity_type}/` answer different questions — one committee's cycles versus a ranked page of committees — and share only a row shape. They are one `mode`-dispatched tool rather than two, matching the consolidation in decision 1: the single-committee half is the common case and the default, and the grouped half costs one branch. Only the single half was reachable before, and only through a resource, so tool-only clients could not read committee totals at all.
+
+Both single-record endpoints answer 404 for a miss rather than an empty `results` array — `/committee/{id}/totals/` for an unknown ID, a cycle the committee did not file, and a committee that files no financial report alike. The service normalizes that to a zero-row page so the tool can throw its own `committee_totals_not_found` with an actionable message, instead of surfacing the framework's generic "verify the API path" hint for what is really an unknown ID. The normalization is gated on the 404 body parsing as OpenFEC's own JSON error object: the api.data.gov edge answers 404 with a plain-text routing error when the upstream host is unreachable, and reporting a whole-API outage as "this committee has no totals" would be a confidently wrong answer. Anything that is not the API's JSON error shape stays a failure and propagates. `openfec_get_legal_document` uses the same discriminator.
+
+### 12. Coordinated expenditures use page-based pagination, unlike the other schedules
+
+Schedules A, B, and E paginate by keyset and are wrapped with the opaque cursor of decision 2. Schedule F does not — the endpoint returns `page`/`pages`/`per_page` with no `last_index`, so the tool follows the page-based convention of `openfec_search_committees` instead. It also needs no defaulted cycle: Schedule E defaults to the current cycle because an unscoped scan times out upstream, while Schedule F's whole history is roughly 82K rows and answers an unscoped query promptly.
 
 ---
 
