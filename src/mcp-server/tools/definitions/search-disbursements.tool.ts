@@ -5,7 +5,11 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
+import {
+  cursorQuery,
+  decodeCursor,
+  getOpenFecService,
+} from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
@@ -63,15 +67,22 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     min_amount: z.number().optional().describe('Minimum amount in dollars. Itemized only.'),
     max_amount: z.number().optional().describe('Maximum amount in dollars. Itemized only.'),
     sort: z
-      .enum(['disbursement_date', 'disbursement_amount'])
+      .enum([
+        'disbursement_date',
+        '-disbursement_date',
+        'disbursement_amount',
+        '-disbursement_amount',
+      ])
       .optional()
-      .describe('Sort field. Itemized only.'),
+      .describe(
+        'Sort field. A "-" prefix sorts descending: use "-disbursement_amount" for the biggest payments first, since the ascending form leads with the most negative rows (refunds and voided payments). Itemized only; OpenFEC sorts by "-disbursement_date" when omitted.',
+      ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
       .describe(
-        'Opaque pagination cursor from a previous response. Itemized mode only (keyset pagination).',
+        'Opaque pagination cursor from a previous response of this tool. Itemized mode only (keyset pagination). Valid only for an otherwise-identical call — changing any other argument, including sort, rejects the cursor; omit it to start over.',
       ),
   }),
 
@@ -143,12 +154,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       if (input.max_amount !== undefined) params.max_amount = input.max_amount;
       if (input.sort) params.sort = input.sort;
 
+      const query = cursorQuery('openfec_search_disbursements', input);
       if (input.cursor) {
-        const lastIndexes = decodeCursor(input.cursor);
-        Object.assign(params, lastIndexes);
+        Object.assign(params, decodeCursor(input.cursor, query));
       }
 
-      const result = await fec.searchDisbursements(params, ctx);
+      const result = await fec.searchDisbursements(params, query, ctx);
       ctx.log.info('Itemized disbursements fetched', {
         committee_id: input.committee_id,
         count: result.pagination.count,

@@ -30,15 +30,22 @@ const mockService = {
   getElectionDates: vi.fn(),
 };
 
-vi.mock('@/services/openfec/openfec-service.js', () => ({
+vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openfec/openfec-service.js')>()),
   getOpenFecService: () => mockService,
-  encodeCursor: vi.fn((indexes: Record<string, string>) => btoa(JSON.stringify(indexes))),
-  decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
 import { searchContributions } from '@/mcp-server/tools/definitions/search-contributions.tool.js';
+import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
+
+/** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
+const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
+  encodeCursor(
+    lastIndexes,
+    cursorQuery('openfec_search_contributions', searchContributions.input.parse(args)),
+  );
 
 const contributionRecord = (overrides: Record<string, unknown> = {}) => ({
   contributor_name: 'DOE, JANE',
@@ -165,8 +172,11 @@ describe('searchContributions', () => {
     });
 
     it('passes decoded cursor indexes into params', async () => {
-      const lastIndexes = { last_index: '999', last_contribution_receipt_date: '2024-01-01' };
-      const cursor = btoa(JSON.stringify(lastIndexes));
+      const query = { mode: 'itemized', committee_id: 'C00703975' };
+      const cursor = cursorFor(query, {
+        last_index: '999',
+        last_contribution_receipt_date: '2024-01-01',
+      });
 
       mockService.searchContributions.mockResolvedValueOnce({
         pagination: { count: 50, per_page: 20 },
@@ -174,16 +184,96 @@ describe('searchContributions', () => {
         nextCursor: null,
       });
 
+      const input = searchContributions.input.parse({ ...query, cursor });
+      await searchContributions.handler(input, ctx as unknown as Context);
+
+      const [callArgs, callQuery] = mockService.searchContributions.mock.calls[0]!;
+      expect(callArgs.last_index).toBe('999');
+      expect(callArgs.last_contribution_receipt_date).toBe('2024-01-01');
+      expect(callQuery).toEqual({
+        scope: 'openfec_search_contributions',
+        args: { mode: 'itemized', committee_id: 'C00703975' },
+      });
+    });
+
+    it('rejects a malformed cursor with an invalid_cursor reason and recovery hint', async () => {
       const input = searchContributions.input.parse({
         mode: 'itemized',
         committee_id: 'C00703975',
+        cursor: 'not-a-cursor',
+      });
+
+      const err = await searchContributions
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
+      expect(data.reason).toBe('invalid_cursor');
+      expect(data.recovery.hint).toContain('Omit cursor');
+      expect(mockService.searchContributions).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cursor replayed under a changed sort instead of silently restarting', async () => {
+      const cursor = cursorFor(
+        {
+          mode: 'itemized',
+          committee_id: 'C00431056',
+          sort: 'contribution_receipt_amount',
+        },
+        { last_contribution_receipt_amount: '-3300.00', last_index: '4062020251206659284' },
+      );
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00431056',
         cursor,
+      });
+
+      const err = await searchContributions
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      const data = (err as McpError).data as { reason: string; changed_arguments: string[] };
+      expect(data.reason).toBe('cursor_query_mismatch');
+      expect(data.changed_arguments).toEqual([
+        'sort (cursor: "contribution_receipt_amount", call: omitted)',
+      ]);
+      expect(mockService.searchContributions).not.toHaveBeenCalled();
+    });
+
+    it('passes a descending sort through to the FEC params', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [contributionRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00431056',
+        sort: '-contribution_receipt_amount',
       });
       await searchContributions.handler(input, ctx as unknown as Context);
 
-      const callArgs = mockService.searchContributions.mock.calls[0]![0];
-      expect(callArgs.last_index).toBe('999');
-      expect(callArgs.last_contribution_receipt_date).toBe('2024-01-01');
+      expect(mockService.searchContributions.mock.calls[0]![0].sort).toBe(
+        '-contribution_receipt_amount',
+      );
+    });
+
+    it('accepts every ascending and descending sort value the schema advertises', () => {
+      for (const sort of [
+        'contribution_receipt_date',
+        '-contribution_receipt_date',
+        'contribution_receipt_amount',
+        '-contribution_receipt_amount',
+      ]) {
+        expect(
+          searchContributions.input.parse({ mode: 'itemized', committee_id: 'C00431056', sort })
+            .sort,
+        ).toBe(sort);
+      }
     });
   });
 

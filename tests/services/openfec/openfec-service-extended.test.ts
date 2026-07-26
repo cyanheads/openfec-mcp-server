@@ -24,7 +24,10 @@ vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
 }));
 
 import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
-import { OpenFecService } from '@/services/openfec/openfec-service.js';
+import { type CursorQuery, OpenFecService } from '@/services/openfec/openfec-service.js';
+
+/** Query identity for the keyset (SEEK) calls exercised below. */
+const QUERY: CursorQuery = { scope: 'openfec_search_contributions', args: {} };
 
 const mockFetch = vi.mocked(fetchWithTimeout);
 
@@ -197,7 +200,7 @@ describe('SEEK pagination edge cases', () => {
   it('nextCursor is null when results are empty even if last_indexes is present', async () => {
     mockFetch.mockResolvedValueOnce(seekEnvelope([], { last_index: '99' }, 0) as never);
 
-    const result = await svc.searchContributions({}, ctx);
+    const result = await svc.searchContributions({}, QUERY, ctx);
     expect(result.nextCursor).toBeNull();
   });
 
@@ -206,14 +209,14 @@ describe('SEEK pagination edge cases', () => {
       seekEnvelope([], { last_index: '99', last_date: '2024-01-01' }, 0) as never,
     );
 
-    const result = await svc.searchDisbursements({}, ctx);
+    const result = await svc.searchDisbursements({}, QUERY, ctx);
     expect(result.nextCursor).toBeNull();
   });
 
   it('seek results propagate pagination count', async () => {
     mockFetch.mockResolvedValueOnce(seekEnvelope([{ amount: 100 }], undefined, 500) as never);
 
-    const result = await svc.searchExpenditures({}, ctx);
+    const result = await svc.searchExpenditures({}, QUERY, ctx);
     expect(result.pagination.count).toBe(500);
     expect(result.pagination.per_page).toBe(20);
   });

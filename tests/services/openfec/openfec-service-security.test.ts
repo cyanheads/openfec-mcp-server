@@ -24,7 +24,10 @@ vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
 }));
 
 import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
-import { OpenFecService } from '@/services/openfec/openfec-service.js';
+import { type CursorQuery, OpenFecService } from '@/services/openfec/openfec-service.js';
+
+/** Query identity for the keyset (SEEK) call exercised below. */
+const QUERY: CursorQuery = { scope: 'openfec_search_contributions', args: {} };
 
 const mockFetch = vi.mocked(fetchWithTimeout);
 
@@ -264,7 +267,7 @@ describe('rethrowSanitized — McpError preservation', () => {
 
     let caught: unknown;
     try {
-      await svc.searchContributions({}, ctx);
+      await svc.searchContributions({}, QUERY, ctx);
     } catch (e) {
       caught = e;
     }

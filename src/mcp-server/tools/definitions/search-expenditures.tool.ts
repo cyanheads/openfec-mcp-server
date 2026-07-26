@@ -7,7 +7,11 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
+import {
+  cursorQuery,
+  decodeCursor,
+  getOpenFecService,
+} from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
@@ -103,15 +107,24 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .default(true)
       .describe('Only the most recent version of amended filings. Itemized only.'),
     sort: z
-      .enum(['expenditure_date', 'expenditure_amount', 'office_total_ytd'])
+      .enum([
+        'expenditure_date',
+        '-expenditure_date',
+        'expenditure_amount',
+        '-expenditure_amount',
+        'office_total_ytd',
+        '-office_total_ytd',
+      ])
       .optional()
-      .describe('Sort field. Itemized only.'),
+      .describe(
+        'Sort field. A "-" prefix sorts descending: use "-expenditure_amount" for the largest outside spending first, since the ascending form leads with the most negative rows (corrections and voided entries). Itemized only; OpenFEC sorts by "-expenditure_date" when omitted.',
+      ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
       .describe(
-        'Opaque pagination cursor from a previous response. Itemized mode only (keyset pagination).',
+        'Opaque pagination cursor from a previous response of this tool. Itemized mode only (keyset pagination). Valid only for an otherwise-identical call — changing any other argument, including sort, rejects the cursor; omit it to start over.',
       ),
   }),
 
@@ -181,14 +194,23 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       if (input.min_amount !== undefined) params.min_amount = input.min_amount;
       if (input.max_amount !== undefined) params.max_amount = input.max_amount;
       if (input.is_notice !== undefined) params.is_notice = input.is_notice;
-      if (input.sort) params.sort = input.sort;
-
-      if (input.cursor) {
-        const lastIndexes = decodeCursor(input.cursor);
-        Object.assign(params, lastIndexes);
+      if (input.sort) {
+        params.sort = input.sort;
+        /**
+         * Many Schedule E rows carry a null `office_total_ytd`, and a descending
+         * sort orders nulls first — so `-office_total_ytd` would lead with empty
+         * rows instead of the highest totals. Ascending already places nulls
+         * last, making this a no-op there.
+         */
+        params.sort_nulls_last = true;
       }
 
-      const result = await fec.searchExpenditures(params, ctx);
+      const query = cursorQuery('openfec_search_expenditures', input);
+      if (input.cursor) {
+        Object.assign(params, decodeCursor(input.cursor, query));
+      }
+
+      const result = await fec.searchExpenditures(params, query, ctx);
       ctx.log.info('Itemized expenditures fetched', {
         committee_id: input.committee_id,
         candidate_id: input.candidate_id,

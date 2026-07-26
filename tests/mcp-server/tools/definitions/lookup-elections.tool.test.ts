@@ -30,10 +30,9 @@ const mockService = {
   getElectionDates: vi.fn(),
 };
 
-vi.mock('@/services/openfec/openfec-service.js', () => ({
+vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openfec/openfec-service.js')>()),
   getOpenFecService: () => mockService,
-  encodeCursor: vi.fn((indexes: Record<string, string>) => btoa(JSON.stringify(indexes))),
-  decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
 import { lookupElections as lookupElectionsTool } from '@/mcp-server/tools/definitions/lookup-elections.tool.js';

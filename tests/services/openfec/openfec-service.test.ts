@@ -23,8 +23,11 @@ vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
   withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
 
-import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import {
+  type CursorQuery,
+  cursorQuery,
   decodeCursor,
   encodeCursor,
   getOpenFecService,
@@ -33,24 +36,190 @@ import {
 } from '@/services/openfec/openfec-service.js';
 
 const mockFetch = vi.mocked(fetchWithTimeout);
+const mockWithRetry = vi.mocked(withRetry);
+
+/** Query identity used by the SEEK service tests below. */
+const QUERY: CursorQuery = { scope: 'openfec_search_contributions', args: {} };
+
+/** Assert `fn` throws a ValidationError McpError carrying `reason`. */
+const expectCursorRejection = (fn: () => unknown, reason: string) => {
+  let thrown: unknown;
+  try {
+    fn();
+  } catch (err) {
+    thrown = err;
+  }
+  expect(thrown).toBeInstanceOf(McpError);
+  const err = thrown as McpError;
+  expect(err.code).toBe(JsonRpcErrorCode.ValidationError);
+  const data = err.data as { reason?: string; recovery?: { hint?: string } };
+  expect(data.reason).toBe(reason);
+  expect(data.recovery?.hint).toBeTruthy();
+  return err;
+};
+
+describe('cursorQuery', () => {
+  it('stringifies caller arguments and keeps the issuing scope', () => {
+    const query = cursorQuery('openfec_search_contributions', {
+      mode: 'itemized',
+      committee_id: 'C00703975',
+      cycle: 2024,
+      is_individual: true,
+    });
+
+    expect(query).toEqual({
+      scope: 'openfec_search_contributions',
+      args: {
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        cycle: '2024',
+        is_individual: 'true',
+      },
+    });
+  });
+
+  it('excludes cursor and per_page, which do not shape the keyset', () => {
+    const query = cursorQuery('openfec_search_disbursements', {
+      committee_id: 'C00703975',
+      per_page: 50,
+      cursor: 'abc',
+    });
+
+    expect(query.args).toEqual({ committee_id: 'C00703975' });
+  });
+
+  it('omits undefined arguments so an unset filter matches an absent one', () => {
+    const query = cursorQuery('openfec_search_expenditures', {
+      committee_id: 'C00111111',
+      payee_name: undefined,
+    });
+
+    expect(query.args).toEqual({ committee_id: 'C00111111' });
+  });
+});
 
 describe('cursor encoding', () => {
   it('round-trips last_indexes through encode/decode', () => {
     const indexes = { last_index: '123', last_contribution_receipt_date: '2024-01-15' };
-    const cursor = encodeCursor(indexes);
+    const cursor = encodeCursor(indexes, QUERY);
     expect(typeof cursor).toBe('string');
-    expect(decodeCursor(cursor)).toEqual(indexes);
+    expect(decodeCursor(cursor, QUERY)).toEqual(indexes);
   });
 
   it('handles empty indexes', () => {
-    const cursor = encodeCursor({});
-    expect(decodeCursor(cursor)).toEqual({});
+    const cursor = encodeCursor({}, QUERY);
+    expect(decodeCursor(cursor, QUERY)).toEqual({});
   });
 
-  it('produces base64-encoded JSON', () => {
-    const indexes = { foo: 'bar' };
-    const cursor = encodeCursor(indexes);
-    expect(JSON.parse(atob(cursor))).toEqual(indexes);
+  it('embeds the issuing query alongside the indexes', () => {
+    const query = cursorQuery('openfec_search_contributions', {
+      sort: 'contribution_receipt_amount',
+    });
+    const cursor = encodeCursor({ foo: 'bar' }, query);
+    expect(JSON.parse(atob(cursor))).toEqual({ q: query, i: { foo: 'bar' } });
+  });
+});
+
+describe('cursor validation', () => {
+  it('rejects a cursor that is not valid base64', () => {
+    const err = expectCursorRejection(
+      () => decodeCursor('not-a-cursor!!', QUERY),
+      'invalid_cursor',
+    );
+    expect(err.message).toContain('not decodable');
+  });
+
+  it('rejects base64 that does not decode to JSON', () => {
+    expectCursorRejection(
+      () => decodeCursor(btoa('plain text, not json'), QUERY),
+      'invalid_cursor',
+    );
+  });
+
+  it('rejects a decoded payload with the wrong shape', () => {
+    for (const payload of [
+      JSON.stringify({ last_index: '99' }), // pre-fingerprint flat cursor
+      JSON.stringify({ q: QUERY }), // missing indexes
+      JSON.stringify({ q: { scope: 1, args: {} }, i: {} }), // non-string scope
+      JSON.stringify({ q: QUERY, i: { last_index: 99 } }), // non-string index value
+      JSON.stringify([1, 2, 3]), // not an object
+    ]) {
+      expectCursorRejection(() => decodeCursor(btoa(payload), QUERY), 'invalid_cursor');
+    }
+  });
+
+  it('echoes a truncated cursor rather than the full caller-supplied string', () => {
+    const err = expectCursorRejection(() => decodeCursor('%'.repeat(300), QUERY), 'invalid_cursor');
+    const { cursor } = err.data as { cursor: string };
+    expect(cursor).toHaveLength(101);
+    expect(cursor.endsWith('…')).toBe(true);
+  });
+
+  it('rejects a cursor issued by a different tool', () => {
+    const cursor = encodeCursor(
+      { last_index: '99' },
+      { scope: 'openfec_search_disbursements', args: {} },
+    );
+
+    const err = expectCursorRejection(
+      () => decodeCursor(cursor, { scope: 'openfec_search_contributions', args: {} }),
+      'cursor_query_mismatch',
+    );
+    expect(err.message).toContain('openfec_search_disbursements');
+  });
+
+  it('rejects a cursor replayed under a changed sort, naming the argument', () => {
+    const issued = cursorQuery('openfec_search_contributions', {
+      committee_id: 'C00431056',
+      sort: 'contribution_receipt_amount',
+    });
+    const cursor = encodeCursor({ last_index: '99' }, issued);
+
+    const err = expectCursorRejection(
+      () =>
+        decodeCursor(
+          cursor,
+          cursorQuery('openfec_search_contributions', {
+            committee_id: 'C00431056',
+          }),
+        ),
+      'cursor_query_mismatch',
+    );
+    const { changed_arguments } = err.data as { changed_arguments: string[] };
+    expect(changed_arguments).toEqual([
+      'sort (cursor: "contribution_receipt_amount", call: omitted)',
+    ]);
+  });
+
+  it('rejects a cursor replayed under a changed filter', () => {
+    const issued = cursorQuery('openfec_search_contributions', { committee_id: 'C00431056' });
+    const cursor = encodeCursor({ last_index: '99' }, issued);
+
+    const err = expectCursorRejection(
+      () =>
+        decodeCursor(
+          cursor,
+          cursorQuery('openfec_search_contributions', {
+            committee_id: 'C00703975',
+          }),
+        ),
+      'cursor_query_mismatch',
+    );
+    const { changed_arguments } = err.data as { changed_arguments: string[] };
+    expect(changed_arguments).toEqual(['committee_id (cursor: "C00431056", call: "C00703975")']);
+  });
+
+  it('accepts a cursor replayed with per_page changed', () => {
+    const cursor = encodeCursor(
+      { last_index: '99' },
+      cursorQuery('openfec_search_contributions', { committee_id: 'C00431056', per_page: 3 }),
+    );
+
+    const decoded = decodeCursor(
+      cursor,
+      cursorQuery('openfec_search_contributions', { committee_id: 'C00431056', per_page: 100 }),
+    );
+    expect(decoded).toEqual({ last_index: '99' });
   });
 });
 
@@ -94,7 +263,7 @@ describe('OpenFecService', () => {
 
   const seekEnvelope = <T>(
     results: T[],
-    lastIndexes: Record<string, string> | undefined,
+    lastIndexes: Record<string, string | number> | undefined,
     count = 1,
   ) => ({
     json: () =>
@@ -169,24 +338,64 @@ describe('OpenFecService', () => {
         ) as never,
       );
 
-      const result = await svc.searchContributions({ committee_id: 'C00703975' }, ctx);
+      const result = await svc.searchContributions({ committee_id: 'C00703975' }, QUERY, ctx);
       expect(result.results).toEqual(contributions);
       expect(result.nextCursor).toBeTruthy();
-      expect(typeof result.nextCursor).toBe('string');
+      expect(decodeCursor(result.nextCursor as string, QUERY)).toEqual({
+        last_index: '99',
+        last_contribution_receipt_date: '2024-06-01',
+      });
     });
 
     it('returns null nextCursor when no more pages', async () => {
       mockFetch.mockResolvedValueOnce(seekEnvelope([{ amount: 100 }], undefined, 1) as never);
 
-      const result = await svc.searchContributions({}, ctx);
+      const result = await svc.searchContributions({}, QUERY, ctx);
       expect(result.nextCursor).toBeNull();
     });
 
     it('returns null nextCursor when last_indexes is empty', async () => {
       mockFetch.mockResolvedValueOnce(seekEnvelope([{ amount: 100 }], {}, 1) as never);
 
-      const result = await svc.searchContributions({}, ctx);
+      const result = await svc.searchContributions({}, QUERY, ctx);
       expect(result.nextCursor).toBeNull();
+    });
+
+    it('round-trips a numeric last_index value (Schedule E office_total_ytd)', async () => {
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(
+          [{ expenditure_amount: 100 }],
+          { last_index: '4060220251204384181', last_office_total_ytd: 503313627.73 },
+          2,
+        ) as never,
+      );
+
+      const result = await svc.searchExpenditures({}, QUERY, ctx);
+
+      expect(decodeCursor(result.nextCursor as string, QUERY)).toEqual({
+        last_index: '4060220251204384181',
+        last_office_total_ytd: '503313627.73',
+      });
+    });
+
+    it('binds nextCursor to the query it was issued for', async () => {
+      const issued = cursorQuery('openfec_search_contributions', {
+        committee_id: 'C00431056',
+        sort: '-contribution_receipt_amount',
+      });
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope([{ amount: 100 }], { last_index: '7' }, 2) as never,
+      );
+
+      const result = await svc.searchContributions({ committee_id: 'C00431056' }, issued, ctx);
+
+      expect(decodeCursor(result.nextCursor as string, issued)).toEqual({ last_index: '7' });
+      expect(() =>
+        decodeCursor(
+          result.nextCursor as string,
+          cursorQuery('openfec_search_contributions', { committee_id: 'C00431056' }),
+        ),
+      ).toThrow(McpError);
     });
   });
 
@@ -221,7 +430,7 @@ describe('OpenFecService', () => {
       const disbursements = [{ recipient_name: 'MEDIA CORP', disbursement_amount: 10000 }];
       mockFetch.mockResolvedValueOnce(seekEnvelope(disbursements, undefined, 1) as never);
 
-      const result = await svc.searchDisbursements({}, ctx);
+      const result = await svc.searchDisbursements({}, QUERY, ctx);
       expect(result.results).toEqual(disbursements);
     });
   });
@@ -246,7 +455,7 @@ describe('OpenFecService', () => {
   describe('searchExpenditures (SEEK)', () => {
     it('returns seek-based results', async () => {
       mockFetch.mockResolvedValueOnce(seekEnvelope([{ expenditure_amount: 5000 }]) as never);
-      const result = await svc.searchExpenditures({}, ctx);
+      const result = await svc.searchExpenditures({}, QUERY, ctx);
       expect(result.results).toHaveLength(1);
     });
   });
@@ -396,5 +605,42 @@ describe('isTransientFecError', () => {
     mockFetch.mockRejectedValueOnce(new Error('503 ServiceUnavailable'));
 
     await expect(svc.searchCandidates({}, ctx)).rejects.toThrow('503');
+  });
+
+  /**
+   * The classifier is reached via the `isTransient` predicate handed to
+   * `withRetry`. Framework-thrown `McpError`s must classify by code — a
+   * timeout carries no distinguishing substring in its message.
+   */
+  const classify = async (): Promise<(error: unknown) => boolean> => {
+    const svc = new OpenFecService();
+    const ctx = createMockContext();
+    mockFetch.mockResolvedValueOnce({
+      json: async () => ({ pagination: {}, results: [] }),
+    } as unknown as Response);
+    await svc.searchCandidates({}, ctx);
+    const options = mockWithRetry.mock.calls.at(-1)?.[1] as {
+      isTransient: (error: unknown) => boolean;
+    };
+    return options.isTransient;
+  };
+
+  it.each([
+    ['Timeout', JsonRpcErrorCode.Timeout],
+    ['ServiceUnavailable', JsonRpcErrorCode.ServiceUnavailable],
+    ['RateLimited', JsonRpcErrorCode.RateLimited],
+  ])('classifies a framework %s McpError as transient', async (_name, code) => {
+    const isTransient = await classify();
+    expect(isTransient(new McpError(code, 'FEC /candidates timed out.'))).toBe(true);
+  });
+
+  it('does not retry a deterministic upstream rejection', async () => {
+    const isTransient = await classify();
+    expect(isTransient(new McpError(JsonRpcErrorCode.ValidationError, 'Status: 422'))).toBe(false);
+  });
+
+  it('still classifies raw socket failures by message', async () => {
+    const isTransient = await classify();
+    expect(isTransient(new Error('fetch failed: ECONNRESET'))).toBe(true);
   });
 });

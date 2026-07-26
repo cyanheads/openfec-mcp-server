@@ -156,9 +156,9 @@ Search itemized individual contributions (Schedule A) or get aggregate breakdown
 | `min_amount` | number | No | Minimum contribution amount in dollars. Itemized mode only. |
 | `max_amount` | number | No | Maximum contribution amount in dollars. Itemized mode only. |
 | `is_individual` | boolean | No | Only individual contributions (excludes committee-to-committee transfers). Itemized mode only. |
-| `sort` | `contribution_receipt_date` \| `contribution_receipt_amount` | No | Sort field. Itemized mode only. |
+| `sort` | `contribution_receipt_date` \| `contribution_receipt_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
-| `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode uses keyset pagination — pass the cursor to get the next page. |
+| `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode uses keyset pagination — pass the cursor to get the next page. Valid only for an otherwise-identical call. |
 
 **Output:**
 - *Itemized:* Contribution records with: `contributor_name`, `contributor_employer`, `contributor_occupation`, `contributor_city`, `contributor_state`, `contributor_zip`, `contribution_receipt_amount`, `contribution_receipt_date`, `contributor_aggregate_ytd`, `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `receipt_type_full`, `is_individual`, `memo_text`, `pdf_url`. Plus `next_cursor` for pagination.
@@ -205,9 +205,9 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 | `max_date` | string | No | Latest disbursement date (YYYY-MM-DD). Itemized mode only. |
 | `min_amount` | number | No | Minimum amount. Itemized mode only. |
 | `max_amount` | number | No | Maximum amount. Itemized mode only. |
-| `sort` | `disbursement_date` \| `disbursement_amount` | No | Sort field. Itemized mode only. |
+| `sort` | `disbursement_date` \| `disbursement_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
-| `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode only. |
+| `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode only. Valid only for an otherwise-identical call. |
 
 **Output:**
 - *Itemized:* Disbursement records with: `recipient_name`, `recipient_city`, `recipient_state`, `recipient_zip`, `disbursement_amount`, `disbursement_date`, `disbursement_description`, `disbursement_purpose_category`, `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `entity_type`, `memo_text`, `pdf_url`. Plus `next_cursor`.
@@ -251,9 +251,9 @@ Search independent expenditures (Schedule E) — spending by outside groups (Sup
 | `max_amount` | number | No | Maximum amount. Itemized mode only. |
 | `is_notice` | boolean | No | Only 24/48-hour notice filings (near-election spending). Itemized mode only. |
 | `most_recent` | boolean | No | Only the most recent version of amended filings. Default true. Itemized mode only. |
-| `sort` | `expenditure_date` \| `expenditure_amount` \| `office_total_ytd` | No | Sort field. Itemized mode only. |
+| `sort` | `expenditure_date` \| `expenditure_amount` \| `office_total_ytd`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
-| `cursor` | string | No | Opaque pagination cursor. Itemized mode only. |
+| `cursor` | string | No | Opaque pagination cursor. Itemized mode only. Valid only for an otherwise-identical call. |
 
 **Output:**
 - *Itemized:* Expenditure records with: `committee_id`, `committee_name`, `payee_name`, `expenditure_amount`, `expenditure_date`, `expenditure_description`, `support_oppose_indicator`, `candidate_id`, `candidate_name`, `candidate_office`, `candidate_office_state`, `candidate_party`, `is_notice`, `dissemination_date`, `office_total_ytd`, `most_recent`, `pdf_url`. Plus `next_cursor`.
@@ -453,10 +453,11 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 |:-------|:--------|
 | `buildUrl(path, params)` | Construct URL with query params, inject `api_key`, strip undefined values. |
 | `fetchJson<T>(path, params)` | `fetchWithTimeout` → JSON parse → validate envelope → return `{ pagination, results }`. |
-| `fetchSeek<T>(path, params)` | Like `fetchJson` but returns `{ pagination, results, nextCursor }` from `last_indexes`. |
+| `fetchSeek<T>(path, params, query)` | Like `fetchJson` but returns `{ pagination, results, nextCursor }` from `last_indexes`, with the cursor bound to `query`. |
 | `fetchLegal<T>(params)` | Special handling for legal search response shape. |
-| `encodeCursor(lastIndexes)` | Base64-encode `last_indexes` into an opaque cursor string. |
-| `decodeCursor(cursor)` | Decode cursor back to `last_indexes` query params. |
+| `cursorQuery(scope, input)` | Normalize a tool's arguments into the `{ scope, args }` identity its cursors are bound to (`cursor` and `per_page` excluded). |
+| `encodeCursor(lastIndexes, query)` | Base64-encode `last_indexes` plus the issuing query into an opaque cursor string. |
+| `decodeCursor(cursor, expected)` | Validate the cursor and decode it back to `last_indexes`. Throws `validationError` with `reason: 'invalid_cursor'` (malformed) or `'cursor_query_mismatch'` (issued for a different query). |
 
 ---
 
@@ -536,6 +537,8 @@ Contributions, disbursements, expenditures, elections, and calendar each use a `
 ### 2. Opaque cursor for keyset pagination
 
 Schedule A/B/E use keyset pagination with `last_indexes` containing multiple cursor fields. Rather than exposing these internal details, the server base64-encodes them into a single `cursor` string. The LLM passes it back verbatim without needing to understand the structure.
+
+The encoded payload also carries the query that issued it — the tool name plus the caller's arguments, minus `cursor` and `per_page` (neither changes which rows the keyset walks). `decodeCursor` validates the structure and compares that identity against the current call, because `last_indexes` keys are sort-specific and OpenFEC silently ignores keys that do not match the active sort: without the check, a cursor replayed under a changed sort or filter is accepted and restarts at page one with no signal. A malformed cursor fails as `invalid_cursor`; a valid cursor from a different query fails as `cursor_query_mismatch`, naming the arguments that changed. The identity is a generic serialization of the arguments rather than a per-field allowlist, so new filters and sort values need no matching change here.
 
 ### 3. `two_year_transaction_period` abstraction
 

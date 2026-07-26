@@ -6,7 +6,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, type RequestContext, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import type {
@@ -24,14 +24,150 @@ import type {
 /*  Cursor encoding for keyset pagination                             */
 /* ------------------------------------------------------------------ */
 
-/** Encode `last_indexes` from SEEK pagination into an opaque cursor. */
-export function encodeCursor(lastIndexes: Record<string, string>): string {
-  return btoa(JSON.stringify(lastIndexes));
+/**
+ * The identity a keyset cursor is bound to: the tool that issued it plus the
+ * caller arguments that shape the result set. OpenFEC silently ignores keyset
+ * keys that do not match the active sort, so a cursor replayed against a
+ * different query restarts at page one without any signal — binding the two
+ * together lets `decodeCursor` reject the replay instead.
+ */
+export interface CursorQuery {
+  /** Caller arguments that shape the keyset, stringified. */
+  args: Record<string, string>;
+  /** Tool name that issued the cursor. Blocks replay across the itemized tools. */
+  scope: string;
 }
 
-/** Decode an opaque cursor back to `last_indexes` query params. */
-export function decodeCursor(cursor: string): Record<string, string> {
-  return JSON.parse(atob(cursor));
+/** Cursor payload as it is serialized: `q` = issuing query, `i` = `last_indexes`. */
+interface CursorPayload {
+  i: Record<string, string>;
+  q: CursorQuery;
+}
+
+/**
+ * Arguments left out of the cursor identity. `cursor` is not part of the query
+ * it resumes, and `per_page` only sets batch size — neither changes which rows
+ * the keyset walks.
+ */
+const CURSOR_IDENTITY_EXCLUDES: ReadonlySet<string> = new Set(['cursor', 'per_page']);
+
+const RESTART_HINT =
+  'Omit cursor to restart from the first page, then paginate only with a next_cursor value returned by this same tool.';
+
+const MISMATCH_HINT =
+  'Repeat the original arguments exactly and reuse the cursor, or omit cursor to start a fresh search under the new arguments.';
+
+/**
+ * Normalize a tool's parsed input into the identity its cursors are bound to.
+ * Derived from the caller's own arguments rather than the outbound FEC params
+ * so a mismatch names fields the caller can actually see in the tool schema.
+ */
+export function cursorQuery(scope: string, input: Record<string, unknown>): CursorQuery {
+  const args: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || CURSOR_IDENTITY_EXCLUDES.has(key)) continue;
+    args[key] = String(value);
+  }
+  return { scope, args };
+}
+
+/**
+ * Encode `last_indexes` and the issuing query into an opaque cursor.
+ * Index values are stringified first — OpenFEC returns some of them as raw
+ * numbers (Schedule E's `last_office_total_ytd`), and they go back out as
+ * query params either way.
+ */
+export function encodeCursor(
+  lastIndexes: Record<string, string | number>,
+  query: CursorQuery,
+): string {
+  const i = Object.fromEntries(
+    Object.entries(lastIndexes).map(([key, value]) => [key, String(value)]),
+  );
+  return btoa(JSON.stringify({ q: query, i } satisfies CursorPayload));
+}
+
+/**
+ * Decode an opaque cursor back to `last_indexes` query params.
+ * Throws a `validationError` when the cursor is malformed (`invalid_cursor`)
+ * or was issued for a different query (`cursor_query_mismatch`).
+ */
+export function decodeCursor(cursor: string, expected: CursorQuery): Record<string, string> {
+  const echo = cursor.length > 100 ? `${cursor.slice(0, 100)}…` : cursor;
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(atob(cursor));
+  } catch {
+    throw validationError(
+      'Pagination cursor is not decodable — it must be a next_cursor value returned by this tool, not a hand-written or truncated string.',
+      { reason: 'invalid_cursor', cursor: echo, recovery: { hint: RESTART_HINT } },
+    );
+  }
+
+  const payload = parseCursorPayload(raw);
+  if (!payload) {
+    throw validationError(
+      'Pagination cursor decoded but does not have the expected shape — it must be a next_cursor value returned by the current version of this tool.',
+      { reason: 'invalid_cursor', cursor: echo, recovery: { hint: RESTART_HINT } },
+    );
+  }
+
+  if (payload.q.scope !== expected.scope) {
+    throw validationError(
+      `Pagination cursor was issued by ${payload.q.scope}, not ${expected.scope}. Cursors are not portable between tools.`,
+      {
+        reason: 'cursor_query_mismatch',
+        issued_by: payload.q.scope,
+        recovery: { hint: RESTART_HINT },
+      },
+    );
+  }
+
+  const changed = diffCursorArgs(payload.q.args, expected.args);
+  if (changed.length > 0) {
+    throw validationError(
+      `Pagination cursor was issued for a different query — ${changed.join('; ')}. A cursor is only valid for an otherwise-identical call.`,
+      {
+        reason: 'cursor_query_mismatch',
+        changed_arguments: changed,
+        recovery: { hint: MISMATCH_HINT },
+      },
+    );
+  }
+
+  return payload.i;
+}
+
+/** True when `value` is a plain object whose values are all strings. */
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every((v) => typeof v === 'string');
+}
+
+/** Narrow a decoded cursor body to a `CursorPayload`, or `null` when the shape is wrong. */
+function parseCursorPayload(raw: unknown): CursorPayload | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { q, i } = raw as { q?: unknown; i?: unknown };
+  if (!isStringRecord(i) || typeof q !== 'object' || q === null) return null;
+  const { scope, args } = q as { scope?: unknown; args?: unknown };
+  if (typeof scope !== 'string' || !isStringRecord(args)) return null;
+  return { q: { scope, args }, i };
+}
+
+/** Render one side of an argument comparison — a quoted value, or `omitted` when absent. */
+function describeArg(value: string | undefined): string {
+  return value === undefined ? 'omitted' : JSON.stringify(value);
+}
+
+/** Describe every argument that differs between the cursor's query and the current call. */
+function diffCursorArgs(issued: Record<string, string>, current: Record<string, string>): string[] {
+  const keys = [...new Set([...Object.keys(issued), ...Object.keys(current)])].sort();
+  return keys
+    .filter((key) => issued[key] !== current[key])
+    .map(
+      (key) => `${key} (cursor: ${describeArg(issued[key])}, call: ${describeArg(current[key])})`,
+    );
 }
 
 /* ------------------------------------------------------------------ */
@@ -128,11 +264,13 @@ export class OpenFecService {
 
   /**
    * Fetch JSON from a keyset (SEEK) endpoint with retry.
-   * Returns a `nextCursor` from `last_indexes` when more results exist.
+   * Returns a `nextCursor` from `last_indexes` when more results exist, bound
+   * to `query` so a replay under different arguments is rejected on decode.
    */
   private async fetchSeek<T = Record<string, unknown>>(
     path: string,
     params: FecParams,
+    query: CursorQuery,
     ctx: Context,
   ): Promise<SeekResult<T>> {
     const url = this.buildUrl(path, params);
@@ -154,7 +292,7 @@ export class OpenFecService {
               per_page: body.pagination.per_page,
             },
             results: body.results,
-            nextCursor: hasMore ? encodeCursor(lastIndexes) : null,
+            nextCursor: hasMore ? encodeCursor(lastIndexes, query) : null,
           };
         },
         {
@@ -267,8 +405,8 @@ export class OpenFecService {
   /*  Contributions (Schedule A)                                      */
   /* ---------------------------------------------------------------- */
 
-  searchContributions(params: FecParams, ctx: Context): Promise<SeekResult> {
-    return this.fetchSeek('/schedules/schedule_a/', params, ctx);
+  searchContributions(params: FecParams, query: CursorQuery, ctx: Context): Promise<SeekResult> {
+    return this.fetchSeek('/schedules/schedule_a/', params, query, ctx);
   }
 
   getContributionAggregates(mode: string, params: FecParams, ctx: Context): Promise<PageResult> {
@@ -289,8 +427,8 @@ export class OpenFecService {
   /*  Disbursements (Schedule B)                                      */
   /* ---------------------------------------------------------------- */
 
-  searchDisbursements(params: FecParams, ctx: Context): Promise<SeekResult> {
-    return this.fetchSeek('/schedules/schedule_b/', params, ctx);
+  searchDisbursements(params: FecParams, query: CursorQuery, ctx: Context): Promise<SeekResult> {
+    return this.fetchSeek('/schedules/schedule_b/', params, query, ctx);
   }
 
   getDisbursementAggregates(mode: string, params: FecParams, ctx: Context): Promise<PageResult> {
@@ -308,8 +446,8 @@ export class OpenFecService {
   /*  Independent Expenditures (Schedule E)                           */
   /* ---------------------------------------------------------------- */
 
-  searchExpenditures(params: FecParams, ctx: Context): Promise<SeekResult> {
-    return this.fetchSeek('/schedules/schedule_e/', params, ctx);
+  searchExpenditures(params: FecParams, query: CursorQuery, ctx: Context): Promise<SeekResult> {
+    return this.fetchSeek('/schedules/schedule_e/', params, query, ctx);
   }
 
   getExpendituresByCandidate(params: FecParams, ctx: Context): Promise<PageResult> {
@@ -443,21 +581,31 @@ function rethrowSanitized(err: unknown): never {
 /*  Transient error classification                                    */
 /* ------------------------------------------------------------------ */
 
-/** Classify errors as transient for retry purposes. */
+/** Error codes the framework assigns to retryable upstream failures. */
+const TRANSIENT_ERROR_CODES: ReadonlySet<number> = new Set([
+  JsonRpcErrorCode.Timeout,
+  JsonRpcErrorCode.ServiceUnavailable,
+  JsonRpcErrorCode.RateLimited,
+]);
+
+/**
+ * Classify errors as transient for retry purposes.
+ *
+ * A structured `McpError` is classified by code — `fetchWithTimeout` maps
+ * timeouts, 429s, and 5xx responses onto the transient set before this runs.
+ * The message heuristics below only cover errors that never reached the
+ * framework's classifier (raw socket failures, upstream HTML error pages).
+ */
 function isTransientFecError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
+  if (error instanceof McpError && TRANSIENT_ERROR_CODES.has(error.code)) return true;
   const msg = 'message' in error ? String((error as { message: string }).message) : '';
   if (msg.includes('ServiceUnavailable') || msg.includes('503') || msg.includes('502')) return true;
   if (msg.includes('429') || msg.includes('OVER_RATE_LIMIT') || msg.includes('rate limit')) {
     return true;
   }
   if (msg.includes('unexpected response') || msg.includes('HTML error page')) return true;
-  if (
-    msg.includes('ECONNRESET') ||
-    msg.includes('ETIMEDOUT') ||
-    msg.includes('FETCH_TIMEOUT') ||
-    msg.includes('fetch failed')
-  ) {
+  if (msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') || msg.includes('fetch failed')) {
     return true;
   }
   return false;

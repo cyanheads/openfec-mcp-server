@@ -6,6 +6,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,15 +31,22 @@ const mockService = {
   getElectionDates: vi.fn(),
 };
 
-vi.mock('@/services/openfec/openfec-service.js', () => ({
+vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openfec/openfec-service.js')>()),
   getOpenFecService: () => mockService,
-  encodeCursor: vi.fn((indexes: Record<string, string>) => btoa(JSON.stringify(indexes))),
-  decodeCursor: vi.fn((cursor: string) => JSON.parse(atob(cursor))),
 }));
 
 import { searchExpenditures } from '@/mcp-server/tools/definitions/search-expenditures.tool.js';
+import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
+
+/** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
+const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
+  encodeCursor(
+    lastIndexes,
+    cursorQuery('openfec_search_expenditures', searchExpenditures.input.parse(args)),
+  );
 
 const expenditureRecord = (overrides: Record<string, unknown> = {}) => ({
   support_oppose_indicator: 'S',
@@ -149,8 +157,11 @@ describe('searchExpenditures', () => {
     });
 
     it('passes decoded cursor indexes into itemized params', async () => {
-      const lastIndexes = { last_index: '42', last_expenditure_date: '2024-09-15' };
-      const cursor = btoa(JSON.stringify(lastIndexes));
+      const query = { mode: 'itemized', committee_id: 'C00111111' };
+      const cursor = cursorFor(query, {
+        last_index: '42',
+        last_expenditure_date: '2024-09-15',
+      });
 
       mockService.searchExpenditures.mockResolvedValueOnce({
         pagination: { count: 200, per_page: 20 },
@@ -158,16 +169,126 @@ describe('searchExpenditures', () => {
         nextCursor: null,
       });
 
+      const input = searchExpenditures.input.parse({ ...query, cursor });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      const [callArgs, callQuery] = mockService.searchExpenditures.mock.calls[0]!;
+      expect(callArgs.last_index).toBe('42');
+      expect(callArgs.last_expenditure_date).toBe('2024-09-15');
+      expect(callQuery).toEqual({
+        scope: 'openfec_search_expenditures',
+        args: { mode: 'itemized', committee_id: 'C00111111', most_recent: 'true' },
+      });
+    });
+
+    it('rejects a malformed cursor with an invalid_cursor reason and recovery hint', async () => {
       const input = searchExpenditures.input.parse({
         mode: 'itemized',
         committee_id: 'C00111111',
+        cursor: 'not-a-cursor',
+      });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
+      expect(data.reason).toBe('invalid_cursor');
+      expect(data.recovery.hint).toContain('Omit cursor');
+      expect(mockService.searchExpenditures).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cursor replayed under a changed sort', async () => {
+      const cursor = cursorFor(
+        { mode: 'itemized', committee_id: 'C00111111', sort: 'expenditure_amount' },
+        { last_index: '42' },
+      );
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+        sort: '-expenditure_amount',
         cursor,
+      });
+
+      const err = await searchExpenditures
+        .handler(input, ctx as unknown as Context)
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(McpError);
+      const data = (err as McpError).data as { reason: string; changed_arguments: string[] };
+      expect(data.reason).toBe('cursor_query_mismatch');
+      expect(data.changed_arguments).toEqual([
+        'sort (cursor: "expenditure_amount", call: "-expenditure_amount")',
+      ]);
+      expect(mockService.searchExpenditures).not.toHaveBeenCalled();
+    });
+
+    it('passes a descending sort through to the FEC params', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+        sort: '-expenditure_amount',
       });
       await searchExpenditures.handler(input, ctx as unknown as Context);
 
-      const callArgs = mockService.searchExpenditures.mock.calls[0]![0];
-      expect(callArgs.last_index).toBe('42');
-      expect(callArgs.last_expenditure_date).toBe('2024-09-15');
+      expect(mockService.searchExpenditures.mock.calls[0]![0].sort).toBe('-expenditure_amount');
+    });
+
+    it('sorts nulls last so -office_total_ytd leads with real totals, not empty rows', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+        sort: '-office_total_ytd',
+      });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].sort_nulls_last).toBe(true);
+    });
+
+    it('omits sort_nulls_last when no sort is requested', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+      });
+      await searchExpenditures.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].sort_nulls_last).toBeUndefined();
+    });
+
+    it('accepts every ascending and descending sort value the schema advertises', () => {
+      for (const sort of [
+        'expenditure_date',
+        '-expenditure_date',
+        'expenditure_amount',
+        '-expenditure_amount',
+        'office_total_ytd',
+        '-office_total_ytd',
+      ]) {
+        expect(
+          searchExpenditures.input.parse({ mode: 'itemized', committee_id: 'C00111111', sort })
+            .sort,
+        ).toBe(sort);
+      }
     });
   });
 

@@ -18,11 +18,17 @@ export interface FecPagePagination {
   per_page: number;
 }
 
-/** Keyset (SEEK) pagination metadata (Schedule A/B/E). */
+/**
+ * Keyset (SEEK) pagination metadata (Schedule A/B/E).
+ *
+ * `last_indexes` values are scalars whose JSON type follows the sorted column:
+ * amounts and dates come back quoted, but some numeric columns (Schedule E's
+ * `office_total_ytd`) come back as raw numbers.
+ */
 export interface FecSeekPagination {
   count: number;
   is_count_exact?: boolean;
-  last_indexes?: Record<string, string>;
+  last_indexes?: Record<string, string | number>;
   per_page: number;
 }
 

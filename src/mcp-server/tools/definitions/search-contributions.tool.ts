@@ -7,7 +7,11 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { decodeCursor, getOpenFecService } from '@/services/openfec/openfec-service.js';
+import {
+  cursorQuery,
+  decodeCursor,
+  getOpenFecService,
+} from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
@@ -114,15 +118,22 @@ export const searchContributions = tool('openfec_search_contributions', {
         'Only individual contributions (excludes committee-to-committee transfers). Itemized only.',
       ),
     sort: z
-      .enum(['contribution_receipt_date', 'contribution_receipt_amount'])
+      .enum([
+        'contribution_receipt_date',
+        '-contribution_receipt_date',
+        'contribution_receipt_amount',
+        '-contribution_receipt_amount',
+      ])
       .optional()
-      .describe('Sort field. Itemized only.'),
+      .describe(
+        'Sort field. A "-" prefix sorts descending: use "-contribution_receipt_amount" for the largest receipts first, since the ascending form leads with the most negative rows (refunds, reattributions, redesignations). Itemized only; OpenFEC sorts by "-contribution_receipt_date" when omitted.',
+      ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
       .describe(
-        'Opaque pagination cursor from a previous response. Itemized mode only (keyset pagination).',
+        'Opaque pagination cursor from a previous response of this tool. Itemized mode only (keyset pagination). Valid only for an otherwise-identical call — changing any other argument, including sort, rejects the cursor; omit it to start over.',
       ),
   }),
 
@@ -200,12 +211,12 @@ export const searchContributions = tool('openfec_search_contributions', {
       if (input.is_individual !== undefined) params.is_individual = input.is_individual;
       if (input.sort) params.sort = input.sort;
 
+      const query = cursorQuery('openfec_search_contributions', input);
       if (input.cursor) {
-        const lastIndexes = decodeCursor(input.cursor);
-        Object.assign(params, lastIndexes);
+        Object.assign(params, decodeCursor(input.cursor, query));
       }
 
-      const result = await fec.searchContributions(params, ctx);
+      const result = await fec.searchContributions(params, query, ctx);
       ctx.log.info('Itemized contributions fetched', {
         committee_id: input.committee_id,
         cycle,
