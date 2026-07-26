@@ -164,7 +164,7 @@ export const searchLegal = tool('openfec_search_legal', {
         z
           .looseObject({})
           .describe(
-            'Legal document record. The document_type field discriminates among advisory_opinion, mur, adr, admin_fine, and statute. Common fields include ao_no/case_no/no (identifier), name, document_type, document_count, and document_categories summarizing the related filings.',
+            'Legal document record. The document_type field discriminates among advisory_opinion, mur, adr, admin_fine, and statute. Common fields include no (the identifier every type carries, and the one openfec_get_legal_document takes; advisory opinions repeat it as ao_no), name, document_type, document_count, and document_categories summarizing the related filings.',
           ),
       )
       .describe(
@@ -182,6 +182,16 @@ export const searchLegal = tool('openfec_search_legal', {
       .describe(
         'Guidance when no legal documents matched — echoes filters and suggests how to broaden.',
       ),
+    retrievalHint: z
+      .string()
+      .optional()
+      .describe(
+        'How to recover the material trimmed out of these results. Present whenever any result was returned, because every result is trimmed.',
+      ),
+  },
+
+  enrichmentTrailer: {
+    retrievalHint: { label: 'Full records' },
   },
 
   async handler(input, ctx) {
@@ -308,6 +318,11 @@ export const searchLegal = tool('openfec_search_legal', {
       ctx.enrich.notice(
         'No legal documents matched. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
       );
+    } else {
+      ctx.enrich({
+        retrievalHint:
+          "Every result above is trimmed: the documents array is replaced by document_count and document_categories, per-document highlights are dropped and the highlights list is capped at three, and each commission_vote is cut to its vote_date and a 200-character action. Retrieve the untrimmed documents and commission_votes with openfec_get_legal_document, passing doc_type as the result document_type made plural (advisory_opinion to advisory_opinions, mur to murs) and no as the result's no field.",
+      });
     }
 
     return {

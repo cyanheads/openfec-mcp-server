@@ -99,6 +99,28 @@ describe('searchLegalTool', () => {
 
       expect(getEnrichment(ctx).notice).toBeDefined();
       expect(getEnrichment(ctx).notice).toContain('No legal documents matched');
+      expect(getEnrichment(ctx).retrievalHint).toBeUndefined();
+    });
+
+    it('routes every non-empty result to the detail tool, since all results are trimmed', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [
+          {
+            document_type: 'mur',
+            no: '7226',
+            documents: [{ category: 'Conciliation Agreement' }],
+          },
+        ],
+        totalCount: 1,
+      });
+
+      const input = searchLegalTool.input.parse({ case_number: '7226' });
+      await searchLegalTool.handler(input, ctx as unknown as Context);
+
+      const hint = getEnrichment(ctx).retrievalHint as string;
+      expect(hint).toContain('openfec_get_legal_document');
+      expect(hint).toContain('mur to murs');
+      expect(hint).toContain("the result's no field");
     });
 
     it('throws when no filter provided', async () => {
