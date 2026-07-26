@@ -13,6 +13,7 @@ import {
   getOpenFecService,
 } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { currentCycle } from './utils/election-cycle.js';
 import {
   buildSearchCriteria,
   formatEmptyResult,
@@ -21,12 +22,6 @@ import {
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
-
-/** Derive the current two-year election cycle (always even). */
-const currentCycle = () => {
-  const year = new Date().getFullYear();
-  return year % 2 === 0 ? year : year + 1;
-};
 
 const modes = ['itemized', 'by_size', 'by_state', 'by_employer', 'by_occupation'] as const;
 

@@ -40,6 +40,12 @@ import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
+/** The two-year period the itemized branch falls back to when no cycle is given. */
+const CURRENT_CYCLE = (() => {
+  const year = new Date().getFullYear();
+  return year % 2 === 0 ? year : year + 1;
+})();
+
 /** Build the cursor this tool would return for `args`, carrying `lastIndexes`. */
 const cursorFor = (args: Record<string, unknown>, lastIndexes: Record<string, string>) =>
   encodeCursor(
@@ -95,6 +101,24 @@ describe('searchContributions', () => {
       expect(result.count).toBe(1);
       expect(getEnrichment(ctx).totalCount).toBe(1);
       expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('scopes an itemized call with no cycle to the current two-year period', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      await searchContributions.handler(input, ctx as unknown as Context);
+
+      expect(mockService.searchContributions.mock.calls[0]![0].two_year_transaction_period).toBe(
+        CURRENT_CYCLE,
+      );
     });
 
     it('sets enrichment notice for empty itemized contributions', async () => {
