@@ -133,6 +133,7 @@ describe('HTTP status error hints', () => {
     [500, 'internal error'],
     [502, 'temporarily unreachable'],
     [503, 'temporarily unavailable'],
+    [504, 'timed out running this query'],
   ];
 
   for (const [status, hint] of statusCases) {

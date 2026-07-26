@@ -6,6 +6,7 @@
  * @module tests/services/openfec/openfec-service-extended.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,7 +25,11 @@ vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
 }));
 
 import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
-import { type CursorQuery, OpenFecService } from '@/services/openfec/openfec-service.js';
+import {
+  assertKnownParams,
+  type CursorQuery,
+  OpenFecService,
+} from '@/services/openfec/openfec-service.js';
 
 /** Query identity for the keyset (SEEK) calls exercised below. */
 const QUERY: CursorQuery = { scope: 'openfec_search_contributions', args: {} };
@@ -244,6 +249,114 @@ describe('getExpendituresByCandidate', () => {
     const url = mockFetch.mock.calls[0]![0] as string;
     expect(url).toContain('/schedules/schedule_e/by_candidate/');
     expect(result.results[0]).toHaveProperty('candidate_id', 'P00003392');
+  });
+
+  it('sends the endpoint its own filter names verbatim', async () => {
+    mockFetch.mockResolvedValueOnce(pageEnvelope([{ candidate_id: 'H2OH09999' }]) as never);
+
+    await svc.getExpendituresByCandidate(
+      { office: 'house', state: 'OH', district: '09', support_oppose: 'S', cycle: 2024 },
+      ctx,
+    );
+
+    const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain('office=house');
+    expect(url).toContain('state=OH');
+    expect(url).toContain('district=09');
+    expect(url).toContain('support_oppose=S');
+  });
+});
+
+describe('outbound parameter-name guard', () => {
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('accepts every name /schedules/schedule_e/by_candidate/ declares', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_e/by_candidate/', {
+        page: 1,
+        per_page: 20,
+        state: 'OH',
+        district: '09',
+        cycle: 2024,
+        office: 'house',
+        election_full: true,
+        candidate_id: 'H2OH09999',
+        committee_id: 'C00111111',
+        support_oppose: 'S',
+        sort: '-total',
+        sort_hide_null: true,
+        sort_null_only: false,
+        sort_nulls_last: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts the keyset cursor keys Schedule B and E hand back', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_b/', {
+        last_index: 42,
+        last_disbursement_date: '2024-05-10',
+        last_disbursement_amount: 150_000,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertKnownParams('/schedules/schedule_e/', {
+        last_index: 42,
+        last_expenditure_date: '2024-10-01',
+        last_expenditure_amount: 500_000,
+        last_office_total_ytd: 1_000,
+        sort_null_only: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects an itemized filter name aimed at the by_candidate endpoint', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_e/by_candidate/', {
+        candidate_id: 'P80001571',
+        support_oppose_indicator: 'S',
+      }),
+    ).toThrow(/support_oppose_indicator/);
+  });
+
+  it('names every offending parameter and the endpoint', () => {
+    let err: McpError | undefined;
+    try {
+      assertKnownParams('/legal/search/', {
+        q: 'test',
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+      });
+    } catch (e) {
+      err = e as McpError;
+    }
+
+    expect(err).toBeInstanceOf(McpError);
+    expect(err?.code).toBe(JsonRpcErrorCode.InternalError);
+    expect(err?.data).toMatchObject({
+      endpoint: '/legal/search/',
+      unknown_parameters: ['max_date', 'min_date'],
+    });
+  });
+
+  it('leaves endpoints without a declared allowlist unchecked', () => {
+    expect(() => assertKnownParams('/candidates/', { not_a_real_param: 1 })).not.toThrow();
+  });
+
+  it('fires through the service before any request is made', async () => {
+    await expect(svc.searchLegal({ min_penalty_amount: 100 }, ctx)).rejects.toThrow(
+      /does not accept/,
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 

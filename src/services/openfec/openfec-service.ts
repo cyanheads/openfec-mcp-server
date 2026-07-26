@@ -172,6 +172,76 @@ function diffCursorArgs(issued: Record<string, string>, current: Record<string, 
 }
 
 /* ------------------------------------------------------------------ */
+/*  Outbound parameter-name guard                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Accepted query-parameter names per endpoint, copied verbatim from
+ * `docs/openapi-spec.json`. OpenFEC answers HTTP 200 for a parameter name it
+ * does not recognize and silently drops the filter, so a misspelled or
+ * wrong-endpoint name returns a full, unfiltered result set that looks correct.
+ * Checking the outbound names against the spec turns that into a loud failure.
+ *
+ * Endpoints absent from this map are not checked — entries are added as the
+ * endpoints they cover are worked on, not by auditing the whole spec at once.
+ */
+const paramSet = (names: string): ReadonlySet<string> => new Set(names.trim().split(/\s+/));
+
+const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
+  '/schedules/schedule_b/': paramSet(`
+    image_number min_image_number max_image_number min_amount max_amount min_date max_date
+    committee_id disbursement_description disbursement_purpose_category last_disbursement_amount
+    last_disbursement_date line_number recipient_city recipient_committee_id recipient_name
+    recipient_state spender_committee_designation spender_committee_org_type spender_committee_type
+    two_year_transaction_period per_page last_index sort sort_hide_null sort_null_only`),
+
+  '/schedules/schedule_e/': paramSet(`
+    image_number min_image_number max_image_number min_amount max_amount min_date max_date
+    candidate_office candidate_party candidate_office_state candidate_office_district cycle
+    committee_id candidate_id filing_form last_expenditure_date last_expenditure_amount
+    last_office_total_ytd payee_name support_oppose_indicator last_support_oppose_indicator
+    is_notice min_dissemination_date max_dissemination_date min_filing_date max_filing_date
+    most_recent q_spender form_line_number per_page last_index sort sort_hide_null sort_null_only
+    sort_nulls_last`),
+
+  '/schedules/schedule_e/by_candidate/': paramSet(`
+    page per_page state district cycle office election_full candidate_id committee_id
+    support_oppose sort sort_hide_null sort_null_only sort_nulls_last`),
+
+  '/legal/search/': paramSet(`
+    q from_hit hits_returned type ao_no ao_year ao_name ao_min_issue_date ao_max_issue_date
+    ao_min_request_date ao_max_request_date ao_min_document_date ao_max_document_date
+    ao_doc_category_id ao_is_pending ao_status ao_requestor ao_requestor_type
+    ao_regulatory_citation ao_statutory_citation ao_citation_require_all ao_commenter
+    ao_representative case_no case_respondents case_election_cycles case_min_open_date
+    primary_subject_id secondary_subject_id case_max_open_date case_min_close_date
+    case_max_close_date case_min_document_date case_max_document_date case_regulatory_citation
+    case_statutory_citation case_citation_require_all q_exclude case_doc_category_id mur_type
+    mur_disposition_category_id af_name af_committee_id af_report_year af_min_rtb_date
+    af_max_rtb_date af_rtb_fine_amount af_min_fd_date af_max_fd_date af_fd_fine_amount sort
+    case_min_penalty_amount case_max_penalty_amount q_proximity max_gaps proximity_preserve_order
+    proximity_filter proximity_filter_term filename`),
+};
+
+/**
+ * Throw when an outbound parameter name is not one the endpoint accepts.
+ * Only the names are reported — values may carry caller data.
+ */
+export function assertKnownParams(path: string, params: FecParams): void {
+  const accepted = ENDPOINT_PARAMS[path];
+  if (!accepted) return;
+  const unknown = Object.keys(params)
+    .filter((key) => !accepted.has(key))
+    .sort();
+  if (unknown.length === 0) return;
+  throw new McpError(
+    JsonRpcErrorCode.InternalError,
+    `Refusing to call ${path} with parameter(s) it does not accept: ${unknown.join(', ')}. OpenFEC would answer 200 and silently ignore them, returning an unfiltered result set.`,
+    { endpoint: path, unknown_parameters: unknown },
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Context adapter                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -204,8 +274,13 @@ export class OpenFecService {
   /*  Internal fetch helpers                                          */
   /* ---------------------------------------------------------------- */
 
-  /** Build a full URL with query params, injecting the API key. */
+  /**
+   * Build a full URL with query params, injecting the API key.
+   * Every outbound request funnels through here, so this is where parameter
+   * names are checked against the endpoint's accepted set.
+   */
   private buildUrl(path: string, params: FecParams = {}): string {
+    assertKnownParams(path, params);
     const base = this.config.fecBaseUrl.replace(/\/$/, '');
     const url = new URL(`${base}${path}`);
     url.searchParams.set('api_key', this.config.fecApiKey);
@@ -555,6 +630,7 @@ function enrichStatusError(msg: string): string {
     500: 'FEC API internal error. Retry shortly.',
     502: 'FEC API is temporarily unreachable. Retry shortly.',
     503: 'FEC API is temporarily unavailable. Retry shortly.',
+    504: 'The FEC API timed out running this query. Narrow it — supply cycle, a committee_id or candidate_id, or a tighter date range — then retry.',
   };
   const hint = hints[status];
   return hint ? `${sanitized} — ${hint}` : sanitized;
