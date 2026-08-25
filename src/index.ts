@@ -23,6 +23,16 @@ await createApp({
     // Public hosted catalog — serve full tool/resource/prompt inventory without auth
     requireAuth: false,
   },
+  // The discovery surface only changes when this server is redeployed, so a
+  // 2026-07-28 client may hold it for an hour. `resources/read` is left unset
+  // (no caching): every resource proxies live FEC data.
+  cacheHints: {
+    'tools/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'prompts/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/templates/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'server/discover': { ttlMs: 3_600_000, cacheScope: 'public' },
+  },
   setup() {
     initOpenFecService();
   },
