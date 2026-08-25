@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-coordinated-expenditures.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -70,11 +70,20 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext();
+
 describe('searchCoordinatedExpenditures', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -93,7 +102,7 @@ describe('searchCoordinatedExpenditures', () => {
         max_date: '2024-11-05',
         sort: '-expenditure_amount',
       });
-      await searchCoordinatedExpenditures.handler(input, ctx as unknown as Context);
+      await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(mockService.searchCoordinatedExpenditures).toHaveBeenCalledOnce();
       const params = mockService.searchCoordinatedExpenditures.mock.calls[0]![0];
@@ -116,7 +125,7 @@ describe('searchCoordinatedExpenditures', () => {
       });
 
       const input = searchCoordinatedExpenditures.input.parse({ cycle: 2024, per_page: 5 });
-      const result = await searchCoordinatedExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(result.search_criteria).toEqual({ cycle: 2024 });
       expect(getEnrichment(ctx).totalCount).toBe(1);
@@ -130,7 +139,7 @@ describe('searchCoordinatedExpenditures', () => {
       });
 
       const input = searchCoordinatedExpenditures.input.parse({ committee_id: 'C00003418' });
-      const result = await searchCoordinatedExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(result.committee).toMatchObject({ committee_id: 'C00003418' });
       for (const r of result.results) {
@@ -147,7 +156,7 @@ describe('searchCoordinatedExpenditures', () => {
       });
 
       const input = searchCoordinatedExpenditures.input.parse({ cycle: 2024 });
-      const result = await searchCoordinatedExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(result.committee).toBeUndefined();
       expect(result.results[0]).toHaveProperty('committee');
@@ -161,7 +170,7 @@ describe('searchCoordinatedExpenditures', () => {
       });
 
       const input = searchCoordinatedExpenditures.input.parse({ cycle: 2024 });
-      await searchCoordinatedExpenditures.handler(input, ctx as unknown as Context);
+      await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toContain('No coordinated party expenditures matched');
@@ -169,9 +178,9 @@ describe('searchCoordinatedExpenditures', () => {
 
     it('rejects a malformed committee_id before calling the API', async () => {
       const input = searchCoordinatedExpenditures.input.parse({ committee_id: 'NOPE' });
-      const err = await searchCoordinatedExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchCoordinatedExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
@@ -180,9 +189,9 @@ describe('searchCoordinatedExpenditures', () => {
 
     it('rejects a malformed candidate_id before calling the API', async () => {
       const input = searchCoordinatedExpenditures.input.parse({ candidate_id: 'X123' });
-      const err = await searchCoordinatedExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchCoordinatedExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
@@ -204,7 +213,7 @@ describe('searchCoordinatedExpenditures', () => {
         search_criteria: { cycle: 2024 },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**$9,000,000 for TRUMP, DONALD J** — 2024-08-07');
       expect(text).toContain('payee_name: NATIONAL MEDIA RESEARCH');
       expect(text).toContain('expenditure_type_full: COORDINATED EXPENDITURE');
@@ -220,7 +229,7 @@ describe('searchCoordinatedExpenditures', () => {
         search_criteria: { committee_id: 'C00003418' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text.match(/applies to every row below/g)).toHaveLength(1);
       expect(text).toContain('REPUBLICAN NATIONAL COMMITTEE (C00003418)');
     });
@@ -232,7 +241,7 @@ describe('searchCoordinatedExpenditures', () => {
         search_criteria: { committee_id: 'C00703975', cycle: 2024 },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('No results found.');
       expect(text).toContain('committee_id: C00703975');
       expect(text).toContain('only party committees report Schedule F');

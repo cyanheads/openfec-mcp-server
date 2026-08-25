@@ -5,7 +5,7 @@
  * @module tests/mcp-server/tools/definitions/get-legal-document.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -67,11 +67,20 @@ const mur = () => ({
   documents: [],
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: getLegalDocument.errors });
+
 describe('getLegalDocument', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: getLegalDocument.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -83,7 +92,7 @@ describe('getLegalDocument', () => {
         doc_type: 'advisory_opinions',
         no: '2024-01',
       });
-      const result = await getLegalDocument.handler(input, ctx as unknown as Context);
+      const result = await getLegalDocument.handler(input, ctx);
 
       expect(mockService.getLegalDocument).toHaveBeenCalledWith(
         'advisory_opinions',
@@ -101,7 +110,7 @@ describe('getLegalDocument', () => {
         doc_type: 'advisory_opinions',
         no: '2024-01',
       });
-      const result = await getLegalDocument.handler(input, ctx as unknown as Context);
+      const result = await getLegalDocument.handler(input, ctx);
 
       expect(result.document.documents).toHaveLength(2);
       expect(getEnrichment(ctx).attachedDocumentCount).toBe(2);
@@ -111,7 +120,7 @@ describe('getLegalDocument', () => {
       mockService.getLegalDocument.mockResolvedValueOnce(mur());
 
       const input = getLegalDocument.input.parse({ doc_type: 'murs', no: '7226' });
-      await getLegalDocument.handler(input, ctx as unknown as Context);
+      await getLegalDocument.handler(input, ctx);
 
       expect(getEnrichment(ctx).attachedDocumentCount).toBe(0);
     });
@@ -120,7 +129,7 @@ describe('getLegalDocument', () => {
       mockService.getLegalDocument.mockResolvedValueOnce({ no: 1, name: 'Statute' });
 
       const input = getLegalDocument.input.parse({ doc_type: 'statutes', no: '1' });
-      const result = await getLegalDocument.handler(input, ctx as unknown as Context);
+      const result = await getLegalDocument.handler(input, ctx);
 
       expect(getEnrichment(ctx).attachedDocumentCount).toBe(0);
       expect(result.document).toEqual({ no: 1, name: 'Statute' });
@@ -130,9 +139,9 @@ describe('getLegalDocument', () => {
       mockService.getLegalDocument.mockResolvedValueOnce(null);
 
       const input = getLegalDocument.input.parse({ doc_type: 'murs', no: '99999999' });
-      const err = await getLegalDocument
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getLegalDocument.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -162,7 +171,7 @@ describe('getLegalDocument', () => {
         search_criteria: { doc_type: 'advisory_opinions', no: '2024-01' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**2024-01** — Sample Requestor LLC');
       expect(text).toContain('status: Final');
       expect(text).toContain('### documents (2)');
@@ -177,7 +186,7 @@ describe('getLegalDocument', () => {
         search_criteria: { doc_type: 'murs', no: '7226' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**7226** — Example Committee');
       expect(text).toContain('### commission_votes (1)');
       expect(text).toContain('action: Failed to find reason to believe.');
@@ -192,7 +201,7 @@ describe('getLegalDocument', () => {
         search_criteria: { doc_type: 'statutes', no: '1' },
       });
 
-      expect(blocks[0]!.text).toContain('**Legal document**');
+      expect(formatText(blocks)).toContain('**Legal document**');
     });
   });
 });

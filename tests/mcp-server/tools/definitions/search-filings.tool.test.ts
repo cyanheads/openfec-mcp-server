@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-filings.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,11 +38,20 @@ import { searchFilings } from '@/mcp-server/tools/definitions/search-filings.too
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext();
+
 describe('searchFilings', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -58,7 +67,7 @@ describe('searchFilings', () => {
       });
 
       const input = searchFilings.input.parse({});
-      const result = await searchFilings.handler(input, ctx as unknown as Context);
+      const result = await searchFilings.handler(input, ctx);
 
       expect(result.results).toEqual(filings);
       expect(result.pagination.count).toBe(2);
@@ -74,7 +83,7 @@ describe('searchFilings', () => {
       });
 
       const input = searchFilings.input.parse({ committee_id: 'C00703975', form_type: 'F3P' });
-      const result = await searchFilings.handler(input, ctx as unknown as Context);
+      const result = await searchFilings.handler(input, ctx);
 
       expect(result.search_criteria).toMatchObject({
         committee_id: 'C00703975',
@@ -90,7 +99,7 @@ describe('searchFilings', () => {
       });
 
       const input = searchFilings.input.parse({ form_type: 'F99' });
-      await searchFilings.handler(input, ctx as unknown as Context);
+      await searchFilings.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -119,7 +128,7 @@ describe('searchFilings', () => {
         per_page: 50,
       });
 
-      await searchFilings.handler(input, ctx as unknown as Context);
+      await searchFilings.handler(input, ctx);
 
       const callArgs = mockService.searchFilings.mock.calls[0]![0];
       expect(callArgs).toMatchObject({
@@ -146,7 +155,7 @@ describe('searchFilings', () => {
       });
 
       const input = searchFilings.input.parse({});
-      await searchFilings.handler(input, ctx as unknown as Context);
+      await searchFilings.handler(input, ctx);
 
       const callArgs = mockService.searchFilings.mock.calls[0]![0];
       expect(callArgs.most_recent).toBe(true);
@@ -161,7 +170,7 @@ describe('searchFilings', () => {
         search_criteria: { committee_id: 'C00703975', form_type: 'F3P' },
       });
 
-      expect(blocks[0]!.text).toContain(
+      expect(formatText(blocks)).toContain(
         '_Search criteria: committee_id=C00703975 · form_type=F3P_',
       );
     });
@@ -186,9 +195,10 @@ describe('searchFilings', () => {
           },
         ],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { candidate_id: 'P00003392', cycle: 2024 },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**F3P**');
       expect(text).toContain('BIDEN FOR PRESIDENT');
       expect(text).toContain('C00703975');
@@ -214,9 +224,10 @@ describe('searchFilings', () => {
           },
         ],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { committee_id: 'C00000001' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('is_amended: true');
       expect(text).toContain('pdf_url: https://docquery.fec.gov/pdf/123/202401019999.pdf');
     });
@@ -225,9 +236,10 @@ describe('searchFilings', () => {
       const blocks = searchFilings.format!({
         results: [],
         pagination: PAGE,
+        search_criteria: { filer_name: 'NOSUCHFILER' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      expect(formatText(blocks)).toContain('No results found');
     });
   });
 });

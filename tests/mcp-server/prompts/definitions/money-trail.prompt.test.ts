@@ -7,45 +7,50 @@
 import { describe, expect, it } from 'vitest';
 import { moneyTrailPrompt } from '@/mcp-server/prompts/definitions/money-trail.prompt.js';
 
+type PromptMessage = { role: string; content: { type: string; text: string } };
+const argsSchema = moneyTrailPrompt.args!;
+const generate = (args: Parameters<typeof moneyTrailPrompt.generate>[0]) =>
+  moneyTrailPrompt.generate(args) as PromptMessage[];
+const firstMessage = (args: Parameters<typeof moneyTrailPrompt.generate>[0]): PromptMessage => {
+  const [msg] = generate(args);
+  if (!msg) throw new Error('generate() returned no messages');
+  return msg;
+};
+
 describe('moneyTrailPrompt', () => {
   it('generates message with candidate_id when provided', () => {
-    const messages = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
     expect(text).toContain('candidate ID P00003392');
   });
 
   it('generates message with candidate_name when provided', () => {
-    const messages = moneyTrailPrompt.generate({ candidate_name: 'Joe Biden' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_name: 'Joe Biden' }).content.text;
     expect(text).toContain('"Joe Biden"');
   });
 
   it('generates message with cycle note when cycle provided', () => {
-    const messages = moneyTrailPrompt.generate({
+    const text = firstMessage({
       candidate_name: 'Joe Biden',
       cycle: '2024',
-    });
-    const text = (messages[0].content as { text: string }).text;
+    }).content.text;
     expect(text).toContain('for the 2024 cycle');
   });
 
   it('uses fallback "the specified candidate" when neither name nor id given', () => {
-    const messages = moneyTrailPrompt.generate({});
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({}).content.text;
     const openingLine = text.split('\n')[0];
     expect(openingLine).toContain('the specified candidate');
     expect(openingLine).not.toContain('candidate ID');
   });
 
   it('returns exactly 1 message with role=user', () => {
-    const messages = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
+    const messages = generate({ candidate_id: 'P00003392' });
     expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe('user');
+    expect(firstMessage({ candidate_id: 'P00003392' }).role).toBe('user');
   });
 
   it('message text contains all investigation steps', () => {
-    const messages = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
 
     const steps = [
       'Identify the candidate',
@@ -67,8 +72,7 @@ describe('moneyTrailPrompt', () => {
    * never mentions is unreachable through this prompt.
    */
   it('names every tool the money-trail sequence chains', () => {
-    const messages = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
 
     const tools = [
       'openfec_search_candidates',
@@ -85,23 +89,23 @@ describe('moneyTrailPrompt', () => {
   });
 
   it('pins the cycle on every call when one was supplied', () => {
-    const withCycle = moneyTrailPrompt.generate({ candidate_id: 'P00003392', cycle: '2020' });
-    expect((withCycle[0].content as { text: string }).text).toContain('Pass cycle=2020');
+    expect(firstMessage({ candidate_id: 'P00003392', cycle: '2020' }).content.text).toContain(
+      'Pass cycle=2020',
+    );
 
-    const withoutCycle = moneyTrailPrompt.generate({ candidate_id: 'P00003392' });
-    expect((withoutCycle[0].content as { text: string }).text).not.toContain('Pass cycle=');
+    expect(firstMessage({ candidate_id: 'P00003392' }).content.text).not.toContain('Pass cycle=');
   });
 
   it('args parsing validates schema', () => {
-    expect(() => moneyTrailPrompt.args.parse({})).toThrow(/candidate_id or candidate_name/);
-    expect(moneyTrailPrompt.args.parse({ candidate_id: 'P00003392' })).toEqual({
+    expect(() => argsSchema.parse({})).toThrow(/candidate_id or candidate_name/);
+    expect(argsSchema.parse({ candidate_id: 'P00003392' })).toEqual({
       candidate_id: 'P00003392',
     });
-    expect(moneyTrailPrompt.args.parse({ candidate_name: 'Test' })).toEqual({
+    expect(argsSchema.parse({ candidate_name: 'Test' })).toEqual({
       candidate_name: 'Test',
     });
     expect(
-      moneyTrailPrompt.args.parse({
+      argsSchema.parse({
         candidate_name: 'Test',
         candidate_id: 'P00003392',
         cycle: '2024',
@@ -111,6 +115,6 @@ describe('moneyTrailPrompt', () => {
       candidate_id: 'P00003392',
       cycle: '2024',
     });
-    expect(() => moneyTrailPrompt.args.parse({ cycle: 123 })).toThrow();
+    expect(() => argsSchema.parse({ cycle: 123 })).toThrow();
   });
 });

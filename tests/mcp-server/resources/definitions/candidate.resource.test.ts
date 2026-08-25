@@ -36,6 +36,8 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
 
 import { candidateResource } from '@/mcp-server/resources/definitions/candidate.resource.js';
 
+const paramsSchema = candidateResource.params!;
+
 describe('candidateResource', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,8 +63,8 @@ describe('candidateResource', () => {
     mockService.getCandidateTotals.mockResolvedValueOnce(pageResult([totals]));
     mockService.getCandidateCommittees.mockResolvedValueOnce(pageResult(committees));
 
-    const ctx = createMockContext();
-    const params = candidateResource.params.parse({ candidate_id: 'P00003392' });
+    const ctx = createMockContext({ errors: candidateResource.errors });
+    const params = paramsSchema.parse({ candidate_id: 'P00003392' });
     const result = await candidateResource.handler(params, ctx);
 
     expect(result).toEqual({ ...candidate, ...totals, principal_committees: committees });
@@ -82,8 +84,8 @@ describe('candidateResource', () => {
     mockService.getCandidateTotals.mockResolvedValueOnce(pageResult([]));
     mockService.getCandidateCommittees.mockResolvedValueOnce(pageResult([]));
 
-    const ctx = createMockContext();
-    const params = candidateResource.params.parse({ candidate_id: 'H2CO07170' });
+    const ctx = createMockContext({ errors: candidateResource.errors });
+    const params = paramsSchema.parse({ candidate_id: 'H2CO07170' });
     const result = await candidateResource.handler(params, ctx);
 
     expect(result).toEqual({ ...candidate, principal_committees: [] });
@@ -95,7 +97,7 @@ describe('candidateResource', () => {
     mockService.getCandidateCommittees.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ errors: candidateResource.errors });
-    const params = candidateResource.params.parse({ candidate_id: 'P99999999' });
+    const params = paramsSchema.parse({ candidate_id: 'P99999999' });
 
     await expect(candidateResource.handler(params, ctx)).rejects.toThrow(
       'Candidate P99999999 not found',
@@ -103,9 +105,9 @@ describe('candidateResource', () => {
   });
 
   it('validates candidate_id param', () => {
-    expect(() => candidateResource.params.parse({})).toThrow();
-    expect(() => candidateResource.params.parse({ candidate_id: 123 })).toThrow();
-    expect(candidateResource.params.parse({ candidate_id: 'P00003392' })).toEqual({
+    expect(() => paramsSchema.parse({})).toThrow();
+    expect(() => paramsSchema.parse({ candidate_id: 123 })).toThrow();
+    expect(paramsSchema.parse({ candidate_id: 'P00003392' })).toEqual({
       candidate_id: 'P00003392',
     });
   });

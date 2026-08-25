@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-candidates.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -63,11 +63,20 @@ const totalsRecord = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: searchCandidates.errors });
+
 describe('searchCandidates', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -80,7 +89,7 @@ describe('searchCandidates', () => {
       });
 
       const input = searchCandidates.input.parse({ query: 'Biden' });
-      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+      const result = await searchCandidates.handler(input, ctx);
 
       expect(mockService.searchCandidates).toHaveBeenCalledOnce();
       expect(result.candidates).toEqual(candidates);
@@ -104,7 +113,7 @@ describe('searchCandidates', () => {
       });
 
       const input = searchCandidates.input.parse({ candidate_id: 'P00003392' });
-      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+      const result = await searchCandidates.handler(input, ctx);
 
       expect(mockService.getCandidate).toHaveBeenCalledWith('P00003392', ctx);
       expect(result.candidates).toEqual(candidates);
@@ -121,7 +130,7 @@ describe('searchCandidates', () => {
       });
 
       const input = searchCandidates.input.parse({ candidate_id: 'P00003392' });
-      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+      const result = await searchCandidates.handler(input, ctx);
 
       expect(mockService.getCandidateTotals).toHaveBeenCalledOnce();
       expect(result.totals).toEqual([totalsRecord()]);
@@ -130,9 +139,9 @@ describe('searchCandidates', () => {
     it('throws on invalid candidate_id format with a friendly McpError', async () => {
       // .regex() removed from Zod schema — validation now fires in handler via validateCandidateId
       const input = searchCandidates.input.parse({ candidate_id: 'INVALID' });
-      const err = await searchCandidates
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
@@ -163,7 +172,7 @@ describe('searchCandidates', () => {
         page: 2,
         include_totals: true,
       });
-      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+      const result = await searchCandidates.handler(input, ctx);
 
       expect(mockService.getCandidateTotals).toHaveBeenCalledTimes(2);
       const [first, second] = mockService.getCandidateTotals.mock.calls.map((c) => c[0]);
@@ -191,7 +200,7 @@ describe('searchCandidates', () => {
       });
 
       const input = searchCandidates.input.parse({ query: 'smith', include_totals: true });
-      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+      const result = await searchCandidates.handler(input, ctx);
 
       // Capped at 5 pages rather than walking all 40
       expect(mockService.getCandidateTotals).toHaveBeenCalledTimes(5);
@@ -208,7 +217,7 @@ describe('searchCandidates', () => {
         candidate_id: 'P00003392',
         include_totals: false,
       });
-      const result = await searchCandidates.handler(input, ctx as unknown as Context);
+      const result = await searchCandidates.handler(input, ctx);
 
       expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
       expect(result.totals).toBeUndefined();
@@ -221,7 +230,7 @@ describe('searchCandidates', () => {
       });
 
       const input = searchCandidates.input.parse({ query: 'Nonexistent Candidate' });
-      await searchCandidates.handler(input, ctx as unknown as Context);
+      await searchCandidates.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -237,7 +246,7 @@ describe('searchCandidates', () => {
         search_criteria: { query: 'Biden', office: 'P' },
       });
 
-      expect(blocks[0]!.text).toContain('_Search criteria: query=Biden · office=P_');
+      expect(formatText(blocks)).toContain('_Search criteria: query=Biden · office=P_');
     });
 
     it('renders candidate lines with pagination', () => {
@@ -247,7 +256,7 @@ describe('searchCandidates', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**BIDEN, JOSEPH R JR** (P00003392)');
       expect(text).toContain('DEMOCRATIC PARTY');
       expect(text).toContain('President');
@@ -261,9 +270,10 @@ describe('searchCandidates', () => {
       const blocks = searchCandidates.format!({
         candidates: [],
         pagination: PAGE,
+        search_criteria: { query: 'NOSUCHCANDIDATE' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      expect(formatText(blocks)).toContain('No results found');
     });
 
     it('merges financial totals into candidate lines', () => {
@@ -271,9 +281,10 @@ describe('searchCandidates', () => {
         candidates: [candidateRecord()],
         totals: [totalsRecord()],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { candidate_id: 'P00003392' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('receipts:');
       expect(text).toContain('disbursements:');
       expect(text).toContain('cash_on_hand_end_period:');
@@ -289,9 +300,10 @@ describe('searchCandidates', () => {
           totalsRecord({ cycle: 2008, receipts: 2_000_000 }),
         ],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { candidate_id: 'P00003392' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('— Financial Totals (cycle 2016) —');
       expect(text).toContain('— Financial Totals (cycle 2008) —');
       expect(text).toContain('receipts: 1000000');
@@ -304,9 +316,10 @@ describe('searchCandidates', () => {
         totals: [],
         missing_totals: ['S8MO00301', 'S0IL00402'],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { query: 'Biden' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('S8MO00301, S0IL00402');
       expect(text).toContain('candidate_id');
     });

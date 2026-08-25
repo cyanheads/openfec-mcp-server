@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/lookup-elections.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,11 +40,20 @@ import { lookupElections as lookupElectionsTool } from '@/mcp-server/tools/defin
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: lookupElectionsTool.errors });
+
 describe('lookupElectionsTool', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: lookupElectionsTool.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -68,7 +77,7 @@ describe('lookupElectionsTool', () => {
         office: 'P',
         cycle: 2024,
       });
-      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const result = await lookupElectionsTool.handler(input, ctx);
 
       expect(result.results).toEqual(elections);
       expect(mockService.searchElections).toHaveBeenCalledOnce();
@@ -95,7 +104,7 @@ describe('lookupElectionsTool', () => {
         office: 'P',
         cycle: 2024,
       });
-      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const result = await lookupElectionsTool.handler(input, ctx);
 
       expect(result.results).toHaveLength(1);
       expect(result.results[0]).toMatchObject({ count: 50, receipts: 500_000_000 });
@@ -113,7 +122,7 @@ describe('lookupElectionsTool', () => {
       });
 
       const input = lookupElectionsTool.input.parse({ office: 'H', cycle: 2024, zip: '98101' });
-      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const result = await lookupElectionsTool.handler(input, ctx);
 
       expect(mockService.searchElectionsByZip.mock.calls[0]![0]).not.toHaveProperty(
         'election_full',
@@ -130,9 +139,7 @@ describe('lookupElectionsTool', () => {
         election_full: false,
       });
 
-      await expect(
-        lookupElectionsTool.handler(input, ctx as unknown as Context),
-      ).rejects.toMatchObject({
+      await expect(lookupElectionsTool.handler(input, ctx)).rejects.toMatchObject({
         data: {
           reason: 'inputs_not_applicable_to_mode',
           inapplicable_inputs: ['election_full'],
@@ -148,7 +155,7 @@ describe('lookupElectionsTool', () => {
       });
 
       const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
-      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const result = await lookupElectionsTool.handler(input, ctx);
 
       expect(mockService.searchElections.mock.calls[0]![0]!.election_full).toBe(true);
       expect(result.search_criteria).toMatchObject({ election_full: true });
@@ -169,7 +176,7 @@ describe('lookupElectionsTool', () => {
         state: 'PA',
         cycle: 2024,
       });
-      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const result = await lookupElectionsTool.handler(input, ctx);
       const row = result.results[0];
 
       expect(row).toHaveProperty('independent_expenditures', 2_695_716_328_841.73);
@@ -189,7 +196,7 @@ describe('lookupElectionsTool', () => {
         page: 3,
         per_page: 20,
       });
-      const result = await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      const result = await lookupElectionsTool.handler(input, ctx);
 
       expect(mockService.searchElections).toHaveBeenCalledWith(
         expect.objectContaining({ page: 3, per_page: 20 }),
@@ -210,7 +217,7 @@ describe('lookupElectionsTool', () => {
         zip: '98101',
         page: 2,
       });
-      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      await lookupElectionsTool.handler(input, ctx);
 
       expect(mockService.searchElectionsByZip).toHaveBeenCalledWith(
         expect.objectContaining({ page: 2, per_page: 20 }),
@@ -232,7 +239,7 @@ describe('lookupElectionsTool', () => {
         cycle: 2024,
         page: 4,
       });
-      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      await lookupElectionsTool.handler(input, ctx);
 
       const callParams = mockService.getElectionSummary.mock.calls[0]![0];
       expect(callParams).not.toHaveProperty('page');
@@ -245,9 +252,7 @@ describe('lookupElectionsTool', () => {
         cycle: 2025,
       });
 
-      await expect(
-        lookupElectionsTool.handler(input, ctx as unknown as Context),
-      ).rejects.toMatchObject({
+      await expect(lookupElectionsTool.handler(input, ctx)).rejects.toMatchObject({
         code: JsonRpcErrorCode.ValidationError,
       });
     });
@@ -258,9 +263,7 @@ describe('lookupElectionsTool', () => {
         cycle: 2024,
       });
 
-      await expect(
-        lookupElectionsTool.handler(input, ctx as unknown as Context),
-      ).rejects.toMatchObject({
+      await expect(lookupElectionsTool.handler(input, ctx)).rejects.toMatchObject({
         code: JsonRpcErrorCode.ValidationError,
       });
     });
@@ -272,9 +275,7 @@ describe('lookupElectionsTool', () => {
         state: 'CA',
       });
 
-      await expect(
-        lookupElectionsTool.handler(input, ctx as unknown as Context),
-      ).rejects.toMatchObject({
+      await expect(lookupElectionsTool.handler(input, ctx)).rejects.toMatchObject({
         code: JsonRpcErrorCode.ValidationError,
       });
     });
@@ -290,9 +291,7 @@ describe('lookupElectionsTool', () => {
         cycle: 2024,
       });
 
-      await expect(
-        lookupElectionsTool.handler(input, ctx as unknown as Context),
-      ).resolves.toBeDefined();
+      await expect(lookupElectionsTool.handler(input, ctx)).resolves.toBeDefined();
     });
 
     it('sets enrichment totalCount from pagination count', async () => {
@@ -305,7 +304,7 @@ describe('lookupElectionsTool', () => {
       });
 
       const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
-      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      await lookupElectionsTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(1);
       expect(getEnrichment(ctx).notice).toBeUndefined();
@@ -318,7 +317,7 @@ describe('lookupElectionsTool', () => {
       });
 
       const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
-      await lookupElectionsTool.handler(input, ctx as unknown as Context);
+      await lookupElectionsTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -344,7 +343,7 @@ describe('lookupElectionsTool', () => {
         search_criteria: { mode: 'search', office: 'S', cycle: 2024, state: 'AZ' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**SMITH, JANE**');
       expect(text).toContain('Democratic Party');
       expect(text).toContain('Incumbent');
@@ -371,7 +370,7 @@ describe('lookupElectionsTool', () => {
         search_criteria: { mode: 'summary', office: 'P', cycle: 2024 },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Election Summary**');
       expect(text).toContain('independent_expenditures');
       expect(text).toContain('Note on independent_expenditures');
@@ -395,7 +394,7 @@ describe('lookupElectionsTool', () => {
         search_criteria: {},
       });
 
-      expect(blocks[0]!.text).toContain('1 result(s) · page 1/1 · 1 per page');
+      expect(formatText(blocks)).toContain('1 result(s) · page 1/1 · 1 per page');
     });
 
     it('renders empty state', () => {
@@ -406,7 +405,7 @@ describe('lookupElectionsTool', () => {
         search_criteria: { office: 'H', cycle: 2024, state: 'AZ', district: '07' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('No results found');
       expect(text).toContain('**Mode:** search');
       expect(text).toContain('district: 07');
@@ -420,7 +419,7 @@ describe('lookupElectionsTool', () => {
         search_criteria: { office: 'S', cycle: 2024 },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** search');
       expect(text).toContain('_Search criteria: office=S · cycle=2024_');
     });

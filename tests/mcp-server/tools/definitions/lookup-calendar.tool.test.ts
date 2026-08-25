@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/lookup-calendar.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,11 +38,20 @@ import { lookupCalendar as lookupCalendarTool } from '@/mcp-server/tools/definit
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: lookupCalendarTool.errors });
+
 describe('lookupCalendarTool', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: lookupCalendarTool.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -59,7 +68,7 @@ describe('lookupCalendarTool', () => {
       const input = lookupCalendarTool.input.parse({
         description: 'meeting',
       });
-      const result = await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      const result = await lookupCalendarTool.handler(input, ctx);
 
       expect(result.results).toEqual(events);
       expect(mockService.getCalendarDates).toHaveBeenCalledOnce();
@@ -84,7 +93,7 @@ describe('lookupCalendarTool', () => {
         report_type: 'Q1',
         report_year: 2024,
       });
-      const result = await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      const result = await lookupCalendarTool.handler(input, ctx);
 
       expect(result.results).toEqual(deadlines);
       expect(mockService.getReportingDates).toHaveBeenCalledOnce();
@@ -105,9 +114,7 @@ describe('lookupCalendarTool', () => {
         state: 'AZ',
       });
 
-      await expect(
-        lookupCalendarTool.handler(input, ctx as unknown as Context),
-      ).rejects.toMatchObject({
+      await expect(lookupCalendarTool.handler(input, ctx)).rejects.toMatchObject({
         data: {
           reason: 'inputs_not_applicable_to_mode',
           mode: 'events',
@@ -124,7 +131,7 @@ describe('lookupCalendarTool', () => {
         report_year: 2024,
       });
 
-      await expect(lookupCalendarTool.handler(input, ctx as unknown as Context)).rejects.toThrow(
+      await expect(lookupCalendarTool.handler(input, ctx)).rejects.toThrow(
         /cannot apply category[\s\S]*accepts only[\s\S]*report_type, report_year/,
       );
     });
@@ -140,7 +147,7 @@ describe('lookupCalendarTool', () => {
         min_date: '2024-01-01',
         max_date: '2024-12-31',
       });
-      const result = await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      const result = await lookupCalendarTool.handler(input, ctx);
 
       expect(result.search_criteria).toMatchObject({
         mode: 'election_dates',
@@ -162,7 +169,7 @@ describe('lookupCalendarTool', () => {
         office: 'S',
         election_year: 2024,
       });
-      const result = await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      const result = await lookupCalendarTool.handler(input, ctx);
 
       expect(result.results).toEqual(dates);
       expect(mockService.getElectionDates).toHaveBeenCalledOnce();
@@ -183,7 +190,7 @@ describe('lookupCalendarTool', () => {
         min_date: '2024-01-01',
         max_date: '2024-12-31',
       });
-      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      await lookupCalendarTool.handler(input, ctx);
 
       const callArgs = mockService.getCalendarDates.mock.calls[0]![0];
       expect(callArgs.min_start_date).toBe('2024-01-01');
@@ -197,7 +204,7 @@ describe('lookupCalendarTool', () => {
       });
 
       const input = lookupCalendarTool.input.parse({});
-      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      await lookupCalendarTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(5);
       expect(getEnrichment(ctx).notice).toBeUndefined();
@@ -210,7 +217,7 @@ describe('lookupCalendarTool', () => {
       });
 
       const input = lookupCalendarTool.input.parse({ description: 'nonexistent event' });
-      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      await lookupCalendarTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -226,7 +233,7 @@ describe('lookupCalendarTool', () => {
         mode: 'filing_deadlines',
         report_type: 'NONEXISTENT',
       });
-      await lookupCalendarTool.handler(input, ctx as unknown as Context);
+      await lookupCalendarTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -265,7 +272,7 @@ describe('lookupCalendarTool', () => {
         search_criteria: { mode: 'events', description: 'meeting' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** events');
       expect(text).toContain('_Search criteria: mode=events · description=meeting_');
       expect(text).toContain('**FEC Open Meeting**');
@@ -288,7 +295,7 @@ describe('lookupCalendarTool', () => {
         search_criteria: { report_type: 'Q2', report_year: 2024 },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('No results found');
       expect(text).toContain('**Mode:** filing_deadlines');
       expect(text).toContain('report_type: Q2');

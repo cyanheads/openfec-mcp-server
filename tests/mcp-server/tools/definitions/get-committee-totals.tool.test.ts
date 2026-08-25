@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/get-committee-totals.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,11 +59,20 @@ const totalsRow = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: getCommitteeTotals.errors });
+
 describe('getCommitteeTotals', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: getCommitteeTotals.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -75,7 +84,7 @@ describe('getCommitteeTotals', () => {
       });
 
       const input = getCommitteeTotals.input.parse({ committee_id: 'C00703975' });
-      const result = await getCommitteeTotals.handler(input, ctx as unknown as Context);
+      const result = await getCommitteeTotals.handler(input, ctx);
 
       expect(result.mode).toBe('single');
       expect(mockService.getCommitteeTotals).toHaveBeenCalledWith(
@@ -100,7 +109,7 @@ describe('getCommitteeTotals', () => {
         cycle: 2024,
         sort: '-cycle',
       });
-      await getCommitteeTotals.handler(input, ctx as unknown as Context);
+      await getCommitteeTotals.handler(input, ctx);
 
       expect(mockService.getCommitteeTotals.mock.calls[0]![1]).toEqual({
         page: 1,
@@ -114,9 +123,9 @@ describe('getCommitteeTotals', () => {
       mockService.getCommitteeTotals.mockResolvedValueOnce({ pagination: PAGE, results: [] });
 
       const input = getCommitteeTotals.input.parse({ committee_id: 'C99999999' });
-      const err = await getCommitteeTotals
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
@@ -135,9 +144,9 @@ describe('getCommitteeTotals', () => {
         committee_id: 'C00703975',
         cycle: 1990,
       });
-      const err = await getCommitteeTotals
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect((err as McpError).message).toContain('cycle 1990');
       expect((err as McpError).data).toMatchObject({ cycle: 1990 });
@@ -145,9 +154,9 @@ describe('getCommitteeTotals', () => {
 
     it('throws committee_id_required_for_single_mode when no committee_id is given', async () => {
       const input = getCommitteeTotals.input.parse({});
-      const err = await getCommitteeTotals
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect((err as McpError).code).toBe(JsonRpcErrorCode.ValidationError);
       expect((err as McpError).data).toMatchObject({
@@ -162,9 +171,9 @@ describe('getCommitteeTotals', () => {
         committee_state: 'PA',
         min_receipts: 1_000_000,
       });
-      const err = await getCommitteeTotals
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect((err as McpError).data).toMatchObject({
         reason: 'inputs_not_applicable_to_mode',
@@ -176,9 +185,9 @@ describe('getCommitteeTotals', () => {
 
     it('rejects a malformed committee_id before calling the API', async () => {
       const input = getCommitteeTotals.input.parse({ committee_id: 'P00003392' });
-      const err = await getCommitteeTotals
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
       expect(mockService.getCommitteeTotals).not.toHaveBeenCalled();
@@ -203,7 +212,7 @@ describe('getCommitteeTotals', () => {
         max_disbursements: 50_000_000,
         sort: '-receipts',
       });
-      const result = await getCommitteeTotals.handler(input, ctx as unknown as Context);
+      const result = await getCommitteeTotals.handler(input, ctx);
 
       expect(result.mode).toBe('by_entity_type');
       expect(mockService.getCommitteeTotalsByEntityType).toHaveBeenCalledOnce();
@@ -225,9 +234,9 @@ describe('getCommitteeTotals', () => {
 
     it('throws entity_type_required_for_group_mode without an entity_type', async () => {
       const input = getCommitteeTotals.input.parse({ mode: 'by_entity_type' });
-      const err = await getCommitteeTotals
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect((err as McpError).code).toBe(JsonRpcErrorCode.ValidationError);
       expect((err as McpError).data).toMatchObject({
@@ -255,7 +264,7 @@ describe('getCommitteeTotals', () => {
         entity_type: 'pac',
         committee_id: 'C00703975',
       });
-      await getCommitteeTotals.handler(input, ctx as unknown as Context);
+      await getCommitteeTotals.handler(input, ctx);
 
       expect(mockService.getCommitteeTotalsByEntityType.mock.calls[0]![1]).toMatchObject({
         committee_id: 'C00703975',
@@ -273,7 +282,7 @@ describe('getCommitteeTotals', () => {
         entity_type: 'ie-only',
         min_receipts: 1_000_000_000,
       });
-      const result = await getCommitteeTotals.handler(input, ctx as unknown as Context);
+      const result = await getCommitteeTotals.handler(input, ctx);
 
       expect(result.results).toHaveLength(0);
       expect(getEnrichment(ctx).notice).toContain('No committee totals matched');
@@ -295,7 +304,7 @@ describe('getCommitteeTotals', () => {
         search_criteria: { committee_id: 'C00703975', mode: 'single' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** single');
       expect(text).toContain(
         '**FIGHT FOR THE PEOPLE PAC** (C00703975) · cycle 2026 — $17,365,125.38 raised',
@@ -314,7 +323,7 @@ describe('getCommitteeTotals', () => {
         search_criteria: { mode: 'by_entity_type', entity_type: 'pac' },
       });
 
-      expect(blocks[0]!.text).toContain('— N/A raised');
+      expect(formatText(blocks)).toContain('— N/A raised');
     });
 
     it('renders the empty state with the mode and criteria echo', () => {
@@ -325,7 +334,7 @@ describe('getCommitteeTotals', () => {
         search_criteria: { mode: 'by_entity_type', entity_type: 'ie-only' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('No results found.');
       expect(text).toContain('**Mode:** by_entity_type');
       expect(text).toContain('entity_type: ie-only');

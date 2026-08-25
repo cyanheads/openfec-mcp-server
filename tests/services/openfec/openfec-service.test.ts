@@ -468,7 +468,9 @@ describe('OpenFecService', () => {
 
   describe('searchExpenditures (SEEK)', () => {
     it('returns seek-based results', async () => {
-      mockFetch.mockResolvedValueOnce(seekEnvelope([{ expenditure_amount: 5000 }]) as never);
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope([{ expenditure_amount: 5000 }], undefined, 1) as never,
+      );
       const result = await svc.searchExpenditures({}, QUERY, ctx);
       expect(result.results).toHaveLength(1);
     });

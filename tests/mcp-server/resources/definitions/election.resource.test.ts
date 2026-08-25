@@ -38,6 +38,24 @@ import {
   electionStateResource,
 } from '@/mcp-server/resources/definitions/election.resource.js';
 
+/**
+ * The resource declares no output schema, so its handler is typed `unknown`.
+ * This mirrors the object `fetchElection()` actually returns.
+ */
+type ElectionResult = {
+  cycle: string;
+  office: string;
+  state?: string | undefined;
+  district?: string | undefined;
+  candidates: unknown[];
+  pagination: { page: number; pages: number; count: number; per_page: number };
+  truncation_notice?: string;
+};
+
+const electionParams = electionResource.params!;
+const electionStateParams = electionStateResource.params!;
+const electionDistrictParams = electionDistrictResource.params!;
+
 describe('electionResource', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -60,8 +78,8 @@ describe('electionResource', () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult(candidates));
 
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/P') });
-    const params = electionResource.params.parse({ cycle: '2024', office: 'P' });
-    const result = await electionResource.handler(params, ctx);
+    const params = electionParams.parse({ cycle: '2024', office: 'P' });
+    const result = (await electionResource.handler(params, ctx)) as ElectionResult;
 
     expect(result).toEqual({
       cycle: '2024',
@@ -85,11 +103,11 @@ describe('electionResource', () => {
     });
 
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/P') });
-    const params = electionResource.params.parse({ cycle: '2024', office: 'P' });
-    const result = await electionResource.handler(params, ctx);
+    const params = electionParams.parse({ cycle: '2024', office: 'P' });
+    const result = (await electionResource.handler(params, ctx)) as ElectionResult;
 
     expect(result.pagination).toEqual({ page: 1, pages: 44, count: 869, per_page: 20 });
-    const notice = (result as { truncation_notice?: string }).truncation_notice;
+    const notice = result.truncation_notice;
     expect(notice).toContain('page 1 of 44');
     expect(notice).toContain('869 candidates total');
     expect(notice).toContain('openfec_lookup_elections');
@@ -99,7 +117,7 @@ describe('electionResource', () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/S/AZ') });
-    const params = electionStateResource.params.parse({
+    const params = electionStateParams.parse({
       cycle: '2024',
       office: 'S',
       state: 'AZ',
@@ -116,13 +134,13 @@ describe('electionResource', () => {
     mockService.searchElections.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ uri: new URL('openfec:///election/2024/H/CA/12') });
-    const params = electionDistrictResource.params.parse({
+    const params = electionDistrictParams.parse({
       cycle: '2024',
       office: 'H',
       state: 'CA',
       district: '12',
     });
-    const result = await electionDistrictResource.handler(params, ctx);
+    const result = (await electionDistrictResource.handler(params, ctx)) as ElectionResult;
 
     expect(mockService.searchElections).toHaveBeenCalledWith(
       { cycle: '2024', office: 'house', state: 'CA', district: '12', election_full: true },
@@ -133,12 +151,14 @@ describe('electionResource', () => {
   });
 
   it('validates cycle and office params', () => {
-    expect(() => electionResource.params.parse({})).toThrow();
-    expect(() => electionResource.params.parse({ cycle: '2024' })).toThrow();
-    expect(() => electionResource.params.parse({ office: 'P' })).toThrow();
-    expect(() => electionResource.params.parse({ cycle: '2024', office: 'S' })).toThrow();
-    expect(electionStateResource.params.parse({ cycle: '2024', office: 'S', state: 'VT' })).toEqual(
-      { cycle: '2024', office: 'S', state: 'VT' },
-    );
+    expect(() => electionParams.parse({})).toThrow();
+    expect(() => electionParams.parse({ cycle: '2024' })).toThrow();
+    expect(() => electionParams.parse({ office: 'P' })).toThrow();
+    expect(() => electionParams.parse({ cycle: '2024', office: 'S' })).toThrow();
+    expect(electionStateParams.parse({ cycle: '2024', office: 'S', state: 'VT' })).toEqual({
+      cycle: '2024',
+      office: 'S',
+      state: 'VT',
+    });
   });
 });

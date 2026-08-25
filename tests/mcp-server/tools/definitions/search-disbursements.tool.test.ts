@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-disbursements.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -96,11 +96,20 @@ const aggregateRecord = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: searchDisbursements.errors });
+
 describe('searchDisbursements', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: searchDisbursements.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -117,7 +126,7 @@ describe('searchDisbursements', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+      const result = await searchDisbursements.handler(input, ctx);
 
       expect(mockService.searchDisbursements).toHaveBeenCalledOnce();
       expect(result.results).toEqual(disbursements);
@@ -138,7 +147,7 @@ describe('searchDisbursements', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      await searchDisbursements.handler(input, ctx as unknown as Context);
+      await searchDisbursements.handler(input, ctx);
 
       expect(mockService.searchDisbursements.mock.calls[0]![0].two_year_transaction_period).toBe(
         CURRENT_CYCLE,
@@ -157,7 +166,7 @@ describe('searchDisbursements', () => {
         committee_id: 'C00703975',
         cycle: 2020,
       });
-      await searchDisbursements.handler(input, ctx as unknown as Context);
+      await searchDisbursements.handler(input, ctx);
 
       expect(mockService.searchDisbursements.mock.calls[0]![0].two_year_transaction_period).toBe(
         2020,
@@ -175,7 +184,7 @@ describe('searchDisbursements', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      await searchDisbursements.handler(input, ctx as unknown as Context);
+      await searchDisbursements.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -189,9 +198,7 @@ describe('searchDisbursements', () => {
        */
       const rawInput = { ...input, committee_id: undefined } as unknown as typeof input;
 
-      await expect(
-        searchDisbursements.handler(rawInput, ctx as unknown as Context),
-      ).rejects.toBeInstanceOf(McpError);
+      await expect(searchDisbursements.handler(rawInput, ctx)).rejects.toBeInstanceOf(McpError);
     });
 
     it('throws friendly McpError for malformed committee_id (validator now reachable)', async () => {
@@ -199,9 +206,9 @@ describe('searchDisbursements', () => {
       // of a raw -32602 Zod boundary error.
       const input = searchDisbursements.input.parse({ committee_id: 'ABC123' });
 
-      const err = await searchDisbursements
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const mcpErr = err as McpError;
@@ -223,7 +230,7 @@ describe('searchDisbursements', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+      const result = await searchDisbursements.handler(input, ctx);
 
       expect(result.committee).toMatchObject({ committee_id: 'C00703975' });
       for (const row of result.results) expect(row).not.toHaveProperty('committee');
@@ -242,7 +249,7 @@ describe('searchDisbursements', () => {
         committee_id: 'C00703975',
         cycle: 2024,
       });
-      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+      const result = await searchDisbursements.handler(input, ctx);
 
       expect(result.mode).toBe('itemized');
       expect(result.search_criteria).toMatchObject({ committee_id: 'C00703975', cycle: 2024 });
@@ -259,7 +266,7 @@ describe('searchDisbursements', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+      const result = await searchDisbursements.handler(input, ctx);
 
       expect(mockService.searchDisbursements.mock.calls[0]![0]!.two_year_transaction_period).toBe(
         CURRENT_CYCLE,
@@ -287,9 +294,9 @@ describe('searchDisbursements', () => {
         [f]: v,
       });
 
-      const err = await searchDisbursements
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({
@@ -307,9 +314,9 @@ describe('searchDisbursements', () => {
         min_date: '2024-10-01',
       });
 
-      const err = (await searchDisbursements
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e)) as McpError;
+      const err = (await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
 
       expect(err.message).toContain('recipient_name');
       expect(err.message).toContain('min_date');
@@ -330,7 +337,7 @@ describe('searchDisbursements', () => {
         mode: 'by_purpose',
         committee_id: 'C00703975',
       });
-      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+      const result = await searchDisbursements.handler(input, ctx);
 
       expect(mockService.getDisbursementAggregates).toHaveBeenCalledWith(
         'by_purpose',
@@ -352,7 +359,7 @@ describe('searchDisbursements', () => {
         committee_id: 'C00703975',
         page: 4,
       });
-      const result = await searchDisbursements.handler(input, ctx as unknown as Context);
+      const result = await searchDisbursements.handler(input, ctx);
 
       expect(mockService.getDisbursementAggregates).toHaveBeenCalledWith(
         'by_recipient',
@@ -380,7 +387,7 @@ describe('searchDisbursements', () => {
         page: 9,
         cursor,
       });
-      await searchDisbursements.handler(input, ctx as unknown as Context);
+      await searchDisbursements.handler(input, ctx);
 
       const [callArgs] = mockService.searchDisbursements.mock.calls[0]!;
       expect(callArgs.page).toBeUndefined();
@@ -401,7 +408,7 @@ describe('searchDisbursements', () => {
       });
 
       const input = searchDisbursements.input.parse({ ...query, cursor });
-      await searchDisbursements.handler(input, ctx as unknown as Context);
+      await searchDisbursements.handler(input, ctx);
 
       const [callArgs, callQuery] = mockService.searchDisbursements.mock.calls[0]!;
       expect(callArgs.last_index).toBe('500');
@@ -419,9 +426,9 @@ describe('searchDisbursements', () => {
         cursor: 'not-a-cursor',
       });
 
-      const err = await searchDisbursements
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
@@ -443,9 +450,9 @@ describe('searchDisbursements', () => {
         cursor,
       });
 
-      const err = await searchDisbursements
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; changed_arguments: string[] };
@@ -469,9 +476,9 @@ describe('searchDisbursements', () => {
         cursor,
       });
 
-      const err = await searchDisbursements
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect(((err as McpError).data as { reason: string }).reason).toBe('cursor_query_mismatch');
@@ -490,7 +497,7 @@ describe('searchDisbursements', () => {
         committee_id: 'C00703975',
         sort: '-disbursement_amount',
       });
-      await searchDisbursements.handler(input, ctx as unknown as Context);
+      await searchDisbursements.handler(input, ctx);
 
       expect(mockService.searchDisbursements.mock.calls[0]![0].sort).toBe('-disbursement_amount');
     });
@@ -520,7 +527,7 @@ describe('searchDisbursements', () => {
         search_criteria: { mode: 'itemized', committee_id: 'C00703975' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** itemized');
       expect(text).toContain('_Search criteria: mode=itemized · committee_id=C00703975_');
       expect(text).toContain('MEDIA STRATEGIES INC');
@@ -541,7 +548,7 @@ describe('searchDisbursements', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain(`next_cursor: \`${cursor}\``);
       expect(text).not.toContain(`${cursor}_`);
     });
@@ -554,7 +561,7 @@ describe('searchDisbursements', () => {
         search_criteria: { mode: 'by_purpose' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** by_purpose');
       expect(text).toContain('purpose: ADVERTISING');
       expect(text).toContain('count: 120');
@@ -569,7 +576,7 @@ describe('searchDisbursements', () => {
         search_criteria: { committee_id: 'C00703975' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('No results found');
       expect(text).toContain('**Mode:** by_recipient');
       expect(text).toContain('committee_id: C00703975');
@@ -585,7 +592,7 @@ describe('searchDisbursements', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Committee (applies to every row below):** COMMITTEE C00703975');
       expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
       expect(text).toContain('SMITH, ANNA');

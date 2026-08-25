@@ -36,6 +36,8 @@ vi.mock('@/services/openfec/openfec-service.js', () => ({
 
 import { committeeResource } from '@/mcp-server/resources/definitions/committee.resource.js';
 
+const paramsSchema = committeeResource.params!;
+
 describe('committeeResource', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -67,8 +69,8 @@ describe('committeeResource', () => {
     mockService.getCommittee.mockResolvedValueOnce(pageResult([committee]));
     mockService.getCommitteeTotals.mockResolvedValueOnce(pageResult([totals]));
 
-    const ctx = createMockContext();
-    const params = committeeResource.params.parse({ committee_id: 'C00703975' });
+    const ctx = createMockContext({ errors: committeeResource.errors });
+    const params = paramsSchema.parse({ committee_id: 'C00703975' });
     const result = await committeeResource.handler(params, ctx);
 
     expect(result).toEqual({ ...committee, ...totals });
@@ -82,8 +84,8 @@ describe('committeeResource', () => {
     mockService.getCommittee.mockResolvedValueOnce(pageResult([committee]));
     mockService.getCommitteeTotals.mockResolvedValueOnce(pageResult([]));
 
-    const ctx = createMockContext();
-    const params = committeeResource.params.parse({ committee_id: 'C00000001' });
+    const ctx = createMockContext({ errors: committeeResource.errors });
+    const params = paramsSchema.parse({ committee_id: 'C00000001' });
     const result = await committeeResource.handler(params, ctx);
 
     expect(result).toEqual(committee);
@@ -94,7 +96,7 @@ describe('committeeResource', () => {
     mockService.getCommitteeTotals.mockResolvedValueOnce(pageResult([]));
 
     const ctx = createMockContext({ errors: committeeResource.errors });
-    const params = committeeResource.params.parse({ committee_id: 'C99999999' });
+    const params = paramsSchema.parse({ committee_id: 'C99999999' });
 
     await expect(committeeResource.handler(params, ctx)).rejects.toThrow(
       'Committee C99999999 not found',
@@ -102,9 +104,9 @@ describe('committeeResource', () => {
   });
 
   it('validates committee_id param', () => {
-    expect(() => committeeResource.params.parse({})).toThrow();
-    expect(() => committeeResource.params.parse({ committee_id: 42 })).toThrow();
-    expect(committeeResource.params.parse({ committee_id: 'C00358796' })).toEqual({
+    expect(() => paramsSchema.parse({})).toThrow();
+    expect(() => paramsSchema.parse({ committee_id: 42 })).toThrow();
+    expect(paramsSchema.parse({ committee_id: 'C00358796' })).toEqual({
       committee_id: 'C00358796',
     });
   });

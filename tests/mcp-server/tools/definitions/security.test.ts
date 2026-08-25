@@ -5,7 +5,7 @@
  * @module tests/mcp-server/tools/definitions/security.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -43,11 +43,15 @@ import { searchFilings } from '@/mcp-server/tools/definitions/search-filings.too
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
-describe('input injection resistance', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
 
+describe('input injection resistance', () => {
   beforeEach(() => {
-    ctx = createMockContext();
     vi.clearAllMocks();
   });
 
@@ -55,18 +59,20 @@ describe('input injection resistance', () => {
     it('handler rejects candidate_id starting with a non H/S/P letter with a friendly error', async () => {
       // .regex() removed from Zod schema — validation happens in handler via validateCandidateId
       const input = searchCandidates.input.parse({ candidate_id: "X'; DROP TABLE t; --" });
-      const err = await searchCandidates
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const ctx = createMockContext({ errors: searchCandidates.errors });
+      const err = await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
 
     it('handler rejects candidate_id with special chars that would break URLs', async () => {
       const input = searchCandidates.input.parse({ candidate_id: 'P/../../../etc/passwd' });
-      const err = await searchCandidates
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const ctx = createMockContext({ errors: searchCandidates.errors });
+      const err = await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
@@ -81,18 +87,20 @@ describe('input injection resistance', () => {
   describe('searchCommittees', () => {
     it('handler rejects committee_id with non-C prefix with a friendly error', async () => {
       const input = searchCommittees.input.parse({ committee_id: '<script>alert(1)</script>' });
-      const err = await searchCommittees
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const ctx = createMockContext({ errors: searchCommittees.errors });
+      const err = await Promise.resolve(searchCommittees.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
 
     it('handler rejects committee_id with slash traversal pattern', async () => {
       const input = searchCommittees.input.parse({ committee_id: 'C00000001/../secret' });
-      const err = await searchCommittees
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const ctx = createMockContext({ errors: searchCommittees.errors });
+      const err = await Promise.resolve(searchCommittees.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
@@ -103,9 +111,10 @@ describe('input injection resistance', () => {
       const input = searchContributions.input.parse({
         committee_id: "C'; DELETE FROM contributions; --",
       });
-      const err = await searchContributions
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const ctx = createMockContext({ errors: searchContributions.errors });
+      const err = await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
@@ -115,9 +124,10 @@ describe('input injection resistance', () => {
         candidate_id: 'P<img src=x onerror=alert(1)>',
         mode: 'by_state',
       });
-      const err = await searchContributions
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const ctx = createMockContext({ errors: searchContributions.errors });
+      const err = await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
@@ -125,10 +135,7 @@ describe('input injection resistance', () => {
 });
 
 describe('oversized inputs do not crash', () => {
-  let ctx: ReturnType<typeof createMockContext>;
-
   beforeEach(() => {
-    ctx = createMockContext();
     vi.clearAllMocks();
   });
 
@@ -140,7 +147,8 @@ describe('oversized inputs do not crash', () => {
     });
 
     const input = searchCandidates.input.parse({ query: longQuery });
-    const result = await searchCandidates.handler(input, ctx as unknown as Context);
+    const ctx = createMockContext({ errors: searchCandidates.errors });
+    const result = await searchCandidates.handler(input, ctx);
     expect(result.candidates).toHaveLength(0);
   });
 
@@ -170,10 +178,7 @@ describe('oversized inputs do not crash', () => {
 });
 
 describe('API key not present in tool output', () => {
-  let ctx: ReturnType<typeof createMockContext>;
-
   beforeEach(() => {
-    ctx = createMockContext();
     vi.clearAllMocks();
   });
 
@@ -186,9 +191,10 @@ describe('API key not present in tool output', () => {
       new Error('FEC request failed (api_key=REDACTED) Status: 403'),
     );
 
+    const ctx = createMockContext();
     let caught: Error | undefined;
     try {
-      await searchFilings.handler(input, ctx as unknown as Context);
+      await searchFilings.handler(input, ctx);
     } catch (e) {
       caught = e as Error;
     }
@@ -209,9 +215,10 @@ describe('API key not present in tool output', () => {
     });
 
     const input = searchCandidates.input.parse({ query: 'Biden' });
-    const result = await searchCandidates.handler(input, ctx as unknown as Context);
+    const ctx = createMockContext({ errors: searchCandidates.errors });
+    const result = await searchCandidates.handler(input, ctx);
     const formatted = searchCandidates.format!(result);
-    const text = formatted[0]!.text;
+    const text = formatText(formatted);
 
     // Format output is plain text from upstream fields — no URL query params should appear
     expect(text).not.toContain('api_key=');
@@ -231,9 +238,10 @@ describe('unicode and special character handling in format output', () => {
         },
       ],
       pagination: { ...PAGE, count: 1 },
+      search_criteria: { state: 'TX', office: 'H' },
     });
 
-    const text = blocks[0]!.text;
+    const text = formatText(blocks);
     expect(text).toContain('ÑOÑO-GARCÍA, JOSÉ');
     expect(text).toContain('Partido Demócrata');
   });
@@ -248,9 +256,10 @@ describe('unicode and special character handling in format output', () => {
         },
       ],
       pagination: { ...PAGE, count: 1 },
+      search_criteria: { committee_id: 'C00000001' },
     });
 
-    const text = blocks[0]!.text;
+    const text = formatText(blocks);
     expect(text).toContain('AMIGOS DE JOSÉ HERNÁNDEZ COMMITTEE');
   });
 });

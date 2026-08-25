@@ -5,7 +5,7 @@
  * @module tests/mcp-server/tools/definitions/search-expenditures.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -106,11 +106,20 @@ const CURRENT_CYCLE = (() => {
   return year % 2 === 0 ? year : year + 1;
 })();
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: searchExpenditures.errors });
+
 describe('searchExpenditures', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: searchExpenditures.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -127,7 +136,7 @@ describe('searchExpenditures', () => {
         mode: 'itemized',
         committee_id: 'C00111111',
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures).toHaveBeenCalledOnce();
       expect(result.results).toEqual(expenditures);
@@ -145,7 +154,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({ mode: 'itemized' });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -162,7 +171,7 @@ describe('searchExpenditures', () => {
         mode: 'by_candidate',
         candidate_id: 'S6FL00123',
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(mockService.getExpendituresByCandidate).toHaveBeenCalledOnce();
       expect(result.results).toEqual(aggregates);
@@ -180,7 +189,7 @@ describe('searchExpenditures', () => {
         candidate_id: 'S6FL00123',
         page: 2,
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(mockService.getExpendituresByCandidate).toHaveBeenCalledWith(
         expect.objectContaining({ page: 2 }),
@@ -204,7 +213,7 @@ describe('searchExpenditures', () => {
         candidate_office_district: '09',
         cycle: 2024,
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       const callArgs = mockService.getExpendituresByCandidate.mock.calls[0]![0];
       expect(callArgs).toMatchObject({
@@ -239,7 +248,7 @@ describe('searchExpenditures', () => {
         candidate_office: letter,
         candidate_office_state: 'OH',
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.getExpendituresByCandidate.mock.calls[0]![0].office).toBe(office);
     });
@@ -256,7 +265,7 @@ describe('searchExpenditures', () => {
         candidate_office_state: 'OH',
         cycle: 2024,
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(mockService.getExpendituresByCandidate).toHaveBeenCalledOnce();
       expect(result.pagination?.count).toBe(125);
@@ -273,7 +282,7 @@ describe('searchExpenditures', () => {
         candidate_office: 'P',
         cycle: 2024,
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       const callArgs = mockService.getExpendituresByCandidate.mock.calls[0]![0];
       expect(callArgs).toMatchObject({ office: 'president', cycle: 2024 });
@@ -287,9 +296,9 @@ describe('searchExpenditures', () => {
         candidate_office: 'S',
       });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'by_candidate_requires_scope' });
@@ -303,9 +312,9 @@ describe('searchExpenditures', () => {
         candidate_office_state: 'OH',
       });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'by_candidate_requires_scope' });
@@ -315,9 +324,9 @@ describe('searchExpenditures', () => {
     it('rejects by_candidate with neither a candidate_id nor a race scope', async () => {
       const input = searchExpenditures.input.parse({ mode: 'by_candidate', cycle: 2024 });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
@@ -333,9 +342,9 @@ describe('searchExpenditures', () => {
         candidate_party: 'DEM',
       });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({
@@ -362,9 +371,9 @@ describe('searchExpenditures', () => {
         [field]: value,
       });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({
@@ -383,9 +392,9 @@ describe('searchExpenditures', () => {
         payee_name: 'NOSUCHPAYEE',
       });
 
-      const err = (await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e)) as McpError;
+      const err = (await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
 
       expect(err.message).toContain('payee_name');
       expect(err.message).toContain('min_date');
@@ -411,7 +420,7 @@ describe('searchExpenditures', () => {
         support_oppose: 'S',
         cycle: 2024,
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.mode).toBe('by_candidate');
       expect(mockService.getExpendituresByCandidate).toHaveBeenCalledOnce();
@@ -428,7 +437,7 @@ describe('searchExpenditures', () => {
         mode: 'itemized',
         committee_id: 'C00111111',
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.committee).toMatchObject({ committee_id: 'C00111111', name: 'PAC C00111111' });
       for (const row of result.results) expect(row).not.toHaveProperty('committee');
@@ -447,7 +456,7 @@ describe('searchExpenditures', () => {
         mode: 'itemized',
         candidate_id: 'H2OH01234',
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.committee).toBeUndefined();
       expect(result.results[0]!.committee).toMatchObject({ committee_id: 'C00111111' });
@@ -465,7 +474,7 @@ describe('searchExpenditures', () => {
         mode: 'itemized',
         candidate_id: 'H2OH01234',
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       for (const row of result.results) {
         expect(row).not.toHaveProperty('candidate');
@@ -486,7 +495,7 @@ describe('searchExpenditures', () => {
         committee_id: 'C00111111',
         cycle: 2024,
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.mode).toBe('itemized');
       expect(result.search_criteria).toMatchObject({
@@ -506,7 +515,7 @@ describe('searchExpenditures', () => {
         mode: 'by_candidate',
         candidate_id: 'S6FL00123',
       });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.mode).toBe('by_candidate');
       expect(result.search_criteria).toMatchObject({ candidate_id: 'S6FL00123' });
@@ -530,7 +539,7 @@ describe('searchExpenditures', () => {
         page: 5,
         cursor,
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       const [callArgs] = mockService.searchExpenditures.mock.calls[0]!;
       expect(callArgs.page).toBeUndefined();
@@ -548,7 +557,7 @@ describe('searchExpenditures', () => {
         mode: 'itemized',
         support_oppose: 'O',
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       const callArgs = mockService.searchExpenditures.mock.calls[0]![0];
       expect(callArgs.support_oppose_indicator).toBe('O');
@@ -569,7 +578,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({ ...query, cursor });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       const [callArgs, callQuery] = mockService.searchExpenditures.mock.calls[0]!;
       expect(callArgs.last_index).toBe('42');
@@ -592,9 +601,9 @@ describe('searchExpenditures', () => {
         cursor: 'not-a-cursor',
       });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
@@ -616,9 +625,9 @@ describe('searchExpenditures', () => {
         cursor,
       });
 
-      const err = await searchExpenditures
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; changed_arguments: string[] };
@@ -641,7 +650,7 @@ describe('searchExpenditures', () => {
         committee_id: 'C00111111',
         sort: '-expenditure_amount',
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].sort).toBe('-expenditure_amount');
     });
@@ -658,7 +667,7 @@ describe('searchExpenditures', () => {
         committee_id: 'C00111111',
         sort: '-office_total_ytd',
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].sort_nulls_last).toBe(true);
     });
@@ -674,7 +683,7 @@ describe('searchExpenditures', () => {
         mode: 'itemized',
         committee_id: 'C00111111',
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].sort_nulls_last).toBeUndefined();
     });
@@ -688,7 +697,7 @@ describe('searchExpenditures', () => {
 
       const input = searchExpenditures.input.parse({ mode: 'itemized' });
       expect(input.most_recent).toBeUndefined();
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].most_recent).toBe(true);
     });
@@ -701,7 +710,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({ mode: 'itemized', most_recent: false });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].most_recent).toBe(false);
     });
@@ -714,7 +723,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({ mode: 'itemized', most_recent: false });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.search_criteria).toMatchObject({ most_recent: false });
     });
@@ -727,7 +736,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({ mode: 'itemized' });
-      const result = await searchExpenditures.handler(input, ctx as unknown as Context);
+      const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.search_criteria).toMatchObject({
         most_recent: true,
@@ -747,7 +756,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({});
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].cycle).toBe(CURRENT_CYCLE);
     });
@@ -760,7 +769,7 @@ describe('searchExpenditures', () => {
       });
 
       const input = searchExpenditures.input.parse({ mode: 'itemized', cycle: 2020 });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       expect(mockService.searchExpenditures.mock.calls[0]![0].cycle).toBe(2020);
     });
@@ -779,7 +788,7 @@ describe('searchExpenditures', () => {
         candidate_office_district: '09',
         candidate_party: 'DEM',
       });
-      await searchExpenditures.handler(input, ctx as unknown as Context);
+      await searchExpenditures.handler(input, ctx);
 
       const callArgs = mockService.searchExpenditures.mock.calls[0]![0];
       expect(callArgs).toMatchObject({
@@ -827,7 +836,7 @@ describe('searchExpenditures', () => {
         search_criteria: { mode: 'itemized', committee_id: 'C00111111' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** itemized');
       expect(text).toContain('_Search criteria: mode=itemized · committee_id=C00111111_');
       expect(text).toContain('[SUPPORT]');
@@ -848,7 +857,7 @@ describe('searchExpenditures', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain(`next_cursor: \`${cursor}\``);
       expect(text).not.toContain(`${cursor}_`);
     });
@@ -861,7 +870,7 @@ describe('searchExpenditures', () => {
         search_criteria: { mode: 'by_candidate' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** by_candidate');
       expect(text).toContain('[OPPOSE]');
       expect(text).toContain('JONES, ALICE');
@@ -878,9 +887,9 @@ describe('searchExpenditures', () => {
         search_criteria: { candidate_id: 'S6FL00123' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
-      expect(blocks[0]!.text).toContain('**Mode:** by_candidate');
-      expect(blocks[0]!.text).toContain('candidate_id: S6FL00123');
+      expect(formatText(blocks)).toContain('No results found');
+      expect(formatText(blocks)).toContain('**Mode:** by_candidate');
+      expect(formatText(blocks)).toContain('candidate_id: S6FL00123');
     });
 
     it('renders the hoisted committee once, above the rows', () => {
@@ -893,7 +902,7 @@ describe('searchExpenditures', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Committee (applies to every row below):** PAC C00111111');
       expect(text.match(/PAC C00111111/g)).toHaveLength(1);
       expect(text).toContain('ROE, RICHARD');

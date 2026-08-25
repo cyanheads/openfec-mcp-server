@@ -81,8 +81,8 @@ describe('validateCandidateId', () => {
       expect(() => validateCandidateId("P'; DROP TABLE candidates; --")).toThrow(McpError);
     });
 
-    it('rejects oversized IDs (100+ chars)', () => {
-      expect(() => validateCandidateId('P' + '0'.repeat(100))).not.toThrow();
+    it('accepts an over-long but well-formed ID — the pattern bounds shape, not length', () => {
+      expect(() => validateCandidateId(`P${'0'.repeat(100)}`)).not.toThrow();
     });
   });
 });

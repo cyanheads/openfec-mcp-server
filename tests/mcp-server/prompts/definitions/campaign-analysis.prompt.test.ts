@@ -7,45 +7,52 @@
 import { describe, expect, it } from 'vitest';
 import { campaignAnalysisPrompt } from '@/mcp-server/prompts/definitions/campaign-analysis.prompt.js';
 
+type PromptMessage = { role: string; content: { type: string; text: string } };
+const argsSchema = campaignAnalysisPrompt.args!;
+const generate = (args: Parameters<typeof campaignAnalysisPrompt.generate>[0]) =>
+  campaignAnalysisPrompt.generate(args) as PromptMessage[];
+const firstMessage = (
+  args: Parameters<typeof campaignAnalysisPrompt.generate>[0],
+): PromptMessage => {
+  const [msg] = generate(args);
+  if (!msg) throw new Error('generate() returned no messages');
+  return msg;
+};
+
 describe('campaignAnalysisPrompt', () => {
   it('generates message with candidate_id when provided', () => {
-    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
     expect(text).toContain('candidate ID P00003392');
   });
 
   it('generates message with candidate_name when provided', () => {
-    const messages = campaignAnalysisPrompt.generate({ candidate_name: 'Joe Biden' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_name: 'Joe Biden' }).content.text;
     expect(text).toContain('"Joe Biden"');
   });
 
   it('generates message with cycle note when cycle provided', () => {
-    const messages = campaignAnalysisPrompt.generate({
+    const text = firstMessage({
       candidate_id: 'P00003392',
       cycle: '2024',
-    });
-    const text = (messages[0].content as { text: string }).text;
+    }).content.text;
     expect(text).toContain('for the 2024 cycle');
   });
 
   it('uses fallback "the specified candidate" when neither name nor id given', () => {
-    const messages = campaignAnalysisPrompt.generate({});
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({}).content.text;
     expect(text).toContain('the specified candidate');
     expect(text).not.toContain('candidate ID');
     expect(text).not.toMatch(/"[^"]*"/); // no quoted name
   });
 
   it('returns exactly 1 message with role=user', () => {
-    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
+    const messages = generate({ candidate_id: 'P00003392' });
     expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe('user');
+    expect(firstMessage({ candidate_id: 'P00003392' }).role).toBe('user');
   });
 
   it('message text contains all analysis sections', () => {
-    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
 
     const sections = [
       'Candidate Overview',
@@ -66,8 +73,7 @@ describe('campaignAnalysisPrompt', () => {
    * never mentions is unreachable through this prompt.
    */
   it('names every tool the analysis sequence chains', () => {
-    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
 
     const tools = [
       'openfec_search_candidates',
@@ -86,31 +92,30 @@ describe('campaignAnalysisPrompt', () => {
 
   /** openfec_lookup_elections requires office and cycle, so step 5 must source them. */
   it('sources the required openfec_lookup_elections scope from the candidate record', () => {
-    const messages = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
-    const text = (messages[0].content as { text: string }).text;
+    const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
 
     expect(text).toContain('office, state, and district');
     expect(text).toContain('It requires office and cycle');
   });
 
   it('pins the cycle on every call when one was supplied', () => {
-    const withCycle = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392', cycle: '2020' });
-    expect((withCycle[0].content as { text: string }).text).toContain('Pass cycle=2020');
+    expect(firstMessage({ candidate_id: 'P00003392', cycle: '2020' }).content.text).toContain(
+      'Pass cycle=2020',
+    );
 
-    const withoutCycle = campaignAnalysisPrompt.generate({ candidate_id: 'P00003392' });
-    expect((withoutCycle[0].content as { text: string }).text).not.toContain('Pass cycle=');
+    expect(firstMessage({ candidate_id: 'P00003392' }).content.text).not.toContain('Pass cycle=');
   });
 
   it('args parsing validates schema', () => {
-    expect(() => campaignAnalysisPrompt.args.parse({})).toThrow(/candidate_id or candidate_name/);
-    expect(campaignAnalysisPrompt.args.parse({ candidate_id: 'P00003392' })).toEqual({
+    expect(() => argsSchema.parse({})).toThrow(/candidate_id or candidate_name/);
+    expect(argsSchema.parse({ candidate_id: 'P00003392' })).toEqual({
       candidate_id: 'P00003392',
     });
-    expect(campaignAnalysisPrompt.args.parse({ candidate_name: 'Test' })).toEqual({
+    expect(argsSchema.parse({ candidate_name: 'Test' })).toEqual({
       candidate_name: 'Test',
     });
     expect(
-      campaignAnalysisPrompt.args.parse({
+      argsSchema.parse({
         candidate_name: 'Test',
         candidate_id: 'P00003392',
         cycle: '2024',
@@ -120,6 +125,6 @@ describe('campaignAnalysisPrompt', () => {
       candidate_id: 'P00003392',
       cycle: '2024',
     });
-    expect(() => campaignAnalysisPrompt.args.parse({ candidate_name: 123 })).toThrow();
+    expect(() => argsSchema.parse({ candidate_name: 123 })).toThrow();
   });
 });

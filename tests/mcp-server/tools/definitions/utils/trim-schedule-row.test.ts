@@ -86,11 +86,12 @@ describe('trimScheduleRows', () => {
   });
 
   it('does not mutate the input rows', () => {
-    const rows = [row('C001', { candidate: { candidate_id: 'P80001571' } })];
+    const candidate = { candidate_id: 'P80001571' };
+    const rows = [row('C001', { candidate })];
     trimScheduleRows(rows, { hoistCommittee: true, drop: ['candidate'] });
 
     expect(rows[0]!.committee).toBeDefined();
-    expect(rows[0]!.candidate).toBeDefined();
+    expect(rows[0]).toHaveProperty('candidate', candidate);
   });
 
   it('returns an empty page unchanged', () => {

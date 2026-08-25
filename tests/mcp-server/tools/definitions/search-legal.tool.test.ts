@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-legal.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,11 +37,20 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 
 import { searchLegal as searchLegalTool } from '@/mcp-server/tools/definitions/search-legal.tool.js';
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: searchLegalTool.errors });
+
 describe('searchLegalTool', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: searchLegalTool.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -54,7 +63,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ query: 'contribution limits' });
-      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+      const result = await searchLegalTool.handler(input, ctx);
 
       expect(result.results).toEqual(results);
       expect(result.total_count).toBe(1);
@@ -71,7 +80,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ query: 'contribution limits' });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(42);
     });
@@ -83,7 +92,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ query: 'no match query' });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
     });
@@ -95,7 +104,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ query: 'no match query' });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).notice).toBeDefined();
       expect(getEnrichment(ctx).notice).toContain('No legal documents matched');
@@ -115,7 +124,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ case_number: '7226' });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       const hint = getEnrichment(ctx).retrievalHint as string;
       expect(hint).toContain('openfec_get_legal_document');
@@ -126,11 +135,9 @@ describe('searchLegalTool', () => {
     it('throws when no filter provided', async () => {
       const input = searchLegalTool.input.parse({});
 
-      await expect(searchLegalTool.handler(input, ctx as unknown as Context)).rejects.toMatchObject(
-        {
-          code: JsonRpcErrorCode.ValidationError,
-        },
-      );
+      await expect(searchLegalTool.handler(input, ctx)).rejects.toMatchObject({
+        code: JsonRpcErrorCode.ValidationError,
+      });
     });
 
     it('accepts respondent as a standalone filter', async () => {
@@ -140,7 +147,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ respondent: 'Acme Corporation' });
-      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+      const result = await searchLegalTool.handler(input, ctx);
 
       expect(result.results).toHaveLength(1);
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
@@ -156,7 +163,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ regulatory_citation: '11 CFR 112.4' });
-      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+      const result = await searchLegalTool.handler(input, ctx);
 
       expect(result.results).toHaveLength(1);
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
@@ -170,7 +177,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ statutory_citation: '52 U.S.C. 30106' });
-      const result = await searchLegalTool.handler(input, ctx as unknown as Context);
+      const result = await searchLegalTool.handler(input, ctx);
 
       expect(result.results).toHaveLength(1);
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
@@ -184,7 +191,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ ao_number: '2024-01' });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
       expect(callArgs.ao_no).toBe('2024-01');
@@ -199,7 +206,7 @@ describe('searchLegalTool', () => {
         min_penalty_amount: 1_000_000,
         max_penalty_amount: 5_000_000,
       });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
       expect(callArgs.case_min_penalty_amount).toBe(1_000_000);
@@ -212,7 +219,7 @@ describe('searchLegalTool', () => {
       mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
 
       const input = searchLegalTool.input.parse({ min_penalty_amount: 1_000_000 });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       expect(mockService.searchLegal).toHaveBeenCalledOnce();
     });
@@ -236,7 +243,7 @@ describe('searchLegalTool', () => {
         min_date: '2024-01-01',
         max_date: '2024-12-31',
       });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
       expect(callArgs[minParam]).toBe('2024-01-01');
@@ -254,7 +261,7 @@ describe('searchLegalTool', () => {
         date_kind: 'open_date',
         min_date: '2024-01-01',
       });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
       expect(callArgs.case_min_open_date).toBe('2024-01-01');
@@ -268,9 +275,9 @@ describe('searchLegalTool', () => {
         min_date: '2024-01-01',
       });
 
-      const err = await searchLegalTool
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       const data = (err as McpError).data as { reason: string; valid_date_kinds: string[] };
       expect(data.reason).toBe('date_kind_not_valid_for_type');
@@ -285,9 +292,9 @@ describe('searchLegalTool', () => {
         min_date: '2024-01-01',
       });
 
-      const err = await searchLegalTool
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       const data = (err as McpError).data as { reason: string; valid_date_kinds: string[] };
       expect(data.reason).toBe('date_kind_not_valid_for_type');
@@ -302,9 +309,9 @@ describe('searchLegalTool', () => {
     ])('rejects %s instead of dropping it', async (_label, args) => {
       const input = searchLegalTool.input.parse(args);
 
-      const err = await searchLegalTool
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect((err as McpError).data).toMatchObject({ reason: 'date_filter_incomplete' });
       expect(mockService.searchLegal).not.toHaveBeenCalled();
@@ -317,7 +324,7 @@ describe('searchLegalTool', () => {
       });
 
       const input = searchLegalTool.input.parse({ case_number: 'MUR-7890' });
-      await searchLegalTool.handler(input, ctx as unknown as Context);
+      await searchLegalTool.handler(input, ctx);
 
       const callArgs = mockService.searchLegal.mock.calls[0]![0];
       expect(callArgs.case_no).toBe('MUR-7890');
@@ -333,7 +340,9 @@ describe('searchLegalTool', () => {
         search_criteria: { query: 'contribution limits', type: 'murs' },
       });
 
-      expect(blocks[0]!.text).toContain('_Search criteria: query=contribution limits · type=murs_');
+      expect(formatText(blocks)).toContain(
+        '_Search criteria: query=contribution limits · type=murs_',
+      );
     });
 
     it('groups by document_type with labels', () => {
@@ -344,9 +353,10 @@ describe('searchLegalTool', () => {
           { document_type: 'advisory_opinion', ao_no: '2024-02', name: 'Another AO' },
         ],
         total_count: 3,
+        search_criteria: { query: 'contribution limits' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('### Advisory Opinion');
       expect(text).toContain('### Matter Under Review (MUR)');
       expect(text).toContain('**2024-01**');
@@ -366,9 +376,10 @@ describe('searchLegalTool', () => {
           },
         ],
         total_count: 1,
+        search_criteria: { type: 'admin_fines' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('### Administrative Fine');
       expect(text).toContain('penalty_amount: 25000');
     });
@@ -377,9 +388,10 @@ describe('searchLegalTool', () => {
       const blocks = searchLegalTool.format!({
         results: [],
         total_count: 0,
+        search_criteria: { query: 'nonexistent statute' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      expect(formatText(blocks)).toContain('No results found');
     });
   });
 });

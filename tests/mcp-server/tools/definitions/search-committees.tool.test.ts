@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-committees.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,11 +53,20 @@ const committeeRecord = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: searchCommittees.errors });
+
 describe('searchCommittees', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext();
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -70,7 +79,7 @@ describe('searchCommittees', () => {
       });
 
       const input = searchCommittees.input.parse({ query: 'Biden' });
-      const result = await searchCommittees.handler(input, ctx as unknown as Context);
+      const result = await searchCommittees.handler(input, ctx);
 
       expect(mockService.searchCommittees).toHaveBeenCalledOnce();
       expect(result.committees).toEqual(committees);
@@ -89,7 +98,7 @@ describe('searchCommittees', () => {
       });
 
       const input = searchCommittees.input.parse({ query: 'Nonexistent' });
-      await searchCommittees.handler(input, ctx as unknown as Context);
+      await searchCommittees.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -104,7 +113,7 @@ describe('searchCommittees', () => {
       });
 
       const input = searchCommittees.input.parse({ committee_id: 'C00703975' });
-      const result = await searchCommittees.handler(input, ctx as unknown as Context);
+      const result = await searchCommittees.handler(input, ctx);
 
       expect(mockService.getCommittee).toHaveBeenCalledWith('C00703975', ctx);
       expect(result.committees).toEqual(committees);
@@ -113,9 +122,9 @@ describe('searchCommittees', () => {
     it('throws on invalid committee_id format with a friendly McpError', async () => {
       // .regex() removed from Zod schema — validation now fires in handler via validateCommitteeId
       const input = searchCommittees.input.parse({ committee_id: 'INVALID' });
-      const err = await searchCommittees
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchCommittees.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
     });
@@ -129,7 +138,7 @@ describe('searchCommittees', () => {
         search_criteria: { query: 'Biden', state: 'DE' },
       });
 
-      expect(blocks[0]!.text).toContain('_Search criteria: query=Biden · state=DE_');
+      expect(formatText(blocks)).toContain('_Search criteria: query=Biden · state=DE_');
     });
 
     it('renders committee lines with type, designation, party, and state', () => {
@@ -139,7 +148,7 @@ describe('searchCommittees', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**BIDEN FOR PRESIDENT** (C00703975)');
       expect(text).toContain('committee_type_full: Presidential');
       expect(text).toContain('designation_full: Principal campaign committee');
@@ -155,18 +164,20 @@ describe('searchCommittees', () => {
       const blocks = searchCommittees.format!({
         committees: [],
         pagination: PAGE,
+        search_criteria: { query: 'NOSUCHCOMMITTEE' },
       });
 
-      expect(blocks[0]!.text).toContain('No results found');
+      expect(formatText(blocks)).toContain('No results found');
     });
 
     it('includes candidate_ids when present', () => {
       const blocks = searchCommittees.format!({
         committees: [committeeRecord({ candidate_ids: ['P00003392', 'P00004455'] })],
         pagination: { ...PAGE, count: 1 },
+        search_criteria: { candidate_id: 'P00003392' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('candidate_ids: P00003392, P00004455');
     });
   });

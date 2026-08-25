@@ -4,7 +4,7 @@
  * @module tests/mcp-server/tools/definitions/search-contributions.tool.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -95,11 +95,20 @@ const aggregateRecord = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Narrows the first `format()` block to its text payload. */
+const formatText = (blocks: ContentBlock[]): string => {
+  const [block] = blocks;
+  if (block?.type !== 'text') throw new Error('format() did not return a text block');
+  return block.text;
+};
+
+const makeCtx = () => createMockContext({ errors: searchContributions.errors });
+
 describe('searchContributions', () => {
-  let ctx: ReturnType<typeof createMockContext>;
+  let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
-    ctx = createMockContext({ errors: searchContributions.errors });
+    ctx = makeCtx();
     vi.clearAllMocks();
   });
 
@@ -116,7 +125,7 @@ describe('searchContributions', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(mockService.searchContributions).toHaveBeenCalledOnce();
       expect(result.results).toEqual(contributions);
@@ -137,7 +146,7 @@ describe('searchContributions', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       expect(mockService.searchContributions.mock.calls[0]![0].two_year_transaction_period).toBe(
         CURRENT_CYCLE,
@@ -155,7 +164,7 @@ describe('searchContributions', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
@@ -164,9 +173,7 @@ describe('searchContributions', () => {
     it('throws without committee_id in itemized mode', async () => {
       const input = searchContributions.input.parse({ mode: 'itemized' });
 
-      await expect(
-        searchContributions.handler(input, ctx as unknown as Context),
-      ).rejects.toBeInstanceOf(McpError);
+      await expect(searchContributions.handler(input, ctx)).rejects.toBeInstanceOf(McpError);
     });
 
     it('fetches by_size aggregates', async () => {
@@ -180,7 +187,7 @@ describe('searchContributions', () => {
         mode: 'by_size',
         committee_id: 'C00703975',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(mockService.getContributionAggregates).toHaveBeenCalledWith(
         'by_size',
@@ -202,7 +209,7 @@ describe('searchContributions', () => {
         committee_id: 'C00703975',
         page: 3,
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(mockService.getContributionAggregates).toHaveBeenCalledWith(
         'by_state',
@@ -230,7 +237,7 @@ describe('searchContributions', () => {
         page: 7,
         cursor,
       });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       const [callArgs] = mockService.searchContributions.mock.calls[0]!;
       expect(callArgs.page).toBeUndefined();
@@ -247,7 +254,7 @@ describe('searchContributions', () => {
         mode: 'by_size',
         candidate_id: 'P00003392',
       });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       expect(mockService.getContributionAggregates).toHaveBeenCalledWith(
         'by_size_candidate',
@@ -270,7 +277,7 @@ describe('searchContributions', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(result.committee).toMatchObject({ committee_id: 'C00703975' });
       for (const row of result.results) expect(row).not.toHaveProperty('committee');
@@ -295,7 +302,7 @@ describe('searchContributions', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(result.results[0]!.contributor).toEqual(contributor);
     });
@@ -312,7 +319,7 @@ describe('searchContributions', () => {
         committee_id: 'C00703975',
         cycle: 2024,
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(result.mode).toBe('itemized');
       expect(result.search_criteria).toMatchObject({ committee_id: 'C00703975', cycle: 2024 });
@@ -329,7 +336,7 @@ describe('searchContributions', () => {
         mode: 'itemized',
         committee_id: 'C00703975',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(mockService.searchContributions.mock.calls[0]![0]!.two_year_transaction_period).toBe(
         CURRENT_CYCLE,
@@ -347,7 +354,7 @@ describe('searchContributions', () => {
         mode: 'by_size',
         candidate_id: 'P00003392',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       expect(mockService.getContributionAggregates.mock.calls[0]![1]!.cycle).toBe(CURRENT_CYCLE);
       expect(result.search_criteria).toMatchObject({ cycle: CURRENT_CYCLE });
@@ -363,7 +370,7 @@ describe('searchContributions', () => {
         mode: 'by_state',
         candidate_id: 'P00003392',
       });
-      const result = await searchContributions.handler(input, ctx as unknown as Context);
+      const result = await searchContributions.handler(input, ctx);
 
       // The caller asked for by_state; the server ran by_state_candidate.
       expect(result.mode).toBe('by_state_candidate');
@@ -391,9 +398,9 @@ describe('searchContributions', () => {
         [f]: v,
       });
 
-      const err = await searchContributions
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       expect((err as McpError).data).toMatchObject({
@@ -411,9 +418,9 @@ describe('searchContributions', () => {
         min_date: '2024-10-01',
       });
 
-      const err = (await searchContributions
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e)) as McpError;
+      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
 
       expect(err.message).toContain('contributor_state');
       expect(err.message).toContain('min_date');
@@ -443,7 +450,7 @@ describe('searchContributions', () => {
         page: 2,
         per_page: 50,
       });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       expect(mockService.getContributionAggregates).toHaveBeenCalledOnce();
     });
@@ -451,9 +458,7 @@ describe('searchContributions', () => {
     it('requires committee_id for by_employer mode', async () => {
       const input = searchContributions.input.parse({ mode: 'by_employer' });
 
-      await expect(
-        searchContributions.handler(input, ctx as unknown as Context),
-      ).rejects.toBeInstanceOf(McpError);
+      await expect(searchContributions.handler(input, ctx)).rejects.toBeInstanceOf(McpError);
     });
 
     it('passes decoded cursor indexes into params', async () => {
@@ -470,7 +475,7 @@ describe('searchContributions', () => {
       });
 
       const input = searchContributions.input.parse({ ...query, cursor });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       const [callArgs, callQuery] = mockService.searchContributions.mock.calls[0]!;
       expect(callArgs.last_index).toBe('999');
@@ -488,9 +493,9 @@ describe('searchContributions', () => {
         cursor: 'not-a-cursor',
       });
 
-      const err = await searchContributions
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
@@ -515,9 +520,9 @@ describe('searchContributions', () => {
         cursor,
       });
 
-      const err = await searchContributions
-        .handler(input, ctx as unknown as Context)
-        .catch((e: unknown) => e);
+      const err = await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
       expect(err).toBeInstanceOf(McpError);
       const data = (err as McpError).data as { reason: string; changed_arguments: string[] };
@@ -540,7 +545,7 @@ describe('searchContributions', () => {
         committee_id: 'C00431056',
         sort: '-contribution_receipt_amount',
       });
-      await searchContributions.handler(input, ctx as unknown as Context);
+      await searchContributions.handler(input, ctx);
 
       expect(mockService.searchContributions.mock.calls[0]![0].sort).toBe(
         '-contribution_receipt_amount',
@@ -572,7 +577,7 @@ describe('searchContributions', () => {
         search_criteria: { mode: 'itemized', committee_id: 'C00703975' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** itemized');
       expect(text).toContain('_Search criteria: mode=itemized · committee_id=C00703975_');
       expect(text).toContain('DOE, JANE');
@@ -593,7 +598,7 @@ describe('searchContributions', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain(`next_cursor: \`${cursor}\``);
       expect(text).not.toContain(`${cursor}_`);
     });
@@ -606,7 +611,7 @@ describe('searchContributions', () => {
         search_criteria: { mode: 'by_size' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Mode:** by_size_candidate');
       expect(text).toContain('size: 200');
       expect(text).toContain('count: 25000');
@@ -621,7 +626,7 @@ describe('searchContributions', () => {
         search_criteria: { committee_id: 'C00703975' },
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('No results found');
       expect(text).toContain('**Mode:** by_employer');
       expect(text).toContain('committee_id: C00703975');
@@ -637,7 +642,7 @@ describe('searchContributions', () => {
         search_criteria: {},
       });
 
-      const text = blocks[0]!.text;
+      const text = formatText(blocks);
       expect(text).toContain('**Committee (applies to every row below):** COMMITTEE C00703975');
       expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
       expect(text).toContain('SMITH, ANNA');
