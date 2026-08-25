@@ -7,7 +7,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
-import { fetchWithTimeout, type RequestContext, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import type {
   ElectionSummary,
@@ -282,24 +282,6 @@ export function assertKnownParams(path: string, params: FecParams): void {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Context adapter                                                   */
-/* ------------------------------------------------------------------ */
-
-/**
- * Extract a RequestContext from a handler Context.
- * Needed because `exactOptionalPropertyTypes` makes Context's optional
- * `T | undefined` fields incompatible with RequestContext's optional `T` fields.
- */
-function toRequestContext(ctx: Context): RequestContext {
-  const rc: RequestContext = { requestId: ctx.requestId, timestamp: ctx.timestamp };
-  if (ctx.tenantId) rc.tenantId = ctx.tenantId;
-  if (ctx.traceId) rc.traceId = ctx.traceId;
-  if (ctx.spanId) rc.spanId = ctx.spanId;
-  if (ctx.auth) rc.auth = ctx.auth;
-  return rc;
-}
-
-/* ------------------------------------------------------------------ */
 /*  Service class                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -345,11 +327,10 @@ export class OpenFecService {
     ctx: Context,
   ): Promise<PageResult<T>> {
     const url = this.buildUrl(path, params);
-    const reqCtx = toRequestContext(ctx);
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
             signal: ctx.signal,
           });
           const body = (await response.json()) as FecPageEnvelope<T>;
@@ -368,7 +349,7 @@ export class OpenFecService {
           maxRetries: this.config.fecMaxRetries,
           baseDelayMs: 1_000,
           operation: `FEC ${path}`,
-          context: reqCtx,
+          context: ctx,
           signal: ctx.signal,
           isTransient: isTransientFecError,
         },
@@ -390,11 +371,10 @@ export class OpenFecService {
     ctx: Context,
   ): Promise<SeekResult<T>> {
     const url = this.buildUrl(path, params);
-    const reqCtx = toRequestContext(ctx);
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
             signal: ctx.signal,
           });
           const body = (await response.json()) as FecSeekEnvelope<T>;
@@ -415,7 +395,7 @@ export class OpenFecService {
           maxRetries: this.config.fecMaxRetries,
           baseDelayMs: 1_000,
           operation: `FEC ${path}`,
-          context: reqCtx,
+          context: ctx,
           signal: ctx.signal,
           isTransient: isTransientFecError,
         },
@@ -428,11 +408,10 @@ export class OpenFecService {
   /** Fetch legal search results with retry. Normalizes type-keyed arrays. */
   private async fetchLegalSearch(params: FecParams, ctx: Context): Promise<LegalResult> {
     const url = this.buildUrl('/legal/search/', params);
-    const reqCtx = toRequestContext(ctx);
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
             signal: ctx.signal,
           });
           const body = (await response.json()) as FecLegalEnvelope;
@@ -460,7 +439,7 @@ export class OpenFecService {
           maxRetries: this.config.fecMaxRetries,
           baseDelayMs: 1_000,
           operation: 'FEC /legal/search/',
-          context: reqCtx,
+          context: ctx,
           signal: ctx.signal,
           isTransient: isTransientFecError,
         },
@@ -627,11 +606,10 @@ export class OpenFecService {
   /** Fetch election summary — flat response (no pagination wrapper). */
   async getElectionSummary(params: FecParams, ctx: Context): Promise<ElectionSummary> {
     const url = this.buildUrl('/elections/summary/', params);
-    const reqCtx = toRequestContext(ctx);
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
             signal: ctx.signal,
           });
           const body = (await response.json()) as ElectionSummary;
@@ -644,7 +622,7 @@ export class OpenFecService {
           maxRetries: this.config.fecMaxRetries,
           baseDelayMs: 1_000,
           operation: 'FEC /elections/summary/',
-          context: reqCtx,
+          context: ctx,
           signal: ctx.signal,
           isTransient: isTransientFecError,
         },
@@ -674,11 +652,10 @@ export class OpenFecService {
   ): Promise<Record<string, unknown> | null> {
     const path = `/legal/docs/${encodeURIComponent(docType)}/${encodeURIComponent(no)}`;
     const url = this.buildUrl(path, {});
-    const reqCtx = toRequestContext(ctx);
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, reqCtx, {
+          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
             signal: ctx.signal,
           });
           return unwrapLegalDocument(await response.json());
@@ -687,7 +664,7 @@ export class OpenFecService {
           maxRetries: this.config.fecMaxRetries,
           baseDelayMs: 1_000,
           operation: `FEC ${path}`,
-          context: reqCtx,
+          context: ctx,
           signal: ctx.signal,
           isTransient: isTransientFecError,
         },
