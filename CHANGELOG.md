@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.7.2](changelog/0.7.x/0.7.2.md) — 2026-08-24
+
+mcp-ts-core ^0.12.3 adopts MCP SDK v2 on the wire — strict tool inputs, JSON Schema 2020-12, an outputSchema declaring the error envelope, and protocol revision 2026-07-28 — plus discovery cache hints and a stateless session pin
+
 ## [0.7.1](changelog/0.7.x/0.7.1.md) — 2026-07-26
 
 openfec_money_trail and openfec_campaign_analysis now chain openfec_get_committee_totals and openfec_search_coordinated_expenditures, pin the cycle on itemized calls, and fix an unexecutable openfec_lookup_elections step (#24)
