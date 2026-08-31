@@ -16,6 +16,7 @@ import {
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
+import { validateRange } from './utils/range-validators.js';
 
 /**
  * Date parameters `/legal/search/` accepts, keyed by document type and then by
@@ -232,24 +233,7 @@ export const searchLegal = tool('openfec_search_legal', {
       );
     }
 
-    const fec = getOpenFecService();
-
-    const params: FecParams = {
-      from_hit: input.from_hit,
-      hits_returned: input.hits_returned,
-    };
-    if (input.query) params.q = input.query;
-    if (input.type) params.type = input.type;
-    if (input.ao_number) params.ao_no = input.ao_number;
-    if (input.case_number) params.case_no = input.case_number;
-    if (input.respondent) params.case_respondents = input.respondent;
-    if (input.regulatory_citation) params.ao_regulatory_citation = input.regulatory_citation;
-    if (input.statutory_citation) params.ao_statutory_citation = input.statutory_citation;
-    if (input.min_penalty_amount !== undefined)
-      params.case_min_penalty_amount = input.min_penalty_amount;
-    if (input.max_penalty_amount !== undefined)
-      params.case_max_penalty_amount = input.max_penalty_amount;
-
+    let resolvedDateParams: readonly [string, string] | undefined;
     if (input.type && input.date_kind) {
       const forType: Record<string, readonly [string, string]> = DATE_PARAMS[input.type];
       const bounds = forType[input.date_kind];
@@ -268,7 +252,44 @@ export const searchLegal = tool('openfec_search_legal', {
           },
         );
       }
-      const [minParam, maxParam] = bounds;
+      resolvedDateParams = bounds;
+    }
+
+    validateRange({
+      minField: 'min_penalty_amount',
+      minValue: input.min_penalty_amount,
+      maxField: 'max_penalty_amount',
+      maxValue: input.max_penalty_amount,
+      valueType: 'number',
+    });
+    validateRange({
+      minField: 'min_date',
+      minValue: input.min_date,
+      maxField: 'max_date',
+      maxValue: input.max_date,
+      valueType: 'date',
+    });
+
+    const fec = getOpenFecService();
+
+    const params: FecParams = {
+      from_hit: input.from_hit,
+      hits_returned: input.hits_returned,
+    };
+    if (input.query) params.q = input.query;
+    if (input.type) params.type = input.type;
+    if (input.ao_number) params.ao_no = input.ao_number;
+    if (input.case_number) params.case_no = input.case_number;
+    if (input.respondent) params.case_respondents = input.respondent;
+    if (input.regulatory_citation) params.ao_regulatory_citation = input.regulatory_citation;
+    if (input.statutory_citation) params.ao_statutory_citation = input.statutory_citation;
+    if (input.min_penalty_amount !== undefined)
+      params.case_min_penalty_amount = input.min_penalty_amount;
+    if (input.max_penalty_amount !== undefined)
+      params.case_max_penalty_amount = input.max_penalty_amount;
+
+    if (resolvedDateParams) {
+      const [minParam, maxParam] = resolvedDateParams;
       if (input.min_date) params[minParam] = input.min_date;
       if (input.max_date) params[maxParam] = input.max_date;
     }

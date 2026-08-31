@@ -91,14 +91,18 @@ describe('searchCandidates', () => {
       const input = searchCandidates.input.parse({ query: 'Biden' });
       const result = await searchCandidates.handler(input, ctx);
 
-      expect(mockService.searchCandidates).toHaveBeenCalledOnce();
+      expect(mockService.searchCandidates).toHaveBeenCalledWith(
+        expect.objectContaining({ q: 'Biden', page: 1, per_page: 20 }),
+        ctx,
+      );
       expect(result.candidates).toEqual(candidates);
       expect(result.pagination.count).toBe(1);
       expect(getEnrichment(ctx).totalCount).toBe(1);
       expect(getEnrichment(ctx).notice).toBeUndefined();
       // The echo lands on non-empty responses too, so filters can be verified.
-      expect(result.search_criteria).toMatchObject({ query: 'Biden' });
+      expect(result.search_criteria).toEqual({ query: 'Biden', include_totals: false });
       expect(result.search_criteria).not.toHaveProperty('per_page');
+      expect(formatText(searchCandidates.format!(result))).toContain('include_totals=false');
     });
 
     it('fetches a single candidate by ID', async () => {
@@ -119,6 +123,45 @@ describe('searchCandidates', () => {
       expect(result.candidates).toEqual(candidates);
     });
 
+    it('keeps candidate-ID totals scope in structured and formatted criteria', async () => {
+      mockService.getCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [candidateRecord()],
+      });
+      mockService.getCandidateTotals.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [totalsRecord({ cycle: 2024 })],
+      });
+
+      const input = searchCandidates.input.parse({
+        candidate_id: 'P00003392',
+        cycle: 2024,
+        election_year: 2024,
+        include_totals: true,
+      });
+      const result = await searchCandidates.handler(input, ctx);
+
+      expect(mockService.getCandidateTotals).toHaveBeenCalledWith(
+        expect.objectContaining({
+          candidate_id: ['P00003392'],
+          cycle: 2024,
+          election_year: 2024,
+        }),
+        ctx,
+      );
+      expect(result.search_criteria).toEqual({
+        candidate_id: 'P00003392',
+        cycle: 2024,
+        election_year: 2024,
+        include_totals: true,
+      });
+      const text = formatText(searchCandidates.format!(result));
+      expect(text).toContain('candidate_id=P00003392');
+      expect(text).toContain('cycle=2024');
+      expect(text).toContain('election_year=2024');
+      expect(text).toContain('include_totals=true');
+    });
+
     it('auto-includes totals when fetching by candidate_id', async () => {
       mockService.getCandidate.mockResolvedValueOnce({
         pagination: { ...PAGE, count: 1 },
@@ -134,6 +177,11 @@ describe('searchCandidates', () => {
 
       expect(mockService.getCandidateTotals).toHaveBeenCalledOnce();
       expect(result.totals).toEqual([totalsRecord()]);
+      expect(result.search_criteria).toEqual({
+        candidate_id: 'P00003392',
+        include_totals: true,
+      });
+      expect(formatText(searchCandidates.format!(result))).toContain('include_totals=true');
     });
 
     it('throws on invalid candidate_id format with a friendly McpError', async () => {
@@ -221,6 +269,75 @@ describe('searchCandidates', () => {
 
       expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
       expect(result.totals).toBeUndefined();
+    });
+
+    it.each([
+      [{ cycle: 2024 }, ['cycle']],
+      [{ election_year: 2024 }, ['election_year']],
+      [{ cycle: 2024, election_year: 2024 }, ['cycle', 'election_year']],
+    ] as const)(
+      'rejects totals-only scope %o when totals are disabled',
+      async (totalsScope, inapplicableInputs) => {
+        const input = searchCandidates.input.parse({
+          candidate_id: 'P00003392',
+          include_totals: false,
+          ...totalsScope,
+        });
+        const err = (await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
+          (e: unknown) => e,
+        )) as McpError;
+
+        expect(err.data).toMatchObject({
+          reason: 'inputs_not_applicable_to_id_lookup',
+          inapplicable_inputs: inapplicableInputs,
+          supported_inputs: ['candidate_id', 'include_totals'],
+        });
+        expect((err.data as { recovery: { hint: string } }).recovery.hint).toContain(
+          'include_totals',
+        );
+        expect(mockService.getCandidate).not.toHaveBeenCalled();
+        expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects every explicit search-only input on the direct-ID path', async () => {
+      const input = searchCandidates.input.parse({
+        candidate_id: 'P00003392',
+        query: 'Biden',
+        state: 'ZZ',
+        district: '99',
+        office: 'P',
+        party: 'DEM',
+        incumbent_challenge: 'I',
+        candidate_status: 'C',
+        has_raised_funds: true,
+        page: 2,
+        per_page: 50,
+      });
+      const err = (await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_id_lookup',
+        inapplicable_inputs: [
+          'query',
+          'state',
+          'district',
+          'office',
+          'party',
+          'incumbent_challenge',
+          'candidate_status',
+          'has_raised_funds',
+          'page',
+          'per_page',
+        ],
+        supported_inputs: ['candidate_id', 'include_totals', 'cycle', 'election_year'],
+      });
+      expect((err.data as { recovery: { hint: string } }).recovery.hint).toBeTruthy();
+      expect(mockService.getCandidate).not.toHaveBeenCalled();
+      expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
+      expect(mockService.searchCandidates).not.toHaveBeenCalled();
     });
 
     it('sets enrichment notice when search returns empty results', async () => {

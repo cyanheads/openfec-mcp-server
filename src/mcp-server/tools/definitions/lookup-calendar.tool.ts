@@ -16,6 +16,7 @@ import {
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
+import { validateRange } from './utils/range-validators.js';
 
 /**
  * Inputs each mode forwards upstream. A mode reads its own FEC dataset, so an
@@ -157,6 +158,14 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         },
       );
     }
+
+    validateRange({
+      minField: 'min_date',
+      minValue: input.min_date,
+      maxField: 'max_date',
+      maxValue: input.max_date,
+      valueType: 'date',
+    });
 
     if (input.mode === 'filing_deadlines') {
       // /reporting-dates/ uses min_due_date / max_due_date

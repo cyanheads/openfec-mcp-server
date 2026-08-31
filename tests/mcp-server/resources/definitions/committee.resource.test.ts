@@ -4,6 +4,7 @@
  * @module tests/mcp-server/resources/definitions/committee.resource.test
  */
 
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -109,5 +110,18 @@ describe('committeeResource', () => {
     expect(paramsSchema.parse({ committee_id: 'C00358796' })).toEqual({
       committee_id: 'C00358796',
     });
+  });
+
+  it('rejects a malformed fixed-width ID before any service call', async () => {
+    const ctx = createMockContext({ errors: committeeResource.errors });
+    const params = paramsSchema.parse({ committee_id: 'C001' });
+    const err = await Promise.resolve(committeeResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(McpError);
+    expect((err as McpError).data).toMatchObject({ reason: 'invalid_committee_id' });
+    expect(mockService.getCommittee).not.toHaveBeenCalled();
+    expect(mockService.getCommitteeTotals).not.toHaveBeenCalled();
   });
 });

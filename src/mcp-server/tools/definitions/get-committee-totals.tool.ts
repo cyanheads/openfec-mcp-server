@@ -21,6 +21,7 @@ import {
   str,
 } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
+import { validateRange } from './utils/range-validators.js';
 
 const modes = ['single', 'by_entity_type'] as const;
 
@@ -289,6 +290,21 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
         ...ctx.recoveryFor('entity_type_required_for_group_mode'),
       });
     }
+
+    validateRange({
+      minField: 'min_receipts',
+      minValue: input.min_receipts,
+      maxField: 'max_receipts',
+      maxValue: input.max_receipts,
+      valueType: 'number',
+    });
+    validateRange({
+      minField: 'min_disbursements',
+      minValue: input.min_disbursements,
+      maxField: 'max_disbursements',
+      maxValue: input.max_disbursements,
+      valueType: 'number',
+    });
 
     const params: FecParams = { page: input.page, per_page: input.per_page };
     if (input.committee_id) params.committee_id = input.committee_id;

@@ -18,7 +18,7 @@ describe('validateCandidateId', () => {
     });
 
     it('accepts S-prefix IDs', () => {
-      expect(() => validateCandidateId('S6FL00123')).not.toThrow();
+      expect(() => validateCandidateId('S4AZ00345')).not.toThrow();
     });
 
     it('accepts P-prefix IDs', () => {
@@ -81,8 +81,16 @@ describe('validateCandidateId', () => {
       expect(() => validateCandidateId("P'; DROP TABLE candidates; --")).toThrow(McpError);
     });
 
-    it('accepts an over-long but well-formed ID — the pattern bounds shape, not length', () => {
-      expect(() => validateCandidateId(`P${'0'.repeat(100)}`)).not.toThrow();
+    it('rejects a short ID', () => {
+      expect(() => validateCandidateId('P0000339')).toThrow(McpError);
+    });
+
+    it('rejects an overlong ID', () => {
+      expect(() => validateCandidateId('P000033920')).toThrow(McpError);
+    });
+
+    it('rejects a non-alphanumeric suffix character', () => {
+      expect(() => validateCandidateId('P0000-392')).toThrow(McpError);
     });
   });
 });
@@ -96,13 +104,17 @@ describe('validateCommitteeId', () => {
     it('accepts lowercase c prefix (case-insensitive)', () => {
       expect(() => validateCommitteeId('c00703975')).not.toThrow();
     });
-
-    it('accepts short numeric suffix', () => {
-      expect(() => validateCommitteeId('C001')).not.toThrow();
-    });
   });
 
   describe('invalid IDs', () => {
+    it('rejects a short numeric suffix', () => {
+      expect(() => validateCommitteeId('C001')).toThrow(McpError);
+    });
+
+    it('rejects an overlong numeric suffix', () => {
+      expect(() => validateCommitteeId('C007039750')).toThrow(McpError);
+    });
+
     it('rejects IDs not starting with C', () => {
       expect(() => validateCommitteeId('P00003392')).toThrow(McpError);
     });
@@ -128,7 +140,7 @@ describe('validateCommitteeId', () => {
       }
       expect(caught).toBeInstanceOf(McpError);
       const err = caught as McpError;
-      expect(err.message).toContain("'C' followed by digits");
+      expect(err.message).toContain("'C' followed by exactly eight digits");
     });
 
     it('includes the offending ID in error data', () => {

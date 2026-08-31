@@ -23,6 +23,7 @@ import {
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
+import { validateRange } from './utils/range-validators.js';
 import {
   formatHoistedCommittee,
   HoistedCommitteeSchema,
@@ -62,6 +63,25 @@ const ITEMIZED_ONLY_INPUTS = [
 
 /** What the Schedule A aggregate endpoints do accept — quoted in the rejection. */
 const AGGREGATE_INPUTS = 'committee_id, candidate_id, cycle, mode, page, per_page';
+const ITEMIZED_INPUTS = [
+  'mode',
+  'committee_id',
+  'contributor_name',
+  'contributor_employer',
+  'contributor_occupation',
+  'contributor_city',
+  'contributor_state',
+  'contributor_zip',
+  'cycle',
+  'min_date',
+  'max_date',
+  'min_amount',
+  'max_amount',
+  'is_individual',
+  'sort',
+  'per_page',
+  'cursor',
+] as const;
 
 export const searchContributions = tool('openfec_search_contributions', {
   description:
@@ -88,6 +108,13 @@ export const searchContributions = tool('openfec_search_contributions', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'An itemized-only filter was supplied alongside an aggregate mode, which cannot apply it',
       recovery: `Re-run with mode "itemized" (requires committee_id) to filter by contributor, date range, or amount, or drop the named inputs to keep the aggregate. Aggregate modes accept only ${AGGREGATE_INPUTS}.`,
+    },
+    {
+      reason: 'inputs_not_applicable_to_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'The resolved Schedule A endpoint does not accept one or more explicitly supplied inputs',
+      recovery:
+        'Remove the named inputs or choose a mode and identifier combination whose concrete endpoint supports them.',
     },
   ],
 
@@ -171,9 +198,9 @@ export const searchContributions = tool('openfec_search_contributions', {
       .number()
       .int()
       .min(1)
-      .default(1)
+      .optional()
       .describe(
-        'Page number (1-indexed) for the aggregate modes. Ignored in itemized mode, which paginates with cursor. Read pagination.pages in the response to see how many pages exist.',
+        'Page number (1-indexed) for aggregate modes. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for aggregates.',
       ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
@@ -242,6 +269,38 @@ export const searchContributions = tool('openfec_search_contributions', {
           ...ctx.recoveryFor('itemized_requires_committee_id'),
         });
       }
+
+      const inapplicableInputs = [
+        ...(input.candidate_id !== undefined ? ['candidate_id'] : []),
+        ...(input.page !== undefined ? ['page'] : []),
+      ];
+      if (inapplicableInputs.length > 0) {
+        throw ctx.fail(
+          'inputs_not_applicable_to_mode',
+          `Mode "itemized" cannot apply ${inapplicableInputs.join(', ')}.`,
+          {
+            mode,
+            inapplicable_inputs: inapplicableInputs,
+            supported_inputs: [...ITEMIZED_INPUTS],
+            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+          },
+        );
+      }
+
+      validateRange({
+        minField: 'min_date',
+        minValue: input.min_date,
+        maxField: 'max_date',
+        maxValue: input.max_date,
+        valueType: 'date',
+      });
+      validateRange({
+        minField: 'min_amount',
+        minValue: input.min_amount,
+        maxField: 'max_amount',
+        maxValue: input.max_amount,
+        valueType: 'number',
+      });
 
       const cycle = input.cycle ?? currentCycle();
       /**
@@ -316,6 +375,18 @@ export const searchContributions = tool('openfec_search_contributions', {
           { mode, ...ctx.recoveryFor('aggregate_requires_committee_id') },
         );
       }
+      if (input.candidate_id) {
+        throw ctx.fail(
+          'inputs_not_applicable_to_mode',
+          `Mode "${mode}" cannot apply candidate_id.`,
+          {
+            mode,
+            inapplicable_inputs: ['candidate_id'],
+            supported_inputs: ['mode', 'committee_id', 'cycle', 'page', 'per_page'],
+            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+          },
+        );
+      }
     }
 
     const inapplicable = ITEMIZED_ONLY_INPUTS.filter(
@@ -337,16 +408,28 @@ export const searchContributions = tool('openfec_search_contributions', {
     // /by_candidate variants require cycle — default to current if not provided
     const useByCandidate =
       (mode === 'by_size' || mode === 'by_state') && Boolean(input.candidate_id);
+    if (useByCandidate && input.committee_id) {
+      throw ctx.fail(
+        'inputs_not_applicable_to_mode',
+        `Mode "${mode}" with candidate_id cannot apply committee_id.`,
+        {
+          mode,
+          inapplicable_inputs: ['committee_id'],
+          supported_inputs: ['mode', 'candidate_id', 'cycle', 'page', 'per_page'],
+          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+        },
+      );
+    }
     const cycle = input.cycle ?? (useByCandidate ? currentCycle() : undefined);
 
     const params: FecParams = {
-      page: input.page,
+      page: input.page ?? 1,
       per_page: input.per_page,
       sort: '-total',
       sort_hide_null: true,
     };
-    if (input.committee_id) params.committee_id = input.committee_id;
-    if (input.candidate_id) params.candidate_id = input.candidate_id;
+    if (useByCandidate) params.candidate_id = input.candidate_id;
+    else if (input.committee_id) params.committee_id = input.committee_id;
     if (cycle) params.cycle = cycle;
 
     const aggregateMode: ResolvedMode = useByCandidate

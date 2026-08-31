@@ -224,6 +224,70 @@ describe('searchLegalTool', () => {
       expect(mockService.searchLegal).toHaveBeenCalledOnce();
     });
 
+    it('rejects an inverted penalty range before dispatch', async () => {
+      const input = searchLegalTool.input.parse({
+        min_penalty_amount: 5_000_000,
+        max_penalty_amount: 1_000_000,
+      });
+      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_range' });
+      expect(mockService.searchLegal).not.toHaveBeenCalled();
+    });
+
+    it('rejects an inverted resolved date range before dispatch', async () => {
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        date_kind: 'open_date',
+        min_date: '2024-12-31',
+        max_date: '2024-01-01',
+      });
+      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_range' });
+      expect(mockService.searchLegal).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed resolved date before dispatch', async () => {
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        date_kind: 'open_date',
+        min_date: 'not-a-date',
+      });
+      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_date', field: 'min_date' });
+      expect(mockService.searchLegal).not.toHaveBeenCalled();
+    });
+
+    it('keeps date_filter_incomplete ahead of malformed-date validation', async () => {
+      const input = searchLegalTool.input.parse({ min_date: 'not-a-date' });
+      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'date_filter_incomplete' });
+    });
+
+    it('keeps invalid date_kind ahead of malformed-date validation', async () => {
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        date_kind: 'issue_date',
+        min_date: 'not-a-date',
+      });
+      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'date_kind_not_valid_for_type' });
+    });
+
     it.each([
       ['murs', 'open_date', 'case_min_open_date', 'case_max_open_date'],
       ['murs', 'close_date', 'case_min_close_date', 'case_max_close_date'],

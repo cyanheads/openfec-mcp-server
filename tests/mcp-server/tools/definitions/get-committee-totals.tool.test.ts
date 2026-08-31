@@ -195,6 +195,23 @@ describe('getCommitteeTotals', () => {
   });
 
   describe('by_entity_type mode', () => {
+    it.each([
+      ['receipts', { min_receipts: 2_000_000, max_receipts: 1_000_000 }],
+      ['disbursements', { min_disbursements: 2_000_000, max_disbursements: 1_000_000 }],
+    ] as const)('rejects an inverted %s range before dispatch', async (_kind, range) => {
+      const input = getCommitteeTotals.input.parse({
+        mode: 'by_entity_type',
+        entity_type: 'pac',
+        ...range,
+      });
+      const err = (await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_range' });
+      expect(mockService.getCommitteeTotalsByEntityType).not.toHaveBeenCalled();
+    });
+
     it('sends the entity type in the path and the curated filters as params', async () => {
       mockService.getCommitteeTotalsByEntityType.mockResolvedValueOnce({
         pagination: { ...PAGE, count: 16 },

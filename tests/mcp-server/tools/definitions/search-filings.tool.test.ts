@@ -5,6 +5,7 @@
  */
 
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
+import type { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -56,6 +57,36 @@ describe('searchFilings', () => {
   });
 
   describe('handler', () => {
+    it('rejects an inverted receipt-date range before dispatch', async () => {
+      const input = searchFilings.input.parse({
+        min_receipt_date: '2024-12-31',
+        max_receipt_date: '2024-01-01',
+      });
+      const err = (await Promise.resolve(searchFilings.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_range',
+        min_field: 'min_receipt_date',
+        max_field: 'max_receipt_date',
+      });
+      expect(mockService.searchFilings).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed receipt date before dispatch', async () => {
+      const input = searchFilings.input.parse({ min_receipt_date: '01/01/2024' });
+      const err = (await Promise.resolve(searchFilings.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_date',
+        field: 'min_receipt_date',
+      });
+      expect(mockService.searchFilings).not.toHaveBeenCalled();
+    });
+
     it('returns filings with pagination', async () => {
       const filings = [
         { form_type: 'F3', committee_name: 'FRIENDS OF TEST', committee_id: 'C00000001' },

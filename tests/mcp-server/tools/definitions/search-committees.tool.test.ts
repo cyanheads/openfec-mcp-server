@@ -81,7 +81,10 @@ describe('searchCommittees', () => {
       const input = searchCommittees.input.parse({ query: 'Biden' });
       const result = await searchCommittees.handler(input, ctx);
 
-      expect(mockService.searchCommittees).toHaveBeenCalledOnce();
+      expect(mockService.searchCommittees).toHaveBeenCalledWith(
+        expect.objectContaining({ q: 'Biden', page: 1, per_page: 20 }),
+        ctx,
+      );
       expect(result.committees).toEqual(committees);
       expect(result.pagination.count).toBe(1);
       expect(getEnrichment(ctx).totalCount).toBe(1);
@@ -117,6 +120,60 @@ describe('searchCommittees', () => {
 
       expect(mockService.getCommittee).toHaveBeenCalledWith('C00703975', ctx);
       expect(result.committees).toEqual(committees);
+    });
+
+    it('returns only the effective committee-ID criterion on both output paths', async () => {
+      mockService.getCommittee.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [committeeRecord()],
+      });
+
+      const input = searchCommittees.input.parse({ committee_id: 'C00703975' });
+      const result = await searchCommittees.handler(input, ctx);
+
+      expect(result.search_criteria).toEqual({ committee_id: 'C00703975' });
+      expect(formatText(searchCommittees.format!(result))).toContain(
+        '_Search criteria: committee_id=C00703975_',
+      );
+    });
+
+    it('rejects every explicit search-only input on the direct-ID path', async () => {
+      const input = searchCommittees.input.parse({
+        committee_id: 'C00703975',
+        query: 'Biden',
+        candidate_id: 'P00003392',
+        state: 'ZZ',
+        party: 'DEM',
+        committee_type: 'P',
+        designation: 'P',
+        cycle: 2024,
+        treasurer_name: 'SMITH',
+        page: 2,
+        per_page: 50,
+      });
+      const err = (await Promise.resolve(searchCommittees.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_id_lookup',
+        inapplicable_inputs: [
+          'query',
+          'candidate_id',
+          'state',
+          'party',
+          'committee_type',
+          'designation',
+          'cycle',
+          'treasurer_name',
+          'page',
+          'per_page',
+        ],
+        supported_inputs: ['committee_id'],
+      });
+      expect((err.data as { recovery: { hint: string } }).recovery.hint).toBeTruthy();
+      expect(mockService.getCommittee).not.toHaveBeenCalled();
+      expect(mockService.searchCommittees).not.toHaveBeenCalled();
     });
 
     it('throws on invalid committee_id format with a friendly McpError', async () => {

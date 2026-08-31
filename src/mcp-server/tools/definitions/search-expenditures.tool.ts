@@ -23,6 +23,7 @@ import {
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
+import { validateRange } from './utils/range-validators.js';
 import {
   formatHoistedCommittee,
   HoistedCommitteeSchema,
@@ -69,6 +70,27 @@ const ITEMIZED_ONLY_INPUTS = [
 /** What `/by_candidate/` does accept — quoted in the rejection. */
 const BY_CANDIDATE_INPUTS =
   'committee_id, candidate_id, support_oppose, candidate_office, candidate_office_state, candidate_office_district, cycle, mode, page, per_page';
+const ITEMIZED_INPUTS = [
+  'mode',
+  'committee_id',
+  'candidate_id',
+  'support_oppose',
+  'payee_name',
+  'candidate_office',
+  'candidate_office_state',
+  'candidate_office_district',
+  'candidate_party',
+  'cycle',
+  'min_date',
+  'max_date',
+  'min_amount',
+  'max_amount',
+  'is_notice',
+  'most_recent',
+  'sort',
+  'per_page',
+  'cursor',
+] as const;
 
 export const searchExpenditures = tool('openfec_search_expenditures', {
   description:
@@ -88,6 +110,12 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'An itemized-only filter (payee_name, candidate_party, a date or amount bound, is_notice, most_recent, sort, cursor) was supplied alongside mode by_candidate, which cannot apply it',
       recovery: `Re-run with mode "itemized" to filter by payee, party, date range, amount, or notice status, or drop the named inputs to keep the per-candidate aggregate. by_candidate accepts only ${BY_CANDIDATE_INPUTS}.`,
+    },
+    {
+      reason: 'inputs_not_applicable_to_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Itemized mode receives an explicit page number that its keyset endpoint cannot apply',
+      recovery: 'Remove page and use per_page plus cursor to navigate itemized results.',
     },
   ],
 
@@ -190,9 +218,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .number()
       .int()
       .min(1)
-      .default(1)
+      .optional()
       .describe(
-        'Page number (1-indexed) for by_candidate mode. Ignored in itemized mode, which paginates with cursor. Read pagination.pages in the response to see how many pages exist.',
+        'Page number (1-indexed) for by_candidate mode. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for by_candidate.',
       ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
@@ -256,6 +284,30 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     /*  Itemized expenditures (keyset/SEEK)                             */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
+      if (input.page !== undefined) {
+        throw ctx.fail('inputs_not_applicable_to_mode', 'Mode "itemized" cannot apply page.', {
+          mode,
+          inapplicable_inputs: ['page'],
+          supported_inputs: [...ITEMIZED_INPUTS],
+          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+        });
+      }
+
+      validateRange({
+        minField: 'min_date',
+        minValue: input.min_date,
+        maxField: 'max_date',
+        maxValue: input.max_date,
+        valueType: 'date',
+      });
+      validateRange({
+        minField: 'min_amount',
+        minValue: input.min_amount,
+        maxField: 'max_amount',
+        maxValue: input.max_amount,
+        valueType: 'number',
+      });
+
       /**
        * Schedule E is large enough that an unscoped scan times out upstream, and
        * the timeout is retried — so scope the query the way itemized
@@ -383,7 +435,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       });
     }
 
-    const params: FecParams = { page: input.page, per_page: input.per_page };
+    const params: FecParams = { page: input.page ?? 1, per_page: input.per_page };
 
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;

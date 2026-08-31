@@ -22,6 +22,7 @@ import {
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
+import { validateRange } from './utils/range-validators.js';
 import {
   formatHoistedCommittee,
   HoistedCommitteeSchema,
@@ -52,6 +53,24 @@ const ITEMIZED_ONLY_INPUTS = [
 
 /** What the Schedule B aggregate endpoints do accept — quoted in the rejection. */
 const AGGREGATE_INPUTS = 'committee_id, cycle, mode, page, per_page';
+const ITEMIZED_INPUTS = [
+  'mode',
+  'committee_id',
+  'recipient_name',
+  'recipient_state',
+  'recipient_city',
+  'recipient_committee_id',
+  'disbursement_description',
+  'disbursement_purpose_category',
+  'cycle',
+  'min_date',
+  'max_date',
+  'min_amount',
+  'max_amount',
+  'sort',
+  'per_page',
+  'cursor',
+] as const;
 
 export const searchDisbursements = tool('openfec_search_disbursements', {
   description:
@@ -64,6 +83,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'An itemized-only filter was supplied alongside an aggregate mode, which cannot apply it',
       recovery: `Re-run with mode "itemized" to filter by recipient, description, date range, or amount, or drop the named inputs to keep the aggregate. Aggregate modes accept only ${AGGREGATE_INPUTS}.`,
+    },
+    {
+      reason: 'inputs_not_applicable_to_mode',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Itemized mode receives an explicit page number that its keyset endpoint cannot apply',
+      recovery: 'Remove page and use per_page plus cursor to navigate itemized results.',
     },
   ],
 
@@ -126,9 +151,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .number()
       .int()
       .min(1)
-      .default(1)
+      .optional()
       .describe(
-        'Page number (1-indexed) for the aggregate modes. Ignored in itemized mode, which paginates with cursor. Read pagination.pages in the response to see how many pages exist.',
+        'Page number (1-indexed) for aggregate modes. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for aggregates.',
       ),
     per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
@@ -191,6 +216,30 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     /*  Itemized disbursements (keyset/SEEK)                            */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
+      if (input.page !== undefined) {
+        throw ctx.fail('inputs_not_applicable_to_mode', 'Mode "itemized" cannot apply page.', {
+          mode,
+          inapplicable_inputs: ['page'],
+          supported_inputs: [...ITEMIZED_INPUTS],
+          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+        });
+      }
+
+      validateRange({
+        minField: 'min_date',
+        minValue: input.min_date,
+        maxField: 'max_date',
+        maxValue: input.max_date,
+        valueType: 'date',
+      });
+      validateRange({
+        minField: 'min_amount',
+        minValue: input.min_amount,
+        maxField: 'max_amount',
+        maxValue: input.max_amount,
+        valueType: 'number',
+      });
+
       const cycle = input.cycle ?? currentCycle();
       /**
        * The cycle can default, and a default the caller cannot see is the
@@ -276,7 +325,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
     const params: FecParams = {
       committee_id: input.committee_id,
-      page: input.page,
+      page: input.page ?? 1,
       per_page: input.per_page,
       sort: '-total',
       sort_hide_null: true,

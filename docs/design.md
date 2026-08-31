@@ -74,7 +74,7 @@ Find federal candidates and retrieve their details, history, and financial total
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `query` | string | No | Full-text candidate name search. |
-| `candidate_id` | string | No | FEC candidate ID (e.g., `P00003392`, `H2CO07170`). First character indicates office: H=House, S=Senate, P=President. When provided, returns a single candidate with full detail. |
+| `candidate_id` | string | No | FEC candidate ID: H, S, or P followed by exactly eight letters or digits (e.g., `P00003392`, `H2CO07170`). The prefix indicates office: H=House, S=Senate, P=President. When provided, returns a single candidate with full detail. |
 | `state` | string | No | Two-letter US state code (e.g., `AZ`, `CA`). |
 | `district` | string | No | Two-digit district number for House candidates (e.g., `07`). |
 | `office` | `H` \| `S` \| `P` | No | Filter by office: H=House, S=Senate, P=President. |
@@ -95,7 +95,8 @@ Find federal candidates and retrieve their details, history, and financial total
 **Totals sub-fetch:** `/v1/candidates/totals/` is a separately paged endpoint, not a view onto the candidate list — one candidate yields one row per cycle, so N candidates routinely produce more than N rows. The sub-fetch therefore ignores the candidate search's `page`/`per_page` and walks the totals endpoint's own pages at 100 per page, capped at 5 pages. If the cap is reached before every requested candidate is covered, the uncovered IDs are returned in `missing_totals` and rendered in the text output.
 
 **Error modes:**
-- Invalid `candidate_id` format → `InvalidParams`: "Invalid candidate ID format. FEC candidate IDs start with H (House), S (Senate), or P (President) followed by digits (e.g., 'P00003392')."
+- Invalid `candidate_id` format → `ValidationError` (`invalid_candidate_id`): candidate IDs are H, S, or P followed by exactly eight letters or digits.
+- A direct `candidate_id` lookup with a search-only input, or with `cycle` / `election_year` while `include_totals=false`, → `ValidationError` (`inputs_not_applicable_to_id_lookup`). Direct lookup always accepts `candidate_id` and `include_totals`; totals-only scope is accepted only when totals are included. Paging and candidate-search filters require the search path.
 - No results → Empty result array (not an error). Format message: "No candidates found matching the given criteria."
 
 **Upstream endpoints:**
@@ -114,7 +115,7 @@ Find political committees — campaign committees, PACs, Super PACs, party commi
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `query` | string | No | Full-text committee name search. |
-| `committee_id` | string | No | FEC committee ID (e.g., `C00358796`). Starts with `C` followed by digits. Returns a single committee with full detail. |
+| `committee_id` | string | No | FEC committee ID: C followed by exactly eight digits (e.g., `C00358796`). Returns a single committee with full detail. |
 | `candidate_id` | string | No | Find committees linked to this candidate (authorized, leadership, joint fundraising). |
 | `state` | string | No | Two-letter state code. |
 | `party` | string | No | Three-letter party code. |
@@ -130,7 +131,8 @@ Find political committees — campaign committees, PACs, Super PACs, party commi
 **Pagination:** Page-based.
 
 **Error modes:**
-- Invalid `committee_id` format → `InvalidParams`: "Invalid committee ID format. FEC committee IDs start with 'C' followed by digits (e.g., 'C00358796')."
+- Invalid `committee_id` format → `ValidationError` (`invalid_committee_id`): committee IDs are C followed by exactly eight digits.
+- A direct `committee_id` lookup with any search-only input → `ValidationError` (`inputs_not_applicable_to_id_lookup`). Direct lookup accepts only `committee_id`.
 
 **Upstream endpoints:**
 - `/v1/committees/` — search with filters
@@ -200,7 +202,7 @@ Search itemized individual contributions (Schedule A) or get aggregate breakdown
 | `max_amount` | number | No | Maximum contribution amount in dollars. Itemized mode only. |
 | `is_individual` | boolean | No | Only individual contributions (excludes committee-to-committee transfers). Itemized mode only. |
 | `sort` | `contribution_receipt_date` \| `contribution_receipt_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
-| `page` | number | No | Page number (1-indexed). Default 1. Aggregate modes only — itemized mode paginates with `cursor`. |
+| `page` | number | No | Page number (1-indexed). Defaults to 1 in aggregate modes. Explicit values are rejected in itemized mode, which paginates with `cursor`. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 | `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode uses keyset pagination — pass the cursor to get the next page. Valid only for an otherwise-identical call. |
 
@@ -217,6 +219,8 @@ Search itemized individual contributions (Schedule A) or get aggregate breakdown
 - Itemized without `committee_id` → `InvalidParams`: "Itemized contribution search requires a committee_id. To search contributions by candidate, use a 'by_size' or 'by_state' aggregate mode with candidate_id, or first look up the candidate's committee with openfec_search_committees."
 - `by_employer`/`by_occupation` without `committee_id` → `InvalidParams`: "Aggregate by employer/occupation requires a committee_id."
 - An itemized-only input in any aggregate mode → `ValidationError` (`itemized_only_filters_in_aggregate_mode`). The aggregate endpoints accept only `committee_id`, `candidate_id`, `cycle`, `mode`, `page`, `per_page`; every contributor filter, date bound, amount bound, `is_individual`, `sort`, and `cursor` is itemized-only. The rejection names both the offending inputs and the mode's supported set rather than dropping the filters and answering an unnarrowed query.
+- An explicit `page` or `candidate_id` in itemized mode → `ValidationError` (`inputs_not_applicable_to_mode`); the Schedule A itemized endpoint accepts `per_page` and `cursor`, but neither page-number pagination nor candidate scoping.
+- `candidate_id` in `by_employer` / `by_occupation`, or both IDs when `by_size` / `by_state` resolves to its candidate endpoint → `ValidationError` (`inputs_not_applicable_to_mode`). Each resolved aggregate endpoint receives only the identifier it actually supports.
 - Missing `cycle` on itemized → auto-default to current cycle (API requires `two_year_transaction_period`).
 
 **Upstream endpoints:**
@@ -252,7 +256,7 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 | `min_amount` | number | No | Minimum amount. Itemized mode only. |
 | `max_amount` | number | No | Maximum amount. Itemized mode only. |
 | `sort` | `disbursement_date` \| `disbursement_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
-| `page` | number | No | Page number (1-indexed). Default 1. Aggregate modes only — itemized mode paginates with `cursor`. |
+| `page` | number | No | Page number (1-indexed). Defaults to 1 in aggregate modes. Explicit values are rejected in itemized mode, which paginates with `cursor`. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 | `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode only. Valid only for an otherwise-identical call. |
 
@@ -268,6 +272,7 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 **Error modes:**
 - Missing `committee_id` → `InvalidParams`: "Disbursement search requires a committee_id. Use openfec_search_committees to find a committee's ID."
 - An itemized-only input in any aggregate mode → `ValidationError` (`itemized_only_filters_in_aggregate_mode`). The aggregate endpoints accept only `committee_id`, `cycle`, `mode`, `page`, `per_page`; every recipient filter, `disbursement_description`, `disbursement_purpose_category`, date bound, amount bound, `sort`, and `cursor` is itemized-only.
+- Explicit `page` in itemized mode → `ValidationError` (`inputs_not_applicable_to_mode`); itemized accepts `per_page` and `cursor` instead.
 
 **Upstream endpoints:**
 - `/v1/schedules/schedule_b/` — itemized (SEEK)
@@ -302,7 +307,7 @@ Search independent expenditures (Schedule E) — spending by outside groups (Sup
 | `is_notice` | boolean | No | Only 24/48-hour notice filings (near-election spending). Itemized mode only. |
 | `most_recent` | boolean | No | Only the most recent version of amended filings. Itemized mode only — defaults to true there when omitted, and `by_candidate` rejects it. Carries no schema default, so an explicit value is distinguishable from an omission. |
 | `sort` | `expenditure_date` \| `expenditure_amount` \| `office_total_ytd`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
-| `page` | number | No | Page number (1-indexed). Default 1. `by_candidate` mode only — itemized mode paginates with `cursor`. |
+| `page` | number | No | Page number (1-indexed). Defaults to 1 in `by_candidate` mode. Explicit values are rejected in itemized mode, which paginates with `cursor`. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 | `cursor` | string | No | Opaque pagination cursor. Itemized mode only. Valid only for an otherwise-identical call. |
 
@@ -318,6 +323,7 @@ Itemized rows drop the nested `candidate` sub-object, whose three fields are the
 **Error modes:**
 - `by_candidate` without `candidate_id` and without a full race scope → `ValidationError` (`by_candidate_requires_scope`). A race scope is `candidate_office` alone for `P`, plus `candidate_office_state` for `S`, plus `candidate_office_district` as well for `H` — the endpoint answers 422 for `house` or `senate` without a state and for `house` without a district, while `president` is a national race that takes neither and returns nothing when a state is supplied.
 - An itemized-only input in `by_candidate` mode → `ValidationError` (`itemized_only_filters_in_aggregate_mode`). `/by_candidate/` accepts only `committee_id`, `candidate_id`, `support_oppose`, `candidate_office`, `candidate_office_state`, `candidate_office_district`, `cycle`, `mode`, `page`, `per_page`; `payee_name`, `candidate_party`, the date and amount bounds, `is_notice`, `most_recent`, `sort`, and `cursor` are itemized-only. This reason replaces the field-specific `candidate_party_not_supported_by_candidate`, which covered one of the ten.
+- Explicit `page` in itemized mode → `ValidationError` (`inputs_not_applicable_to_mode`); itemized accepts `per_page` and `cursor` instead.
 
 **Upstream endpoints:**
 - `/v1/schedules/schedule_e/` — itemized (SEEK)
@@ -400,7 +406,7 @@ Look up federal election races and candidate financial summaries. Answers "who's
 | `district` | string | No | Two-digit district number. Required for House races. |
 | `zip` | string | No | ZIP code — finds races covering this ZIP. Search mode only. |
 | `election_full` | boolean | No | Expand to full election period: 4 years for President, 6 for Senate, 2 for House. Defaults to true when omitted, and a ZIP-scoped search rejects it. Carries no schema default, so an explicit value is distinguishable from an omission. |
-| `page` | number | No | Page number (1-indexed). Default 1. Search mode only — `/v1/elections/summary/` accepts no page parameters. |
+| `page` | number | No | Page number (1-indexed). Defaults to 1 in search mode. An explicit value is rejected in summary mode. |
 | `per_page` | number | No | Results per page. Default 20, max 100. Search mode only. |
 
 **Output:**
@@ -415,6 +421,7 @@ Look up federal election races and candidate financial summaries. Answers "who's
 - House without `district` → `InvalidParams`: "House election lookups require a district number."
 - Odd cycle year → `InvalidParams`: "Election cycles are even years (e.g., 2024, 2026)."
 - `election_full` alongside `zip` → `ValidationError` (`inputs_not_applicable_to_mode`). A ZIP-scoped search runs `/elections/search/`, which has no such parameter; the rejection names it and the set that endpoint does accept.
+- Explicit `page` or `per_page` in summary mode → `ValidationError` (`inputs_not_applicable_to_mode`); `/v1/elections/summary/` accepts neither.
 
 **Upstream endpoints:**
 - `/v1/elections/` — candidates in a race
@@ -704,9 +711,11 @@ The API sets `Cache-Control: public, max-age=3600`. Server-side caching is worth
 
 All twelve tools return `search_criteria` on every response, not only empty ones, and the six multi-mode tools also return the resolved `mode`. A caller cannot otherwise tell that a cycle defaulted, that `by_size` resolved to `by_size_candidate` against a different endpoint, or which of several row shapes it is holding. `search_criteria` echoes the **effective** filters — the caller's parsed input with every server-applied default folded in — minus paging arguments (`page`, `per_page`, `cursor`, `from_hit`, `hits_returned`); query-shaping booleans such as `most_recent` and `election_full` stay in, because they narrow the result set. Echoing the raw input instead would reproduce the failure the field exists to close: the itemized branches fall back to the current cycle and to `most_recent: true`, and a caller who omitted both would see neither in the echo while both shaped the result. The itemized keyset cursor is bound to the same effective values, so an omitted default and an explicit one resolve to one cursor identity rather than two. `format()` renders both fields, so `content[]`-only clients see the same record as `structuredContent` clients.
 
-### 8. Mode-inapplicable inputs are rejected, never dropped
+### 8. Endpoint-inapplicable inputs are rejected, never dropped
 
-Every multi-mode tool checks input presence for filters its resolved mode cannot apply and throws — the three schedule tools with `itemized_only_filters_in_aggregate_mode`, `openfec_lookup_calendar` and `openfec_lookup_elections` with `inputs_not_applicable_to_mode` — naming both the offending inputs and the mode's supported set. Silently dropping them is the worse failure: the caller gets an unnarrowed result set that looks like an answer to the narrowed question. The check has to sit at input-presence level, before the mode branch builds `params` — the service layer's `assertKnownParams` guard inspects the outbound parameter object, and an input that is never copied onto it is invisible there. Presence-checking also requires that no mode-scoped field carry a Zod `.default()`, since a default is indistinguishable from an explicit value; `most_recent` on `openfec_search_expenditures` and `election_full` on `openfec_lookup_elections` are therefore `.optional()`, with their defaults applied at the point of use.
+Every handler validates the concrete endpoint selected by an ID or mode before dispatch. Direct candidate and committee lookup reject search-only inputs; Schedule A aggregate variants accept only the identifier their resolved endpoint supports; Schedule A/B/E itemized reject page-number pagination; election summary rejects paging. The rejection names the offending inputs and the endpoint's supported set. Silently dropping one is the worse failure: the caller gets an unnarrowed result set that looks like an answer to the narrowed question.
+
+The check sits at input-presence level before the branch builds `params`, because the service allowlist only sees outbound names and cannot catch an input that was never copied. A branch-scoped input therefore carries no Zod `.default()` when omission must be distinguished from explicit presence; `page` on ID/mode-dispatched tools, `most_recent` on `openfec_search_expenditures`, and `election_full` on `openfec_lookup_elections` are optional, with defaults applied inside the branches that support them. The service layer separately allowlists the six Schedule A aggregate paths and election summary as a final backstop against future routing drift.
 
 ### 9. The nested committee object is hoisted, not duplicated per row
 
@@ -725,6 +734,10 @@ Both single-record endpoints answer 404 for a miss rather than an empty `results
 ### 12. Coordinated expenditures use page-based pagination, unlike the other schedules
 
 Schedules A, B, and E paginate by keyset and are wrapped with the opaque cursor of decision 2. Schedule F does not — the endpoint returns `page`/`pages`/`per_page` with no `last_index`, so the tool follows the page-based convention of `openfec_search_committees` instead. It also needs no defaulted cycle: Schedule E defaults to the current cycle because an unscoped scan times out upstream, while Schedule F's whole history is roughly 82K rows and answers an unscoped query promptly.
+
+### 13. Range validation is shared and precedes dispatch
+
+Every exposed min/max date or numeric pair uses one handler-level validator. Dates must be real calendar dates in `YYYY-MM-DD` form, and a supplied minimum cannot exceed its maximum; equal bounds and one-sided ranges remain valid. Failures use stable `invalid_date` or `invalid_range` data with field/value context and a recovery hint, before any upstream call. Legal search resolves its existing incomplete-date and invalid-date-kind contracts first, because those errors explain how to select an upstream date pair before generic value validation applies.
 
 ---
 
@@ -809,8 +822,8 @@ API key via query parameter `api_key` or header `X-Api-Key`. Keys from [api.data
 
 | Entity | Format | Example |
 |:-------|:-------|:--------|
-| Candidate | `[HSP]\d{8}` | `P00003392`, `H2CO07170`, `S4AZ00345` |
-| Committee | `C\d{8}` | `C00358796` |
+| Candidate | `[HSP][0-9A-Z]{8}` (case-insensitive) | `P00003392`, `H2CO07170`, `S4AZ00345` |
+| Committee | `C[0-9]{8}` (case-insensitive) | `C00358796` |
 
 ---
 

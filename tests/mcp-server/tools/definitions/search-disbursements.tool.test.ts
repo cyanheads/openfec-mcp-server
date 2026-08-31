@@ -114,6 +114,37 @@ describe('searchDisbursements', () => {
   });
 
   describe('handler', () => {
+    it.each([
+      ['date', { min_date: '2024-12-31', max_date: '2024-01-01' }],
+      ['amount', { min_amount: 5000, max_amount: 1000 }],
+    ] as const)('rejects an inverted itemized %s range before dispatch', async (_kind, range) => {
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        ...range,
+      });
+      const err = (await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_range' });
+      expect(mockService.searchDisbursements).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed itemized date before dispatch', async () => {
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        max_date: '2024-13-01',
+      });
+      const err = (await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_date', field: 'max_date' });
+      expect(mockService.searchDisbursements).not.toHaveBeenCalled();
+    });
+
     it('returns itemized disbursements with seek pagination', async () => {
       const disbursements = [disbursementRecord()];
       mockService.searchDisbursements.mockResolvedValueOnce({
@@ -369,29 +400,25 @@ describe('searchDisbursements', () => {
       expect(result.pagination?.page).toBe(4);
     });
 
-    it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
-      const cursor = cursorFor(
-        { mode: 'itemized', committee_id: 'C00703975', page: 1 },
-        { last_index: '500' },
-      );
-
-      mockService.searchDisbursements.mockResolvedValueOnce({
-        pagination: { count: 100, per_page: 20 },
-        results: [disbursementRecord()],
-        nextCursor: null,
-      });
-
+    it('rejects explicit page in itemized mode before the keyset call', async () => {
       const input = searchDisbursements.input.parse({
         mode: 'itemized',
         committee_id: 'C00703975',
         page: 9,
-        cursor,
       });
-      await searchDisbursements.handler(input, ctx);
+      const err = (await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
 
-      const [callArgs] = mockService.searchDisbursements.mock.calls[0]!;
-      expect(callArgs.page).toBeUndefined();
-      expect(callArgs.last_index).toBe('500');
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_mode',
+        inapplicable_inputs: ['page'],
+        recovery: { hint: expect.any(String) },
+      });
+      expect((err.data as { supported_inputs: string[] }).supported_inputs).toEqual(
+        expect.arrayContaining(['per_page', 'cursor']),
+      );
+      expect(mockService.searchDisbursements).not.toHaveBeenCalled();
     });
 
     it('passes decoded cursor indexes into itemized params', async () => {

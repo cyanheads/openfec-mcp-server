@@ -176,6 +176,37 @@ describe('searchContributions', () => {
       await expect(searchContributions.handler(input, ctx)).rejects.toBeInstanceOf(McpError);
     });
 
+    it.each([
+      ['date', { min_date: '2024-12-31', max_date: '2024-01-01' }],
+      ['amount', { min_amount: 5000, max_amount: 1000 }],
+    ] as const)('rejects an inverted itemized %s range before dispatch', async (_kind, range) => {
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        ...range,
+      });
+      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_range' });
+      expect(mockService.searchContributions).not.toHaveBeenCalled();
+    });
+
+    it('rejects a malformed itemized date before dispatch', async () => {
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        min_date: 'not-a-date',
+      });
+      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_date', field: 'min_date' });
+      expect(mockService.searchContributions).not.toHaveBeenCalled();
+    });
+
     it('fetches by_size aggregates', async () => {
       const aggregates = [aggregateRecord()];
       mockService.getContributionAggregates.mockResolvedValueOnce({
@@ -219,29 +250,42 @@ describe('searchContributions', () => {
       expect(result.pagination?.page).toBe(3);
     });
 
-    it('does not send page on the itemized keyset call, and keeps the cursor valid across pages', async () => {
-      const cursor = cursorFor(
-        { mode: 'itemized', committee_id: 'C00703975', page: 1 },
-        { last_index: '999' },
-      );
-
-      mockService.searchContributions.mockResolvedValueOnce({
-        pagination: { count: 50, per_page: 20 },
-        results: [contributionRecord()],
-        nextCursor: null,
-      });
-
+    it('rejects explicit page in itemized mode before the keyset call', async () => {
       const input = searchContributions.input.parse({
         mode: 'itemized',
         committee_id: 'C00703975',
         page: 7,
-        cursor,
       });
-      await searchContributions.handler(input, ctx);
+      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
 
-      const [callArgs] = mockService.searchContributions.mock.calls[0]!;
-      expect(callArgs.page).toBeUndefined();
-      expect(callArgs.last_index).toBe('999');
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_mode',
+        inapplicable_inputs: ['page'],
+        recovery: { hint: expect.any(String) },
+      });
+      expect((err.data as { supported_inputs: string[] }).supported_inputs).toEqual(
+        expect.arrayContaining(['per_page', 'cursor']),
+      );
+      expect(mockService.searchContributions).not.toHaveBeenCalled();
+    });
+
+    it('rejects candidate_id from the concrete itemized endpoint', async () => {
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        candidate_id: 'P00003392',
+      });
+      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_mode',
+        inapplicable_inputs: ['candidate_id'],
+      });
+      expect(mockService.searchContributions).not.toHaveBeenCalled();
     });
 
     it('routes to by_size_candidate when candidate_id provided', async () => {
@@ -460,6 +504,49 @@ describe('searchContributions', () => {
 
       await expect(searchContributions.handler(input, ctx)).rejects.toBeInstanceOf(McpError);
     });
+
+    it.each(['by_employer', 'by_occupation'] as const)(
+      'rejects candidate_id from the concrete %s endpoint',
+      async (mode) => {
+        const input = searchContributions.input.parse({
+          mode,
+          committee_id: 'C00703975',
+          candidate_id: 'P00003392',
+        });
+        const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+          (e: unknown) => e,
+        )) as McpError;
+
+        expect(err.data).toMatchObject({
+          reason: 'inputs_not_applicable_to_mode',
+          mode,
+          inapplicable_inputs: ['candidate_id'],
+          supported_inputs: ['mode', 'committee_id', 'cycle', 'page', 'per_page'],
+        });
+        expect(mockService.getContributionAggregates).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['by_size', 'by_state'] as const)(
+      'rejects committee_id when candidate_id resolves %s to its candidate endpoint',
+      async (mode) => {
+        const input = searchContributions.input.parse({
+          mode,
+          committee_id: 'C00703975',
+          candidate_id: 'P00003392',
+        });
+        const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
+          (e: unknown) => e,
+        )) as McpError;
+
+        expect(err.data).toMatchObject({
+          reason: 'inputs_not_applicable_to_mode',
+          inapplicable_inputs: ['committee_id'],
+          supported_inputs: ['mode', 'candidate_id', 'cycle', 'page', 'per_page'],
+        });
+        expect(mockService.getContributionAggregates).not.toHaveBeenCalled();
+      },
+    );
 
     it('passes decoded cursor indexes into params', async () => {
       const query = { mode: 'itemized', committee_id: 'C00703975' };

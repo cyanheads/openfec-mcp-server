@@ -20,9 +20,23 @@ import {
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
+const DIRECT_ID_INPUTS = ['committee_id'] as const;
+const SEARCH_ONLY_INPUTS = [
+  'query',
+  'candidate_id',
+  'state',
+  'party',
+  'committee_type',
+  'designation',
+  'cycle',
+  'treasurer_name',
+  'page',
+  'per_page',
+] as const;
+
 export const searchCommittees = tool('openfec_search_committees', {
   description:
-    'Find political committees (campaign, PAC, Super PAC, party) by name, type, candidate affiliation, or state. Retrieve a specific committee by FEC ID. Committee IDs start with C followed by digits (e.g., C00358796).',
+    'Find political committees (campaign, PAC, Super PAC, party) by name, type, candidate affiliation, or state. Retrieve a specific committee by FEC ID. Committee IDs start with C followed by exactly eight digits (e.g., C00358796).',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   errors: [
@@ -31,7 +45,14 @@ export const searchCommittees = tool('openfec_search_committees', {
       code: JsonRpcErrorCode.NotFound,
       when: 'Single-committee lookup by committee_id returned no record',
       recovery:
-        'Verify the committee_id format (C + digits) or drop it and search by name, candidate_id, or type.',
+        'Verify the committee_id format (C + eight digits) or drop it and search by name, candidate_id, or type.',
+    },
+    {
+      reason: 'inputs_not_applicable_to_id_lookup',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'A direct committee_id lookup includes inputs that only the committee search endpoint supports',
+      recovery:
+        'Remove the named search-only inputs, or drop committee_id and use them on the search path.',
     },
   ],
 
@@ -41,7 +62,7 @@ export const searchCommittees = tool('openfec_search_committees', {
       .string()
       .optional()
       .describe(
-        "FEC committee ID (e.g., C00358796). Get IDs from openfec_search_committees results. Starts with 'C' followed by digits. Returns a single committee with full detail.",
+        "FEC committee ID: 'C' followed by exactly eight digits (e.g., C00358796). Get IDs from openfec_search_committees results. Returns a single committee with full detail.",
       ),
     candidate_id: z
       .string()
@@ -65,8 +86,19 @@ export const searchCommittees = tool('openfec_search_committees', {
       ),
     cycle: z.number().optional().describe('Two-year election cycle (even year).'),
     treasurer_name: z.string().optional().describe('Full-text treasurer name search.'),
-    page: z.number().int().min(1).default(1).describe('Page number (1-indexed).'),
-    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe('Search-results page number (1-indexed). Defaults to 1 on the search path.'),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Search results per page. Defaults to 20 on the search path.'),
   }),
 
   output: z.object({
@@ -100,11 +132,28 @@ export const searchCommittees = tool('openfec_search_committees', {
     if (input.candidate_id) validateCandidateId(input.candidate_id);
 
     let result: Awaited<ReturnType<typeof fec.getCommittee>>;
+    let effectiveCriteria: Record<string, unknown>;
 
     if (input.committee_id) {
+      const inapplicableInputs = SEARCH_ONLY_INPUTS.filter((field) => input[field] !== undefined);
+      if (inapplicableInputs.length > 0) {
+        throw ctx.fail(
+          'inputs_not_applicable_to_id_lookup',
+          'A direct committee_id lookup cannot apply search-only inputs.',
+          {
+            inapplicable_inputs: inapplicableInputs,
+            supported_inputs: [...DIRECT_ID_INPUTS],
+            ...ctx.recoveryFor('inputs_not_applicable_to_id_lookup'),
+          },
+        );
+      }
+
       ctx.log.info('Fetching committee by ID', { committee_id: input.committee_id });
       result = await fec.getCommittee(input.committee_id, ctx);
+      effectiveCriteria = buildSearchCriteria({ committee_id: input.committee_id });
     } else {
+      const page = input.page ?? 1;
+      const perPage = input.per_page ?? 20;
       const params: FecParams = {
         q: input.query,
         candidate_id: input.candidate_id,
@@ -114,11 +163,12 @@ export const searchCommittees = tool('openfec_search_committees', {
         designation: input.designation,
         cycle: input.cycle,
         treasurer_name: input.treasurer_name,
-        page: input.page,
-        per_page: input.per_page,
+        page,
+        per_page: perPage,
       };
       ctx.log.info('Searching committees', { query: input.query, state: input.state });
       result = await fec.searchCommittees(params, ctx);
+      effectiveCriteria = buildSearchCriteria({ ...input, page, per_page: perPage });
     }
 
     if (input.committee_id && result.results.length === 0) {
@@ -138,7 +188,7 @@ export const searchCommittees = tool('openfec_search_committees', {
     return {
       committees: result.results,
       pagination: result.pagination,
-      search_criteria: buildSearchCriteria(input),
+      search_criteria: effectiveCriteria,
     };
   },
 

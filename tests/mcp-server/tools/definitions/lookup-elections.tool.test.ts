@@ -225,25 +225,29 @@ describe('lookupElectionsTool', () => {
       );
     });
 
-    it('omits page and per_page in summary mode — the endpoint accepts neither', async () => {
-      mockService.getElectionSummary.mockResolvedValueOnce({
-        count: 50,
-        receipts: 1,
-        disbursements: 1,
-        independent_expenditures: 1,
-      });
-
+    it.each([
+      ['page', 4],
+      ['per_page', 50],
+    ] as const)('rejects explicit %s in summary mode', async (field, value) => {
       const input = lookupElectionsTool.input.parse({
         mode: 'summary',
         office: 'P',
         cycle: 2024,
-        page: 4,
+        [field]: value,
       });
-      await lookupElectionsTool.handler(input, ctx);
+      const err = await Promise.resolve(lookupElectionsTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
 
-      const callParams = mockService.getElectionSummary.mock.calls[0]![0];
-      expect(callParams).not.toHaveProperty('page');
-      expect(callParams).not.toHaveProperty('per_page');
+      expect(err).toMatchObject({
+        data: {
+          reason: 'inputs_not_applicable_to_mode',
+          inapplicable_inputs: [field],
+          supported_inputs: ['mode', 'office', 'cycle', 'state', 'district', 'election_full'],
+          recovery: { hint: expect.any(String) },
+        },
+      });
+      expect(mockService.getElectionSummary).not.toHaveBeenCalled();
     });
 
     it('throws on odd cycle year', async () => {

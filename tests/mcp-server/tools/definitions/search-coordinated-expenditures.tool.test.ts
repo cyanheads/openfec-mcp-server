@@ -88,6 +88,29 @@ describe('searchCoordinatedExpenditures', () => {
   });
 
   describe('handler', () => {
+    it.each([
+      ['date', { min_date: '2024-12-31', max_date: '2024-01-01' }],
+      ['amount', { min_amount: 5000, max_amount: 1000 }],
+    ] as const)('rejects an inverted %s range before dispatch', async (_kind, range) => {
+      const input = searchCoordinatedExpenditures.input.parse(range);
+      const err = (await Promise.resolve(searchCoordinatedExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_range' });
+      expect(mockService.searchCoordinatedExpenditures).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed dates before dispatch', async () => {
+      const input = searchCoordinatedExpenditures.input.parse({ min_date: '2024-00-01' });
+      const err = (await Promise.resolve(searchCoordinatedExpenditures.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'invalid_date', field: 'min_date' });
+      expect(mockService.searchCoordinatedExpenditures).not.toHaveBeenCalled();
+    });
+
     it('sends only the filters the caller supplied, under Schedule F parameter names', async () => {
       mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
         pagination: { ...PAGE, count: 1 },

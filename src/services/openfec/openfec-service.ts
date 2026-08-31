@@ -188,6 +188,29 @@ function diffCursorArgs(issued: Record<string, string>, current: Record<string, 
 const paramSet = (names: string): ReadonlySet<string> => new Set(names.trim().split(/\s+/));
 
 const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
+  '/schedules/schedule_a/by_employer/': paramSet(`
+    page per_page cycle employer committee_id sort sort_hide_null sort_null_only
+    sort_nulls_last`),
+
+  '/schedules/schedule_a/by_occupation/': paramSet(`
+    page per_page cycle occupation committee_id sort sort_hide_null sort_null_only
+    sort_nulls_last`),
+
+  '/schedules/schedule_a/by_size/': paramSet(`
+    page per_page cycle size committee_id sort sort_hide_null sort_null_only sort_nulls_last`),
+
+  '/schedules/schedule_a/by_size/by_candidate/': paramSet(`
+    page per_page candidate_id cycle election_full sort sort_hide_null sort_null_only
+    sort_nulls_last`),
+
+  '/schedules/schedule_a/by_state/': paramSet(`
+    page per_page cycle state committee_id hide_null sort sort_hide_null sort_null_only
+    sort_nulls_last`),
+
+  '/schedules/schedule_a/by_state/by_candidate/': paramSet(`
+    page per_page candidate_id cycle election_full sort sort_hide_null sort_null_only
+    sort_nulls_last`),
+
   '/schedules/schedule_b/': paramSet(`
     image_number min_image_number max_image_number min_amount max_amount min_date max_date
     committee_id disbursement_description disbursement_purpose_category last_disbursement_amount
@@ -240,6 +263,8 @@ const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
     min_last_debts_owed_by_committee max_last_debts_owed_by_committee sponsor_candidate_id
     organization_type min_first_f1_date max_first_f1_date sort sort_hide_null sort_null_only
     sort_nulls_last`),
+
+  '/elections/summary/': paramSet(`state district cycle office election_full`),
 };
 
 /**

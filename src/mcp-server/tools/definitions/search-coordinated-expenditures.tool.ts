@@ -19,6 +19,7 @@ import {
   str,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
+import { validateRange } from './utils/range-validators.js';
 import {
   formatHoistedCommittee,
   HoistedCommitteeSchema,
@@ -102,6 +103,21 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
   async handler(input, ctx) {
     if (input.committee_id) validateCommitteeId(input.committee_id);
     if (input.candidate_id) validateCandidateId(input.candidate_id);
+
+    validateRange({
+      minField: 'min_date',
+      minValue: input.min_date,
+      maxField: 'max_date',
+      maxValue: input.max_date,
+      valueType: 'date',
+    });
+    validateRange({
+      minField: 'min_amount',
+      minValue: input.min_amount,
+      maxField: 'max_amount',
+      maxValue: input.max_amount,
+      valueType: 'number',
+    });
 
     const fec = getOpenFecService();
 

@@ -471,6 +471,51 @@ describe('outbound parameter-name guard', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it.each([
+    [
+      '/schedules/schedule_a/by_employer/',
+      { page: 1, per_page: 20, cycle: 2024, committee_id: 'C00703975' },
+    ],
+    [
+      '/schedules/schedule_a/by_occupation/',
+      { page: 1, per_page: 20, cycle: 2024, committee_id: 'C00703975' },
+    ],
+    [
+      '/schedules/schedule_a/by_size/',
+      { page: 1, per_page: 20, cycle: 2024, committee_id: 'C00703975' },
+    ],
+    [
+      '/schedules/schedule_a/by_state/',
+      { page: 1, per_page: 20, cycle: 2024, committee_id: 'C00703975' },
+    ],
+    [
+      '/schedules/schedule_a/by_size/by_candidate/',
+      { page: 1, per_page: 20, cycle: 2024, candidate_id: 'P00003392' },
+    ],
+    [
+      '/schedules/schedule_a/by_state/by_candidate/',
+      { page: 1, per_page: 20, cycle: 2024, candidate_id: 'P00003392' },
+    ],
+    [
+      '/elections/summary/',
+      { state: 'AZ', district: '00', cycle: 2024, office: 'senate', election_full: true },
+    ],
+  ] as const)('accepts the parameters declared for %s', (path, params) => {
+    expect(() => assertKnownParams(path, params)).not.toThrow();
+  });
+
+  it.each([
+    ['/schedules/schedule_a/by_employer/', { candidate_id: 'P00003392' }, 'candidate_id'],
+    ['/schedules/schedule_a/by_occupation/', { candidate_id: 'P00003392' }, 'candidate_id'],
+    ['/schedules/schedule_a/by_size/', { candidate_id: 'P00003392' }, 'candidate_id'],
+    ['/schedules/schedule_a/by_state/', { candidate_id: 'P00003392' }, 'candidate_id'],
+    ['/schedules/schedule_a/by_size/by_candidate/', { committee_id: 'C00703975' }, 'committee_id'],
+    ['/schedules/schedule_a/by_state/by_candidate/', { committee_id: 'C00703975' }, 'committee_id'],
+    ['/elections/summary/', { page: 2 }, 'page'],
+  ] as const)('rejects %s from %s', (path, params, field) => {
+    expect(() => assertKnownParams(path, params)).toThrow(field);
+  });
+
   it('accepts every name /schedules/schedule_e/by_candidate/ declares', () => {
     expect(() =>
       assertKnownParams('/schedules/schedule_e/by_candidate/', {

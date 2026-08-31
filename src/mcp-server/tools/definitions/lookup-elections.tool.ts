@@ -23,7 +23,17 @@ const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
 const ELECTION_FULL_DEFAULT = true;
 
 /** What a ZIP-scoped search accepts — quoted in the rejection. */
-const ZIP_SEARCH_INPUTS = ['mode', 'office', 'cycle', 'state', 'district', 'zip'];
+const ZIP_SEARCH_INPUTS = [
+  'mode',
+  'office',
+  'cycle',
+  'state',
+  'district',
+  'zip',
+  'page',
+  'per_page',
+];
+const SUMMARY_INPUTS = ['mode', 'office', 'cycle', 'state', 'district', 'election_full'];
 
 export const lookupElections = tool('openfec_lookup_elections', {
   description:
@@ -62,9 +72,9 @@ export const lookupElections = tool('openfec_lookup_elections', {
     {
       reason: 'inputs_not_applicable_to_mode',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'election_full supplied alongside zip — a ZIP-scoped search runs an endpoint that has no such parameter',
+      when: 'The resolved elections endpoint does not accept one or more explicitly supplied inputs',
       recovery:
-        'Drop election_full to keep the ZIP lookup, or drop zip and scope the race with state and district, where election_full applies.',
+        'Remove the named inputs or choose a mode and geography whose concrete endpoint supports them.',
     },
   ],
 
@@ -103,17 +113,17 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .number()
       .int()
       .min(1)
-      .default(1)
+      .optional()
       .describe(
-        'Page number (1-indexed). Search mode only — summary mode returns a single aggregate row. Read pagination.pages in the response to see how many pages exist.',
+        'Page number (1-indexed). Search mode only; explicit page is rejected in summary mode. Defaults to 1 for search.',
       ),
     per_page: z
       .number()
       .int()
       .min(1)
       .max(100)
-      .default(20)
-      .describe('Results per page. Search mode only.'),
+      .optional()
+      .describe('Results per page. Search mode only; defaults to 20.'),
   }),
 
   output: z.object({
@@ -184,6 +194,30 @@ export const lookupElections = tool('openfec_lookup_elections', {
       );
     }
 
+    if (input.mode === 'summary') {
+      if (input.zip) {
+        throw ctx.fail('summary_does_not_support_zip', undefined, {
+          ...ctx.recoveryFor('summary_does_not_support_zip'),
+        });
+      }
+      const inapplicableInputs = [
+        ...(input.page !== undefined ? ['page'] : []),
+        ...(input.per_page !== undefined ? ['per_page'] : []),
+      ];
+      if (inapplicableInputs.length > 0) {
+        throw ctx.fail(
+          'inputs_not_applicable_to_mode',
+          `Mode "summary" cannot apply ${inapplicableInputs.join(', ')}.`,
+          {
+            mode: input.mode,
+            inapplicable_inputs: inapplicableInputs,
+            supported_inputs: SUMMARY_INPUTS,
+            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+          },
+        );
+      }
+    }
+
     const fec = getOpenFecService();
 
     /** election_full carries no schema default, so the echo reports the effective value. */
@@ -198,11 +232,6 @@ export const lookupElections = tool('openfec_lookup_elections', {
     if (input.zip) params.zip = input.zip;
 
     if (input.mode === 'summary') {
-      if (input.zip) {
-        throw ctx.fail('summary_does_not_support_zip', undefined, {
-          ...ctx.recoveryFor('summary_does_not_support_zip'),
-        });
-      }
       params.election_full = electionFull;
       ctx.log.info('Fetching election summary', { office: input.office, cycle: input.cycle });
       const summary = await fec.getElectionSummary(params, ctx);
@@ -221,8 +250,8 @@ export const lookupElections = tool('openfec_lookup_elections', {
     }
 
     // Paging applies to search mode only — /elections/summary/ accepts no page params
-    params.page = input.page;
-    params.per_page = input.per_page;
+    params.page = input.page ?? 1;
+    params.per_page = input.per_page ?? 20;
 
     // /elections/search/ supports zip but not election_full; /elections/ supports election_full
     ctx.log.info('Searching elections', {

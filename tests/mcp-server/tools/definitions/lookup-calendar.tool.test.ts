@@ -5,6 +5,7 @@
  */
 
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
+import type { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -197,6 +198,49 @@ describe('lookupCalendarTool', () => {
       expect(callArgs.max_start_date).toBe('2024-12-31');
     });
 
+    it.each(['events', 'filing_deadlines', 'election_dates'] as const)(
+      'rejects inverted dates in %s mode before dispatch',
+      async (mode) => {
+        const service =
+          mode === 'events'
+            ? mockService.getCalendarDates
+            : mode === 'filing_deadlines'
+              ? mockService.getReportingDates
+              : mockService.getElectionDates;
+        const input = lookupCalendarTool.input.parse({
+          mode,
+          min_date: '2026-12-31',
+          max_date: '2026-01-01',
+        });
+        const err = (await Promise.resolve(lookupCalendarTool.handler(input, ctx)).catch(
+          (e: unknown) => e,
+        )) as McpError;
+
+        expect(err.data).toMatchObject({
+          reason: 'invalid_range',
+          min_field: 'min_date',
+          min_value: '2026-12-31',
+          max_field: 'max_date',
+          max_value: '2026-01-01',
+        });
+        expect(service).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects malformed dates before dispatch', async () => {
+      const input = lookupCalendarTool.input.parse({ min_date: '2026-02-30' });
+      const err = (await Promise.resolve(lookupCalendarTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_date',
+        field: 'min_date',
+        value: '2026-02-30',
+      });
+      expect(mockService.getCalendarDates).not.toHaveBeenCalled();
+    });
+
     it('sets enrichment totalCount from pagination', async () => {
       mockService.getCalendarDates.mockResolvedValueOnce({
         pagination: { ...PAGE, count: 5 },
@@ -216,7 +260,11 @@ describe('lookupCalendarTool', () => {
         results: [],
       });
 
-      const input = lookupCalendarTool.input.parse({ description: 'nonexistent event' });
+      const input = lookupCalendarTool.input.parse({
+        description: 'nonexistent event',
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+      });
       await lookupCalendarTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).totalCount).toBe(0);

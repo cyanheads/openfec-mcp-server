@@ -29,10 +29,25 @@ import { validateCandidateId } from './utils/id-validators.js';
  */
 const TOTALS_PER_PAGE = 100;
 const TOTALS_MAX_PAGES = 5;
+const DIRECT_ID_INPUTS = ['candidate_id', 'include_totals', 'cycle', 'election_year'] as const;
+const DIRECT_ID_INPUTS_WITHOUT_TOTALS = ['candidate_id', 'include_totals'] as const;
+const TOTALS_ONLY_INPUTS = ['cycle', 'election_year'] as const;
+const SEARCH_ONLY_INPUTS = [
+  'query',
+  'state',
+  'district',
+  'office',
+  'party',
+  'incumbent_challenge',
+  'candidate_status',
+  'has_raised_funds',
+  'page',
+  'per_page',
+] as const;
 
 export const searchCandidates = tool('openfec_search_candidates', {
   description:
-    'Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. Candidate IDs start with H (House), S (Senate), or P (President) followed by digits.',
+    'Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. Candidate IDs start with H (House), S (Senate), or P (President) followed by exactly eight letters or digits.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   errors: [
@@ -41,7 +56,14 @@ export const searchCandidates = tool('openfec_search_candidates', {
       code: JsonRpcErrorCode.NotFound,
       when: 'Single-candidate lookup by candidate_id returned no record',
       recovery:
-        'Verify the candidate_id format (H/S/P + digits) or drop it and search by name, state, or cycle.',
+        'Verify the candidate_id format (H/S/P + eight letters or digits) or drop it and search by name, state, or cycle.',
+    },
+    {
+      reason: 'inputs_not_applicable_to_id_lookup',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'A direct candidate_id lookup includes search-only inputs, or totals-only scope while include_totals is false',
+      recovery:
+        'Remove the named inputs. To use cycle or election_year on a direct lookup, set include_totals to true; otherwise drop candidate_id and use search filters.',
     },
   ],
 
@@ -51,7 +73,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .string()
       .optional()
       .describe(
-        'FEC candidate ID (e.g., P00003392, H2CO07170). Get IDs from openfec_search_candidates results. When provided, returns a single candidate with full detail.',
+        'FEC candidate ID: H, S, or P followed by exactly eight letters or digits (e.g., P00003392, H2CO07170). Get IDs from openfec_search_candidates results. When provided, returns a single candidate with full detail.',
       ),
     state: z.string().optional().describe('Two-letter US state code (e.g., AZ, CA).'),
     district: z.string().optional().describe('Two-digit district number for House candidates.'),
@@ -80,8 +102,19 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .describe(
         'Include financial totals (receipts, disbursements, cash on hand). Defaults to true when fetching by candidate_id.',
       ),
-    page: z.number().int().min(1).default(1).describe('Page number (1-indexed).'),
-    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe('Search-results page number (1-indexed). Defaults to 1 on the search path.'),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Search results per page. Defaults to 20 on the search path.'),
   }),
 
   output: z.object({
@@ -130,13 +163,41 @@ export const searchCandidates = tool('openfec_search_candidates', {
     const shouldIncludeTotals = input.include_totals ?? !!input.candidate_id;
 
     let candidateResult: Awaited<ReturnType<typeof fec.getCandidate>>;
+    let effectiveCriteria: Record<string, unknown>;
 
     if (input.candidate_id) {
+      const inapplicableInputs = [
+        ...SEARCH_ONLY_INPUTS.filter((field) => input[field] !== undefined),
+        ...(shouldIncludeTotals
+          ? []
+          : TOTALS_ONLY_INPUTS.filter((field) => input[field] !== undefined)),
+      ];
+      if (inapplicableInputs.length > 0) {
+        throw ctx.fail(
+          'inputs_not_applicable_to_id_lookup',
+          'A direct candidate_id lookup cannot apply the named inputs.',
+          {
+            inapplicable_inputs: inapplicableInputs,
+            supported_inputs: [
+              ...(shouldIncludeTotals ? DIRECT_ID_INPUTS : DIRECT_ID_INPUTS_WITHOUT_TOTALS),
+            ],
+            ...ctx.recoveryFor('inputs_not_applicable_to_id_lookup'),
+          },
+        );
+      }
+
       // Single candidate lookup
       ctx.log.info('Fetching candidate by ID', { candidate_id: input.candidate_id });
       candidateResult = await fec.getCandidate(input.candidate_id, ctx);
+      effectiveCriteria = buildSearchCriteria({
+        candidate_id: input.candidate_id,
+        include_totals: shouldIncludeTotals,
+        ...(shouldIncludeTotals ? { cycle: input.cycle, election_year: input.election_year } : {}),
+      });
     } else {
       // Search with filters
+      const page = input.page ?? 1;
+      const perPage = input.per_page ?? 20;
       const params: FecParams = {
         q: input.query,
         state: input.state,
@@ -148,11 +209,17 @@ export const searchCandidates = tool('openfec_search_candidates', {
         incumbent_challenge: input.incumbent_challenge,
         candidate_status: input.candidate_status,
         has_raised_funds: input.has_raised_funds,
-        page: input.page,
-        per_page: input.per_page,
+        page,
+        per_page: perPage,
       };
       ctx.log.info('Searching candidates', { query: input.query, state: input.state });
       candidateResult = await fec.searchCandidates(params, ctx);
+      effectiveCriteria = buildSearchCriteria({
+        ...input,
+        include_totals: shouldIncludeTotals,
+        page,
+        per_page: perPage,
+      });
     }
 
     const candidates = candidateResult.results as Record<string, unknown>[];
@@ -218,7 +285,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
       totals,
       missing_totals: missingTotals,
       pagination: candidateResult.pagination,
-      search_criteria: buildSearchCriteria(input),
+      search_criteria: effectiveCriteria,
     };
   },
 

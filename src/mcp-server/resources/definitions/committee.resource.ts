@@ -12,10 +12,12 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 export const committeeResource = resource('openfec://committee/{committee_id}', {
   name: 'FEC Committee Profile',
   description:
-    'Fetch a political committee profile with type, designation, and financial summary. Committee IDs start with C followed by digits (e.g., C00358796).',
+    'Fetch a political committee profile with type, designation, and financial summary. Committee IDs start with C followed by exactly eight digits (e.g., C00358796).',
   mimeType: 'application/json',
   params: z.object({
-    committee_id: z.string().describe('FEC committee ID (e.g., C00358796)'),
+    committee_id: z
+      .string()
+      .describe("FEC committee ID: 'C' followed by exactly eight digits (e.g., C00358796)."),
   }),
 
   errors: [
@@ -24,7 +26,7 @@ export const committeeResource = resource('openfec://committee/{committee_id}', 
       code: JsonRpcErrorCode.NotFound,
       when: 'No committee exists for the supplied committee_id',
       recovery:
-        'Verify the committee_id format (C + digits) or look up the committee by name via openfec_search_committees.',
+        'Verify the committee_id format (C + eight digits) or look up the committee by name via openfec_search_committees.',
     },
   ],
 
