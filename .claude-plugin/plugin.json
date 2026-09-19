@@ -1,20 +1,33 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "openfec-mcp-server",
   "version": "0.8.0",
   "description": "Access FEC campaign finance data through MCP. Query data about candidates, money trails, and election filings. STDIO & Streamable HTTP.",
   "author": {
-    "name": "cyanheads"
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
   },
   "homepage": "https://github.com/cyanheads/openfec-mcp-server#readme",
   "repository": "https://github.com/cyanheads/openfec-mcp-server",
   "license": "Apache-2.0",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "openfec", "fec", "campaign-finance", "elections"],
+  "userConfig": {
+    "FEC_API_KEY": {
+      "type": "string",
+      "title": "OpenFEC API key",
+      "description": "Optional. Defaults to DEMO_KEY (30 req/hour); your own key from api.data.gov/signup allows 1,000 req/hour.",
+      "sensitive": true,
+      "default": ""
+    }
+  },
   "mcpServers": {
     "openfec-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/openfec-mcp-server"],
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
-        "FEC_API_KEY": ""
+        "FEC_API_KEY": "${user_config.FEC_API_KEY}"
       }
     }
   }

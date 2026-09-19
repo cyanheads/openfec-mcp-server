@@ -22,7 +22,9 @@
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_AUTH_MODE": "none",
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "FEC_API_KEY": "${user_config.FEC_API_KEY}",
+        "MCP_LOG_LEVEL": "${user_config.MCP_LOG_LEVEL}"
       }
     }
   },
@@ -38,7 +40,8 @@
       "title": "OpenFEC API Key",
       "description": "Optional. Falls back to DEMO_KEY (30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
       "type": "string",
-      "required": false
+      "required": false,
+      "default": ""
     },
     "MCP_LOG_LEVEL": {
       "title": "Log Level",
