@@ -55,7 +55,7 @@ export const getLegalDocument = tool('openfec_get_legal_document', {
     {
       reason: 'legal_document_not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'No legal document exists at the requested doc_type and no',
+      when: 'No legal document exists at the requested doc_type and document number',
       recovery:
         "Confirm doc_type is the plural form of the search result document_type and that no is copied from that result's no field; openfec_search_legal returns both.",
     },
