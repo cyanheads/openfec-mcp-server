@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.8.1](changelog/0.8.x/0.8.1.md) — 2026-09-19
+
+mcp-ts-core ^0.13.6: stateless session posture, structured argument-rejection errors, and case-insensitive parameter aliasing
+
 ## [0.8.0](changelog/0.8.x/0.8.0.md) — 2026-08-30 · ⚠️ Breaking
 
 OpenFEC tools now reject explicit inputs their resolved endpoints would ignore, with fixed-width ID and range validation before dispatch
