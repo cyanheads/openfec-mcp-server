@@ -20,7 +20,8 @@ vi.mock('@/config/server-config.js', () => ({
   }),
 }));
 
-vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
+vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   fetchWithTimeout: vi.fn(),
   withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
@@ -300,11 +301,24 @@ describe('getLegalDocument', () => {
   });
 
   it('propagates an upstream 500 rather than reporting it as missing', async () => {
+    // No HTTP status maps to InternalError — 500 classifies ServiceUnavailable
+    // like the rest of the 5xx range.
     mockFetch.mockRejectedValueOnce(
-      new McpError(JsonRpcErrorCode.InternalError, 'Fetch failed. Status: 500', { status: 500 }),
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Fetch failed. Status: 500', {
+        status: 500,
+      }),
     );
 
-    await expect(svc.getLegalDocument('murs', '7226', ctx)).rejects.toThrow(/500/);
+    let caught: unknown;
+    try {
+      await svc.getLegalDocument('murs', '7226', ctx);
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(McpError);
+    expect((caught as McpError).code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect((caught as McpError).message).toMatch(/500/);
   });
 
   it('rejects a non-object body as an upstream error page', async () => {

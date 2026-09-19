@@ -7,7 +7,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
-import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { defaultIsTransient, fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import type {
   ElectionSummary,
@@ -833,24 +833,24 @@ function rethrowSanitized(err: unknown): never {
 /*  Transient error classification                                    */
 /* ------------------------------------------------------------------ */
 
-/** Error codes the framework assigns to retryable upstream failures. */
-const TRANSIENT_ERROR_CODES: ReadonlySet<number> = new Set([
-  JsonRpcErrorCode.Timeout,
-  JsonRpcErrorCode.ServiceUnavailable,
-  JsonRpcErrorCode.RateLimited,
-]);
-
 /**
  * Classify errors as transient for retry purposes.
  *
- * A structured `McpError` is classified by code — `fetchWithTimeout` maps
- * timeouts, 429s, and 5xx responses onto the transient set before this runs.
+ * A structured `McpError` is handed to the framework's own `defaultIsTransient`
+ * — `fetchWithTimeout` maps timeouts, 429s, and 5xx responses onto the transient
+ * set before this runs, and delegating keeps that set from being mirrored here,
+ * where it would drift. Delegating also honors the in-band `data.retryable:
+ * false` opt-out, which is what keeps a 501 out of the ladder now that it
+ * classifies `ServiceUnavailable` like every other 5xx.
+ *
  * The message heuristics below only cover errors that never reached the
  * framework's classifier (raw socket failures, upstream HTML error pages).
+ * `withRetry`'s `isTransient` replaces the default outright, so a plain `Error`
+ * reaches them rather than being assumed transient.
  */
 function isTransientFecError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
-  if (error instanceof McpError && TRANSIENT_ERROR_CODES.has(error.code)) return true;
+  if (error instanceof McpError) return defaultIsTransient(error);
   const msg = 'message' in error ? String((error as { message: string }).message) : '';
   if (msg.includes('ServiceUnavailable') || msg.includes('503') || msg.includes('502')) return true;
   if (msg.includes('429') || msg.includes('OVER_RATE_LIMIT') || msg.includes('rate limit')) {

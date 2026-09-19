@@ -17,8 +17,11 @@ vi.mock('@/config/server-config.js', () => ({
   }),
 }));
 
-// Mock fetchWithTimeout and withRetry from the framework utils
-vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
+// Mock fetchWithTimeout and withRetry from the framework utils. Everything else
+// stays real so the service's transient classifier runs against the framework's
+// own `defaultIsTransient` rather than a stub of it.
+vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   fetchWithTimeout: vi.fn(),
   withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
@@ -653,6 +656,22 @@ describe('isTransientFecError', () => {
   it('does not retry a deterministic upstream rejection', async () => {
     const isTransient = await classify();
     expect(isTransient(new McpError(JsonRpcErrorCode.ValidationError, 'Status: 422'))).toBe(false);
+  });
+
+  /**
+   * A 501 classifies `ServiceUnavailable` alongside the rest of the 5xx range,
+   * so the in-band `data.retryable: false` the framework sets is the only thing
+   * keeping a method the upstream does not implement out of the retry ladder.
+   */
+  it('honors the retryable:false opt-out on an otherwise transient code', async () => {
+    const isTransient = await classify();
+    expect(
+      isTransient(
+        new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Fetch failed. Status: 501', {
+          retryable: false,
+        }),
+      ),
+    ).toBe(false);
   });
 
   it('still classifies raw socket failures by message', async () => {

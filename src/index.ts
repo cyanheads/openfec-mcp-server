@@ -23,6 +23,10 @@ await createApp({
     // Public hosted catalog — serve full tool/resource/prompt inventory without auth
     requireAuth: false,
   },
+  // Every tool and resource is a one-shot read of the public OpenFEC API — nothing
+  // here asks the caller for input mid-handler, so there is no per-session state
+  // worth holding. MCP_SESSION_MODE still wins when it carries a value.
+  sessionMode: 'stateless',
   // The discovery surface only changes when this server is redeployed, so a
   // 2026-07-28 client may hold it for an hour. `resources/read` is left unset
   // (no caching): every resource proxies live FEC data.

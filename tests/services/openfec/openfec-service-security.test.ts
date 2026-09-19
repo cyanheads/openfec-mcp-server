@@ -18,7 +18,8 @@ vi.mock('@/config/server-config.js', () => ({
   }),
 }));
 
-vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
+vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   fetchWithTimeout: vi.fn(),
   withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));

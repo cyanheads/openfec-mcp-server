@@ -55,11 +55,23 @@ describe('getServerConfig', () => {
     expect(getServerConfig().fecApiKey).toBe('DEMO_KEY');
   });
 
-  it('passes through empty FEC_API_KEY', async () => {
+  it('reads an empty FEC_API_KEY as unset and falls back to DEMO_KEY', async () => {
     process.env.FEC_API_KEY = '';
 
     const { getServerConfig } = await loadModule();
-    expect(getServerConfig().fecApiKey).toBe('');
+    expect(getServerConfig().fecApiKey).toBe('DEMO_KEY');
+  });
+
+  /**
+   * An install-time host (MCPB, a plugin manifest) that never substitutes a
+   * placeholder hands the server the literal text. Built without a
+   * template-literal-shaped string so Biome's noTemplateCurlyInString stays quiet.
+   */
+  it('reads an unsubstituted placeholder FEC_API_KEY as unset and falls back to DEMO_KEY', async () => {
+    process.env.FEC_API_KEY = ['$', '{', 'user_config.fec_api_key', '}'].join('');
+
+    const { getServerConfig } = await loadModule();
+    expect(getServerConfig().fecApiKey).toBe('DEMO_KEY');
   });
 
   it('throws when FEC_REQUEST_TIMEOUT is below minimum', async () => {
