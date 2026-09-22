@@ -269,24 +269,46 @@ describe('OpenFecService', () => {
     vi.restoreAllMocks();
   });
 
-  const pageEnvelope = <T>(results: T[], count = 1, page = 1, pages = 1) => ({
+  /**
+   * `exact` mirrors the upstream `is_count_exact` flag: omit it to build the
+   * envelope OpenFEC sends when it declares nothing, which must stay distinct
+   * from an explicit `false`.
+   */
+  const pageEnvelope = <T>(results: T[], count = 1, page = 1, pages = 1, exact?: boolean) => ({
     json: () =>
       Promise.resolve({
         api_version: '1.0',
-        pagination: { count, page, pages, per_page: 20 },
+        pagination: {
+          count,
+          page,
+          pages,
+          per_page: 20,
+          ...(exact === undefined ? {} : { is_count_exact: exact }),
+        },
         results,
       }),
   });
 
+  /**
+   * `perPage` decides whether the fixture is a full page or a short one — the
+   * signal the cursor decision reads — so a one-row full page is built with
+   * `perPage: 1`.
+   */
   const seekEnvelope = <T>(
     results: T[],
-    lastIndexes: Record<string, string | number> | undefined,
+    lastIndexes: Record<string, string | number> | null | undefined,
     count = 1,
+    { perPage = 20, exact }: { perPage?: number; exact?: boolean } = {},
   ) => ({
     json: () =>
       Promise.resolve({
         api_version: '1.0',
-        pagination: { count, per_page: 20, last_indexes: lastIndexes },
+        pagination: {
+          count,
+          per_page: perPage,
+          last_indexes: lastIndexes,
+          ...(exact === undefined ? {} : { is_count_exact: exact }),
+        },
         results,
       }),
   });
@@ -309,6 +331,23 @@ describe('OpenFecService', () => {
       expect(url).toContain('api_key=DEMO_KEY');
       expect(url).toContain('q=Harris');
       expect(url).toContain('state=CA');
+    });
+
+    it.each([
+      ['an exact count', true],
+      ['an inexact count', false],
+    ])('carries %s through to the page result', async (_label, exact) => {
+      mockFetch.mockResolvedValueOnce(pageEnvelope([], 500, 1, 25, exact) as never);
+
+      const result = await svc.searchCandidates({}, ctx);
+      expect(result.pagination.is_count_exact).toBe(exact);
+    });
+
+    it('leaves is_count_exact absent when upstream omits it', async () => {
+      mockFetch.mockResolvedValueOnce(pageEnvelope([], 500, 1, 25) as never);
+
+      const result = await svc.searchCandidates({}, ctx);
+      expect(result.pagination).toStrictEqual({ page: 1, pages: 25, count: 500, per_page: 20 });
     });
   });
 
@@ -352,6 +391,7 @@ describe('OpenFecService', () => {
           contributions,
           { last_index: '99', last_contribution_receipt_date: '2024-06-01' },
           50,
+          { perPage: 1 },
         ) as never,
       );
 
@@ -378,12 +418,106 @@ describe('OpenFecService', () => {
       expect(result.nextCursor).toBeNull();
     });
 
+    /** The page past the last row: upstream sends `last_indexes: null`, not an omitted key. */
+    it('returns null nextCursor when last_indexes is null on an empty page', async () => {
+      mockFetch.mockResolvedValueOnce(seekEnvelope([], null, 9) as never);
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.nextCursor).toBeNull();
+      expect(result.pagination.count).toBe(9);
+    });
+
+    it('returns null nextCursor on a short page, even with last_indexes populated', async () => {
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope([{ amount: 100 }], { last_index: '99' }, 50, { perPage: 20 }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it('mints a cursor on a full page', async () => {
+      const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(rows, { last_index: '99' }, 50, { perPage: 3 }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.nextCursor).toBeTruthy();
+    });
+
+    it('falls back to a page size of 20 when upstream omits per_page', async () => {
+      const rows = Array.from({ length: 20 }, (_, i) => ({ amount: i }));
+      mockFetch.mockResolvedValueOnce({
+        json: () =>
+          Promise.resolve({
+            api_version: '1.0',
+            pagination: { count: 50, last_indexes: { last_index: '99' } },
+            results: rows,
+          }),
+      } as never);
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.pagination.per_page).toBe(20);
+      expect(result.nextCursor).toBeTruthy();
+    });
+
+    it('returns null nextCursor when an exact count fits the page just returned', async () => {
+      const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(rows, { last_index: '99' }, 3, { perPage: 3, exact: true }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it('mints a cursor on a full page whose count is inexact', async () => {
+      const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(rows, { last_index: '99' }, 3, { perPage: 3, exact: false }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.nextCursor).toBeTruthy();
+    });
+
+    it('mints a cursor on a full page when upstream declares no exactness', async () => {
+      const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(rows, { last_index: '99' }, 3, { perPage: 3 }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.nextCursor).toBeTruthy();
+    });
+
+    it.each([
+      ['an exact count', true],
+      ['an inexact count', false],
+    ])('carries %s through to the seek result', async (_label, exact) => {
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope([{ amount: 100 }], undefined, 500, { exact }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.pagination.is_count_exact).toBe(exact);
+    });
+
+    it('leaves is_count_exact absent when upstream omits it', async () => {
+      mockFetch.mockResolvedValueOnce(seekEnvelope([{ amount: 100 }], undefined, 500) as never);
+
+      const result = await svc.searchContributions({}, QUERY, ctx);
+      expect(result.pagination).toStrictEqual({ count: 500, per_page: 20 });
+    });
+
     it('round-trips a numeric last_index value (Schedule E office_total_ytd)', async () => {
       mockFetch.mockResolvedValueOnce(
         seekEnvelope(
           [{ expenditure_amount: 100 }],
           { last_index: '4060220251204384181', last_office_total_ytd: 503313627.73 },
           2,
+          { perPage: 1 },
         ) as never,
       );
 
@@ -401,7 +535,7 @@ describe('OpenFecService', () => {
         sort: '-contribution_receipt_amount',
       });
       mockFetch.mockResolvedValueOnce(
-        seekEnvelope([{ amount: 100 }], { last_index: '7' }, 2) as never,
+        seekEnvelope([{ amount: 100 }], { last_index: '7' }, 2, { perPage: 1 }) as never,
       );
 
       const result = await svc.searchContributions({ committee_id: 'C00431056' }, issued, ctx);

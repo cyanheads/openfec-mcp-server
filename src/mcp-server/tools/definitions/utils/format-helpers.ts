@@ -6,6 +6,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import type { PageResult } from '@/services/openfec/types.js';
 
 /**
  * Pagination params excluded from the search criteria echo — they address a
@@ -31,16 +32,16 @@ export function buildSearchCriteria(input: Record<string, unknown>): Record<stri
 }
 
 /**
- * Render an empty-result format block with echoed search criteria and a
- * domain-specific suggestion. Used by all tool format() functions.
- * `mode` is the resolved query mode for multi-mode tools; omit it elsewhere.
+ * Render a zero-result block: a headline, the resolved mode for multi-mode
+ * tools, the echoed criteria, and a closing line.
  */
-export function formatEmptyResult(
+function formatNoRows(
+  headline: string,
   criteria: Record<string, unknown> | undefined,
-  hint: string,
+  closing: string,
   mode?: string,
 ): { type: 'text'; text: string }[] {
-  const lines: string[] = ['No results found.'];
+  const lines: string[] = [headline];
 
   if (mode) lines.push('', `**Mode:** ${mode}`);
 
@@ -52,8 +53,107 @@ export function formatEmptyResult(
     }
   }
 
-  lines.push('', hint);
+  lines.push('', closing);
   return [{ type: 'text', text: lines.join('\n') }];
+}
+
+/**
+ * Render an empty-result format block with echoed search criteria and a
+ * domain-specific suggestion, for a query that genuinely matched nothing. A
+ * request that landed past the end of a nonzero result set uses
+ * `formatExhaustedResult` instead. `mode` is the resolved query mode for
+ * multi-mode tools; omit it elsewhere.
+ */
+export function formatEmptyResult(
+  criteria: Record<string, unknown> | undefined,
+  hint: string,
+  mode?: string,
+): { type: 'text'; text: string }[] {
+  return formatNoRows('No results found.', criteria, hint, mode);
+}
+
+/**
+ * A requested position that lies past the end of a result set which did match
+ * rows. One variant per pagination model: page-based, keyset cursor, and the
+ * `from_hit` offset legal search exposes.
+ */
+export type ExhaustedPosition =
+  | { kind: 'page'; page: number; pages: number; count: number }
+  | { kind: 'cursor'; count: number }
+  | { kind: 'offset'; total_count: number };
+
+/**
+ * State an exhausted position in one line: which position ran out, the total
+ * that still matched, and how to get back to readable rows. Both surfaces use
+ * it — `structuredContent.notice` and the `content[]` block — so a caller
+ * never sees one of them describe a zero match the other contradicts.
+ */
+export function describeExhaustedPosition(position: ExhaustedPosition): string {
+  switch (position.kind) {
+    case 'page':
+      return `Page ${position.page} is past the last page of this result set — ${position.count} total across ${position.pages} page(s). Request page ${position.pages} or lower to read them.`;
+    case 'cursor':
+      return `This pagination cursor resumed past the last matching row — ${position.count} total matched. Omit cursor to read the result set from its first page.`;
+    case 'offset':
+      return `from_hit is past the end of the matching documents — ${position.total_count} total matched across all document types. Lower from_hit: it offsets within each document type's own list, while the total sums across types.`;
+  }
+}
+
+/**
+ * Decide whether a page-based response is an exhausted position rather than a
+ * zero match: upstream answers 200 with an empty array, echoes the requested
+ * page, and keeps `pages` and `count` correct. Returns null for a query that
+ * genuinely matched nothing.
+ */
+export function exhaustedPage(
+  pagination: { page: number; pages: number; count: number },
+  rows: number,
+): Extract<ExhaustedPosition, { kind: 'page' }> | null {
+  if (rows > 0 || pagination.count === 0 || pagination.page <= pagination.pages) return null;
+  const { page, pages, count } = pagination;
+  return { kind: 'page', page, pages, count };
+}
+
+/**
+ * Exhausted-position test for a schedule tool's empty output, whose itemized
+ * branch paginates by keyset — a bare `count`, no page number — while its
+ * aggregate branches paginate by page. A nonzero total with no rows is past the
+ * end of the result set under either model: a cursor only exists once a page
+ * carried rows, so the cursor that produced this page is what ran out.
+ */
+export function exhaustedSchedule(result: {
+  count?: number | undefined;
+  pagination?: { page: number; pages: number; count: number } | undefined;
+}): ExhaustedPosition | null {
+  if (result.pagination) return exhaustedPage(result.pagination, 0);
+  if (!result.count) return null;
+  return { kind: 'cursor', count: result.count };
+}
+
+/**
+ * Notice for a response whose upstream count is an estimate. The framework's
+ * `total` enrichment renders `**N total**` from the bare number, so this is
+ * what tells the reader of `content[]` that the figure is not a tally.
+ */
+export const APPROXIMATE_COUNT_NOTICE =
+  'The total is an upstream estimate, not a tally — treat it as an order of magnitude, not a figure to quote.';
+
+/**
+ * Render a block for a request that landed past the end of a nonzero result
+ * set. Mirrors `formatEmptyResult`'s layout but names the exhausted position
+ * and preserves the total instead of suggesting the search be broadened.
+ */
+export function formatExhaustedResult(
+  criteria: Record<string, unknown> | undefined,
+  position: ExhaustedPosition,
+  mode?: string,
+): { type: 'text'; text: string }[] {
+  return formatNoRows(
+    'No results at this position.',
+    criteria,
+    describeExhaustedPosition(position),
+    mode,
+  );
 }
 
 /**
@@ -84,15 +184,55 @@ export const fmt$ = (n: unknown): string =>
 export const str = (rec: Record<string, unknown>, key: string): string =>
   typeof rec[key] === 'string' ? (rec[key] as string) : '';
 
-/** Reusable page-based pagination output schema. */
+/**
+ * Reusable page-based pagination output schema.
+ *
+ * `count_is_approximate` is positive-polarity and present only when OpenFEC
+ * declared the count inexact, so an exact count — and one whose exactness
+ * upstream never declared — renders identically on both surfaces.
+ */
 export const PaginationSchema = z
   .object({
     page: z.number().describe('Current page number (1-indexed).'),
     pages: z.number().describe('Total number of pages.'),
     count: z.number().describe('Total result count.'),
     per_page: z.number().describe('Results per page.'),
+    count_is_approximate: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when OpenFEC reports this count as an estimate rather than a tally, which it does on its highest-volume datasets. Absent means the count is a tally. An estimated count — and the pages derived from it — can be off by a wide margin; treat it as an order of magnitude, not a figure to quote.',
+      ),
   })
   .describe('Page-based pagination metadata.');
+
+/**
+ * The `count_is_approximate` fragment for a normalized pagination block. Only
+ * an explicit upstream `is_count_exact: false` sets it: OpenFEC declares the
+ * flag optional, and reading an absent one as `false` would label a tallied
+ * count an estimate.
+ */
+export function approximateCount(pagination: { is_count_exact?: boolean }): {
+  count_is_approximate?: true;
+} {
+  return pagination.is_count_exact === false ? { count_is_approximate: true } : {};
+}
+
+/** Map a service pagination block onto the page-based tool output shape. */
+export function toPagination(
+  pagination: PageResult['pagination'],
+): z.infer<typeof PaginationSchema> {
+  const { page, pages, count, per_page } = pagination;
+  return { page, pages, count, per_page, ...approximateCount(pagination) };
+}
+
+/**
+ * Render a result total. An approximate count is marked as one so it is not
+ * read as a tally; an exact or undeclared count renders bare.
+ */
+export function fmtTotal(count: number, approximate?: boolean, unit = 'total'): string {
+  return approximate ? `≈${count} ${unit} (approximate)` : `${count} ${unit}`;
+}
 
 /**
  * Render all non-empty fields from a record as indented `key: value` lines.

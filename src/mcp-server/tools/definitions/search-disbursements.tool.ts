@@ -14,12 +14,20 @@ import {
 import type { FecParams } from '@/services/openfec/types.js';
 import { currentCycle } from './utils/election-cycle.js';
 import {
+  APPROXIMATE_COUNT_NOTICE,
+  approximateCount,
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  exhaustedSchedule,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
@@ -189,7 +197,18 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .describe(
         'Pagination cursor for the next page of itemized results. Null when no more pages.',
       ),
-    count: z.number().optional().describe('Total result count (may be approximate for itemized).'),
+    count: z
+      .number()
+      .optional()
+      .describe(
+        'Total matching disbursements (itemized mode). Check count_is_approximate before quoting it as a figure.',
+      ),
+    count_is_approximate: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when OpenFEC reports count as an estimate rather than a tally, which it does on its highest-volume queries. Absent means the count is a tally.',
+      ),
     pagination: PaginationSchema.optional().describe(
       'Page-based pagination info (aggregate modes only).',
     ),
@@ -202,7 +221,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .string()
       .optional()
       .describe(
-        'Guidance when no disbursements matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when disbursements did match, or that the total is an estimate.',
       ),
   },
 
@@ -285,8 +304,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       ctx.enrich.total(result.pagination.count);
       if (result.results.length === 0) {
         ctx.enrich.notice(
-          'No itemized disbursements matched. Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
+          result.pagination.count > 0
+            ? describeExhaustedPosition({ kind: 'cursor', count: result.pagination.count })
+            : 'No itemized disbursements matched. Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
         );
+      } else if (result.pagination.is_count_exact === false) {
+        ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
       }
 
       /** committee_id is required here, so every row carries the same committee. */
@@ -300,6 +323,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
+        ...approximateCount(result.pagination),
         search_criteria: buildSearchCriteria(applied),
       };
     }
@@ -341,7 +365,10 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     });
 
     ctx.enrich.total(result.pagination.count);
-    if (result.results.length === 0) {
+    const exhausted = exhaustedPage(result.pagination, result.results.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (result.results.length === 0) {
       ctx.enrich.notice(
         'No disbursement aggregates matched. Verify the committee_id is correct and the cycle is set correctly.',
       );
@@ -350,13 +377,17 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
     return {
       results: result.results,
       mode,
-      pagination: result.pagination,
+      pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
+      const exhausted = exhaustedSchedule(result);
+      if (exhausted) {
+        return formatExhaustedResult(result.search_criteria, exhausted, result.mode);
+      }
       return formatEmptyResult(
         result.search_criteria,
         'Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
@@ -372,7 +403,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
     if (isItemized) {
       if (result.count != null) {
-        lines.push(`**${result.count} total disbursements**\n`);
+        lines.push(
+          `**${fmtTotal(result.count, result.count_is_approximate, 'total disbursements')}**\n`,
+        );
       }
       for (const r of result.results) {
         const name = String(r.recipient_name ?? 'Unknown');
@@ -389,7 +422,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
 
     if (result.pagination) {
       const p = result.pagination;
-      lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
+      lines.push(
+        `\n_Page ${p.page} of ${p.pages} · ${fmtTotal(p.count, p.count_is_approximate)} · ${p.per_page} per page_`,
+      );
     }
 
     const criteria = formatSearchCriteria(result.search_criteria);

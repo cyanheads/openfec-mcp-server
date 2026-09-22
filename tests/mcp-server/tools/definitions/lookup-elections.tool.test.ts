@@ -428,4 +428,41 @@ describe('lookupElectionsTool', () => {
       expect(text).toContain('_Search criteria: office=S · cycle=2024_');
     });
   });
+
+  describe('exhausted position', () => {
+    it('reports a page past the end as exhausted on both surfaces', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { page: 4, pages: 2, count: 31, per_page: 20 },
+        results: [],
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024, page: 4 });
+      const result = await lookupElectionsTool.handler(input, ctx);
+
+      expect(result.pagination).toMatchObject({ page: 4, pages: 2, count: 31 });
+      expect(getEnrichment(ctx).notice).toContain('Page 4 is past the last page');
+      expect(getEnrichment(ctx).notice).not.toContain('No election races matched');
+
+      const text = formatText(lookupElectionsTool.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('31 total');
+      expect(text).not.toContain('No results found');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'P', cycle: 2024 });
+      const result = await lookupElectionsTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No election races matched');
+
+      const text = formatText(lookupElectionsTool.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
 });

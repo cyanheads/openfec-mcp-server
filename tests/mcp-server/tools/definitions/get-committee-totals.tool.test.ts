@@ -357,4 +357,80 @@ describe('getCommitteeTotals', () => {
       expect(text).toContain('entity_type: ie-only');
     });
   });
+
+  describe('exhausted position', () => {
+    it('returns a past-the-end single-mode page as a result, not a not-found error', async () => {
+      mockService.getCommitteeTotals.mockResolvedValueOnce({
+        pagination: { page: 99, pages: 1, count: 1, per_page: 20 },
+        results: [],
+      });
+
+      const input = getCommitteeTotals.input.parse({ committee_id: 'C00703975', page: 99 });
+      const result = await getCommitteeTotals.handler(input, ctx);
+
+      expect(result.pagination).toMatchObject({ page: 99, pages: 1, count: 1 });
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toContain('Page 99 is past the last page');
+
+      const text = formatText(getCommitteeTotals.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('1 total');
+      expect(text).not.toContain('No results found');
+    });
+
+    it('still throws committee_totals_not_found for a genuine miss', async () => {
+      mockService.getCommitteeTotals.mockResolvedValueOnce({
+        pagination: { page: 99, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const input = getCommitteeTotals.input.parse({ committee_id: 'C99999999', page: 99 });
+      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      );
+
+      expect((err as McpError).data).toMatchObject({ reason: 'committee_totals_not_found' });
+    });
+
+    it('reports a past-the-end by_entity_type page as exhausted', async () => {
+      mockService.getCommitteeTotalsByEntityType.mockResolvedValueOnce({
+        pagination: { page: 8, pages: 3, count: 47, per_page: 20 },
+        results: [],
+      });
+
+      const input = getCommitteeTotals.input.parse({
+        mode: 'by_entity_type',
+        entity_type: 'pac',
+        page: 8,
+      });
+      const result = await getCommitteeTotals.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('Page 8 is past the last page');
+      expect(getEnrichment(ctx).notice).not.toContain('No committee totals matched');
+
+      const text = formatText(getCommitteeTotals.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('47 total');
+    });
+
+    it('keeps zero-match guidance when the grouped search matched nothing', async () => {
+      mockService.getCommitteeTotalsByEntityType.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const input = getCommitteeTotals.input.parse({
+        mode: 'by_entity_type',
+        entity_type: 'ie-only',
+        min_receipts: 999_999_999,
+      });
+      const result = await getCommitteeTotals.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No committee totals matched');
+
+      const text = formatText(getCommitteeTotals.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
 });

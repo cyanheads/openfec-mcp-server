@@ -307,6 +307,19 @@ export function assertKnownParams(path: string, params: FecParams): void {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Pagination normalization                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The upstream count-exactness flag as a spreadable fragment. An absent flag
+ * stays absent: OpenFEC declares `is_count_exact` optional, and defaulting it
+ * to `false` would label an exact count an estimate.
+ */
+function exactness(value: boolean | undefined): { is_count_exact?: boolean } {
+  return value === undefined ? {} : { is_count_exact: value };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Service class                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -366,6 +379,7 @@ export class OpenFecService {
               pages: body.pagination?.pages ?? 1,
               count: body.pagination?.count ?? body.results?.length ?? 0,
               per_page: body.pagination?.per_page ?? 20,
+              ...exactness(body.pagination?.is_count_exact),
             },
             results: body.results,
           };
@@ -404,14 +418,27 @@ export class OpenFecService {
           });
           const body = (await response.json()) as FecSeekEnvelope<T>;
           this.validateEnvelope(body);
-          const lastIndexes = body.pagination.last_indexes;
+          const { count, is_count_exact, last_indexes: lastIndexes } = body.pagination;
+          /** Optional in the upstream SeekInfo schema, and it decides whether a cursor is minted — same fallback fetchPage uses. */
+          const per_page = body.pagination.per_page ?? 20;
+          const rows = body.results.length;
+          /**
+           * OpenFEC populates `last_indexes` for the last row of every page,
+           * terminal pages included, so on its own it cannot say whether more
+           * rows exist. A page shorter than `per_page` is the end of the set,
+           * and so is a set an exact count says fits in the page just returned
+           * — the only cross-check available here, since the SEEK envelope
+           * carries no `page` to compare against `pages`.
+           */
+          const fitsOnePage = is_count_exact === true && count <= rows;
+          /** The page past the last row carries `last_indexes: null`, not an omitted key. */
           const hasMore =
-            lastIndexes && Object.keys(lastIndexes).length > 0 && body.results.length > 0;
+            lastIndexes != null &&
+            Object.keys(lastIndexes).length > 0 &&
+            rows >= per_page &&
+            !fitsOnePage;
           return {
-            pagination: {
-              count: body.pagination.count,
-              per_page: body.pagination.per_page,
-            },
+            pagination: { count, per_page, ...exactness(is_count_exact) },
             results: body.results,
             nextCursor: hasMore ? encodeCursor(lastIndexes, query) : null,
           };

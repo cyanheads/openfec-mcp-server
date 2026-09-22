@@ -930,4 +930,106 @@ describe('searchExpenditures', () => {
       expect(text).toContain('ROE, RICHARD');
     });
   });
+
+  describe('exhausted cursor', () => {
+    it('renders no more-results trailer on a terminal page', () => {
+      const blocks = searchExpenditures.format!({
+        results: [expenditureRecord()],
+        mode: 'itemized',
+        next_cursor: null,
+        count: 1,
+        search_criteria: { mode: 'itemized', cycle: 2024 },
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('More results available');
+      expect(text).not.toContain('next_cursor');
+    });
+
+    it('reports a spent cursor as exhausted on both surfaces', async () => {
+      const query = { mode: 'itemized', committee_id: 'C00111111' };
+      const cursor = cursorFor(query, { last_index: '999' });
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 9, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ ...query, cursor });
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(getEnrichment(ctx).totalCount).toBe(9);
+      expect(getEnrichment(ctx).notice).toContain('cursor resumed past the last matching row');
+      expect(getEnrichment(ctx).notice).not.toContain('No independent expenditures matched');
+
+      const text = formatText(searchExpenditures.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('9 total');
+      expect(text).not.toContain('No results found');
+      expect(text).not.toContain('broaden');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00111111',
+      });
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No independent expenditures matched');
+
+      const text = formatText(searchExpenditures.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
+
+  describe('approximate counts', () => {
+    it('marks an inexact itemized count as approximate on both surfaces', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1_601_546, per_page: 1, is_count_exact: false },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized', per_page: 1 });
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(result.count_is_approximate).toBe(true);
+      expect(formatText(searchExpenditures.format!(result))).toContain(
+        '≈1601546 total independent expenditures (approximate)',
+      );
+      expect(getEnrichment(ctx).notice).toContain('upstream estimate');
+    });
+
+    it.each([
+      ['an exact count', true],
+      ['a count whose exactness upstream never declared', undefined],
+    ])('renders %s as a plain total', async (_label, exact) => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: {
+          count: 144_800,
+          per_page: 20,
+          ...(exact === undefined ? {} : { is_count_exact: exact }),
+        },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchExpenditures.input.parse({ mode: 'itemized' });
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(result.count_is_approximate).toBeUndefined();
+
+      const text = formatText(searchExpenditures.format!(result));
+      expect(text).toContain('**144800 total independent expenditures**');
+      expect(text).not.toContain('approximate');
+    });
+  });
 });

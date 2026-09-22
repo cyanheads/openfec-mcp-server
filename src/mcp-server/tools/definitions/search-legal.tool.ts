@@ -11,12 +11,25 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import { validateRange } from './utils/range-validators.js';
+
+/**
+ * `/legal/search/` runs on OpenSearch, whose result window serves a request
+ * only while `from_hit + hits_returned <= 10000`, inclusive. Past it upstream
+ * answers 400 with a message naming OpenSearch rather than the window, so the
+ * sum is checked here instead.
+ */
+const RESULT_WINDOW = 10_000;
+
+/** The highest `from_hit` the window serves for a given page size. */
+const maxFromHit = (hitsReturned: number) => RESULT_WINDOW - hitsReturned;
 
 /**
  * Date parameters `/legal/search/` accepts, keyed by document type and then by
@@ -99,6 +112,13 @@ export const searchLegal = tool('openfec_search_legal', {
       recovery:
         'Pick a date_kind the type records: advisory_opinions has issue_date, request_date, document_date; murs and adrs have open_date, close_date, document_date; admin_fines has rtb_date and fd_date; statutes are not date-filterable.',
     },
+    {
+      reason: 'legal_window_exceeded',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'from_hit plus hits_returned exceeds the 10,000-result window the search index serves',
+      recovery:
+        'Lower from_hit or hits_returned so their sum is 10,000 or less. No document type holds enough records to reach that depth, so narrow the query with a type, a date bound, or search terms rather than paging further.',
+    },
   ],
 
   input: z.object({
@@ -148,15 +168,20 @@ export const searchLegal = tool('openfec_search_legal', {
       .number()
       .int()
       .min(0)
+      .max(RESULT_WINDOW - 1)
       .default(0)
-      .describe('Offset for pagination (0-indexed). Default 0.'),
+      .describe(
+        'Offset for pagination (0-indexed), counted within each document type rather than across them. Default 0. The search index serves a 10,000-result window, so from_hit plus hits_returned must be 10,000 or less — the ceiling here assumes hits_returned of 1.',
+      ),
     hits_returned: z
       .number()
       .int()
       .min(1)
       .max(200)
       .default(20)
-      .describe('Results per page. Default 20, max 200.'),
+      .describe(
+        'Results per page, applied per document type. Default 20, max 200. Bounded together with from_hit by the 10,000-result window.',
+      ),
   }),
 
   output: z.object({
@@ -181,7 +206,7 @@ export const searchLegal = tool('openfec_search_legal', {
       .string()
       .optional()
       .describe(
-        'Guidance when no legal documents matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response carries no legal documents: how to broaden a search that matched nothing, or that from_hit ran past the end when documents did match.',
       ),
     retrievalHint: z
       .string()
@@ -270,6 +295,21 @@ export const searchLegal = tool('openfec_search_legal', {
       valueType: 'date',
     });
 
+    if (input.from_hit + input.hits_returned > RESULT_WINDOW) {
+      throw ctx.fail(
+        'legal_window_exceeded',
+        `from_hit ${input.from_hit} with hits_returned ${input.hits_returned} reaches past the 10,000-result window this search serves.`,
+        {
+          from_hit: input.from_hit,
+          hits_returned: input.hits_returned,
+          max_from_hit: maxFromHit(input.hits_returned),
+          recovery: {
+            hint: `With hits_returned ${input.hits_returned}, from_hit can go no higher than ${maxFromHit(input.hits_returned)}. No document type holds enough records to reach that depth, so narrow the query with a type, a date bound, or search terms rather than paging further.`,
+          },
+        },
+      );
+    }
+
     const fec = getOpenFecService();
 
     const params: FecParams = {
@@ -337,7 +377,9 @@ export const searchLegal = tool('openfec_search_legal', {
     ctx.enrich.total(data.totalCount);
     if (trimmed.length === 0) {
       ctx.enrich.notice(
-        'No legal documents matched. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
+        data.totalCount > 0
+          ? describeExhaustedPosition({ kind: 'offset', total_count: data.totalCount })
+          : 'No legal documents matched. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
       );
     } else {
       ctx.enrich({
@@ -355,6 +397,12 @@ export const searchLegal = tool('openfec_search_legal', {
 
   format: (result) => {
     if (result.results.length === 0) {
+      if (result.total_count > 0) {
+        return formatExhaustedResult(result.search_criteria, {
+          kind: 'offset',
+          total_count: result.total_count,
+        });
+      }
       return formatEmptyResult(
         result.search_criteria,
         'Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',

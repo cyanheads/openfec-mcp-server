@@ -7,14 +7,19 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
-import type { FecParams } from '@/services/openfec/types.js';
+import type { FecParams, PageResult } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
+  toPagination,
 } from './utils/format-helpers.js';
 
 const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
@@ -153,7 +158,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .string()
       .optional()
       .describe(
-        'Guidance when no election results matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response carries no election results: how to broaden a search that matched nothing, or which requested position ran out when results did match.',
       ),
   },
 
@@ -259,39 +264,53 @@ export const lookupElections = tool('openfec_lookup_elections', {
       cycle: input.cycle,
       zip: input.zip,
     });
+    /**
+     * A page past the end of a nonzero result set is a position to correct,
+     * not a race that never happened — so it never gets the zero-match hint.
+     */
+    const noticeFor = (data: PageResult, zeroMatchNotice: string) => {
+      ctx.enrich.total(data.pagination.count);
+      const exhausted = exhaustedPage(data.pagination, data.results.length);
+      if (exhausted) {
+        ctx.enrich.notice(describeExhaustedPosition(exhausted));
+      } else if (data.results.length === 0) {
+        ctx.enrich.notice(zeroMatchNotice);
+      }
+    };
+
     if (input.zip) {
       const data = await fec.searchElectionsByZip(params, ctx);
-      ctx.enrich.total(data.pagination.count);
-      if (data.results.length === 0) {
-        ctx.enrich.notice(
-          'No election races found for this ZIP. Verify the cycle is an even year and the ZIP code is a valid US ZIP.',
-        );
-      }
+      noticeFor(
+        data,
+        'No election races found for this ZIP. Verify the cycle is an even year and the ZIP code is a valid US ZIP.',
+      );
       return {
         results: data.results,
         mode: 'search' as const,
-        pagination: data.pagination,
+        pagination: toPagination(data.pagination),
         search_criteria: buildSearchCriteria(input),
       };
     }
     params.election_full = electionFull;
     const data = await fec.searchElections(params, ctx);
-    ctx.enrich.total(data.pagination.count);
-    if (data.results.length === 0) {
-      ctx.enrich.notice(
-        'No election races matched. Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
-      );
-    }
+    noticeFor(
+      data,
+      'No election races matched. Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
+    );
     return {
       results: data.results,
       mode: 'search' as const,
-      pagination: data.pagination,
+      pagination: toPagination(data.pagination),
       search_criteria: buildSearchCriteria({ ...input, election_full: electionFull }),
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) {
+        return formatExhaustedResult(result.search_criteria, exhausted, result.mode);
+      }
       return formatEmptyResult(
         result.search_criteria,
         'Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.',
@@ -299,10 +318,10 @@ export const lookupElections = tool('openfec_lookup_elections', {
       );
     }
 
-    const { page, pages, count, per_page } = result.pagination;
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
     const criteriaLine = formatSearchCriteria(result.search_criteria);
     const footer = [
-      `\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`,
+      `\n_${fmtTotal(count, count_is_approximate, 'result(s)')} · page ${page}/${pages} · ${per_page} per page_`,
       criteriaLine,
     ]
       .filter(Boolean)

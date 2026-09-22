@@ -458,4 +458,98 @@ describe('searchLegalTool', () => {
       expect(formatText(blocks)).toContain('No results found');
     });
   });
+
+  describe('result window', () => {
+    it('declares a legal_window_exceeded contract entry', () => {
+      const reasons = searchLegalTool.errors?.map((entry) => entry.reason);
+      expect(reasons).toContain('legal_window_exceeded');
+    });
+
+    it.each([
+      [9999, 1],
+      [9998, 2],
+      [9995, 5],
+      [9980, 20],
+    ])(
+      'dispatches from_hit %i with hits_returned %i, summing to the window',
+      async (from, hits) => {
+        mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
+
+        const input = searchLegalTool.input.parse({
+          type: 'murs',
+          from_hit: from,
+          hits_returned: hits,
+        });
+        await searchLegalTool.handler(input, ctx);
+
+        expect(mockService.searchLegal).toHaveBeenCalledOnce();
+        const callArgs = mockService.searchLegal.mock.calls[0]![0];
+        expect(callArgs.from_hit).toBe(from);
+        expect(callArgs.hits_returned).toBe(hits);
+      },
+    );
+
+    it.each([
+      [9999, 2],
+      [9996, 5],
+      [9981, 20],
+    ])('rejects from_hit %i with hits_returned %i before dispatch', async (from, hits) => {
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        from_hit: from,
+        hits_returned: hits,
+      });
+      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({ reason: 'legal_window_exceeded' });
+      expect(err.message).toContain('10,000');
+      expect((err.data as { recovery: { hint: string } }).recovery.hint).toContain(
+        String(10_000 - hits),
+      );
+      expect(mockService.searchLegal).not.toHaveBeenCalled();
+    });
+
+    it('rejects a from_hit above the advertised ceiling at the schema', () => {
+      expect(() => searchLegalTool.input.parse({ type: 'murs', from_hit: 10_000 })).toThrow();
+      expect(searchLegalTool.input.parse({ type: 'murs', from_hit: 9999 }).from_hit).toBe(9999);
+    });
+  });
+
+  describe('exhausted offset', () => {
+    it('reports an offset past the end as exhausted on both surfaces', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 7670 });
+
+      const input = searchLegalTool.input.parse({
+        type: 'murs',
+        from_hit: 7670,
+        hits_returned: 5,
+      });
+      const result = await searchLegalTool.handler(input, ctx);
+
+      expect(result.total_count).toBe(7670);
+      expect(getEnrichment(ctx).totalCount).toBe(7670);
+      expect(getEnrichment(ctx).notice).toContain('from_hit is past the end');
+      expect(getEnrichment(ctx).notice).not.toContain('No legal documents matched');
+
+      const text = formatText(searchLegalTool.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('7670 total');
+      expect(text).not.toContain('No results found');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [], totalCount: 0 });
+
+      const input = searchLegalTool.input.parse({ query: 'nonexistent statute', from_hit: 40 });
+      const result = await searchLegalTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No legal documents matched');
+
+      const text = formatText(searchLegalTool.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
 });

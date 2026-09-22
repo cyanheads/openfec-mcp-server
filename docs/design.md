@@ -384,7 +384,7 @@ Search FEC filings and reports. Covers all disclosure documents: financial repor
 
 **Output:** Filing records with: `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `form_type`, `form_category`, `report_type`/`report_type_full`, `report_year`, `receipt_date`, `coverage_start_date`, `coverage_end_date`, `is_amended`, `most_recent`, `amendment_chain`, `total_receipts`, `total_disbursements`, `total_individual_contributions`, `cash_on_hand_beginning_period`, `cash_on_hand_end_period`, `debts_owed_by_committee`, `pdf_url`, `csv_url`, `fec_file_id`, `means_filed`, `pages`.
 
-**Pagination:** Page-based (but `is_count_exact` may be false on large result sets).
+**Pagination:** Page-based. `is_count_exact` comes back false on large result sets; the response then carries `pagination.count_is_approximate` and renders the total as approximate (decision 15).
 
 **Upstream endpoints:**
 - `/v1/filings/` — search with filters
@@ -449,8 +449,8 @@ Search FEC legal documents. Powered by OpenSearch with proximity search and high
 | `date_kind` | enum | No | Which date `min_date`/`max_date` bound: `issue_date`, `request_date`, `open_date`, `close_date`, `document_date`, `rtb_date`, `fd_date`. Must be one the chosen `type` records. Required alongside `type` whenever a bound is given. |
 | `min_date` | string | No | Earliest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
 | `max_date` | string | No | Latest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
-| `from_hit` | number | No | Offset for pagination (0-indexed). Default 0. |
-| `hits_returned` | number | No | Results per page. Default 20, max 200. |
+| `from_hit` | number | No | Offset for pagination (0-indexed), counted within each document type. Default 0, max 9999. Bounded with `hits_returned` by the upstream result window: `from_hit + hits_returned <= 10000` (decision 4). |
+| `hits_returned` | number | No | Results per page, applied per document type. Default 20, max 200. |
 
 **Output:** Varies by `type`:
 - *Advisory opinions:* `ao_no`, `name`, `summary`, `issue_date`, `request_date`, `status`, `requestor_names`, `regulatory_citations`, `statutory_citations`, `highlights`, `documents` (array with `url`, `filename`, `category`).
@@ -466,6 +466,7 @@ The server normalizes the type-keyed response arrays into a uniform `results` ar
 - No scoping filter at all → `ValidationError` (`missing_filter`). Any one of `query`, `type`, `ao_number`, `case_number`, `respondent`, `regulatory_citation`, `statutory_citation`, a penalty bound, or a date bound satisfies it.
 - A date bound without both `type` and `date_kind`, or a `date_kind` with neither bound → `ValidationError` (`date_filter_incomplete`).
 - A `date_kind` the chosen `type` does not record → `ValidationError` (`date_kind_not_valid_for_type`), carrying `valid_date_kinds`.
+- `from_hit + hits_returned` above 10,000 → `ValidationError` (`legal_window_exceeded`), carrying `max_from_hit` for the supplied page size.
 
 **Date parameters:** the endpoint has no generic date bound. Each document type carries its own prefix and its own set of dates, so `type` + `date_kind` together select the upstream pair:
 
@@ -691,6 +692,8 @@ Schedule A/B/E use keyset pagination with `last_indexes` containing multiple cur
 
 The encoded payload also carries the query that issued it — the tool name plus the caller's arguments, minus `cursor`, `page`, and `per_page` (none of them changes which rows the keyset walks — `page` addresses the page-based aggregate modes). `decodeCursor` validates the structure and compares that identity against the current call, because `last_indexes` keys are sort-specific and OpenFEC silently ignores keys that do not match the active sort: without the check, a cursor replayed under a changed sort or filter is accepted and restarts at page one with no signal. A malformed cursor fails as `invalid_cursor`; a valid cursor from a different query fails as `cursor_query_mismatch`, naming the arguments that changed. The identity is a generic serialization of the arguments rather than a per-field allowlist, so new filters and sort values need no matching change here.
 
+`last_indexes` alone cannot say whether a next page exists: OpenFEC populates it for the last row of every page, terminal pages included. A cursor is therefore minted only when the page could have a successor — `last_indexes` is populated, the page came back full (`results.length >= per_page`), and an exact count does not already account for every row returned (`is_count_exact === true && count <= results.length`). A short page ends the walk. The SEEK envelope carries no `page`, so `pages` is not a usable cross-check: there is no position to compare it against, and when the count is an estimate `pages` is derived from that estimate. A full page that happens to be terminal still mints a cursor — nothing in the envelope distinguishes it — and the empty page that follows reports an exhausted position (decision 14) rather than a search that matched nothing.
+
 ### 3. `two_year_transaction_period` abstraction
 
 The API requires `two_year_transaction_period` on Schedule A but not other schedules. The tool accepts `cycle` uniformly and the service layer maps it to the correct API parameter. No API quirk leaks to the agent.
@@ -698,6 +701,8 @@ The API requires `two_year_transaction_period` on Schedule A but not other sched
 ### 4. Legal search pagination exposed differently
 
 Legal search uses `from_hit`/`hits_returned` (offset-based, max 200) with type-keyed result arrays. This is different enough from both page-based and keyset pagination that it's simpler to expose the native model rather than force it into the cursor abstraction. The tool uses `from_hit` and `hits_returned` directly.
+
+Both ride the OpenSearch result window behind `/legal/search/`, which serves a request only while `from_hit + hits_returned <= 10000`, inclusive. Past it upstream answers 400 with `Opensearch failed to execute query` — a message that names the engine, not the window. The ceiling moves with the page size, so it cannot be expressed as a static `.max()` on its own: `from_hit` advertises the ceiling it has at `hits_returned: 1` (9999) and the sum is checked in the handler before dispatch, rejected as `legal_window_exceeded` with the largest `from_hit` the supplied page size allows. That follows decision 8 — reject an unservable input rather than spend the round trip on a 400 that misattributes the cause. No document type holds enough records to reach the window (the largest single-type total measured is 7,670 MURs), so a paging run runs out of documents first; this is about the advertised contract and the error text.
 
 ### 5. `_full` fields for LLM readability
 
@@ -739,13 +744,27 @@ Schedules A, B, and E paginate by keyset and are wrapped with the opaque cursor 
 
 Every exposed min/max date or numeric pair uses one handler-level validator. Dates must be real calendar dates in `YYYY-MM-DD` form, and a supplied minimum cannot exceed its maximum; equal bounds and one-sided ranges remain valid. Failures use stable `invalid_date` or `invalid_range` data with field/value context and a recovery hint, before any upstream call. Legal search resolves its existing incomplete-date and invalid-date-kind contracts first, because those errors explain how to select an upstream date pair before generic value validation applies.
 
+### 14. An exhausted position is reported as a position, not as a zero match
+
+A request can come back with no rows for two unrelated reasons: nothing matched the filters, or the filters matched plenty and the requested position sits past the end. Both used to render as "No results found" plus advice to broaden the search, while the same response reported a nonzero total — advice that cannot help, next to a number that contradicts it.
+
+The two are distinguishable from the response alone, per pagination model: page-based when `count > 0 && results.length === 0 && page > pages` (upstream answers 200, echoes the requested page, and keeps `pages` and `count` correct); keyset when a nonzero `count` comes back with no rows, which is the shape a cursor walking past the last row produces; and `from_hit` offsets when `total_count > 0` with no rows. `formatExhaustedResult` and the `notice` enrichment then state the same sentence: which position ran out, the total that still matched, and the way back — an earlier page, a lower `from_hit`, or dropping the cursor. Both surfaces read the same predicate, so `format()` and the `notice` enrichment never describe the same response differently. The predicates key on the position upstream reports, so a page whose `pages` was derived from an estimated count can still fall to the zero-match arm with a nonzero total.
+
+`openfec_get_committee_totals` mode `single` is the sharpest case: its `committee_totals_not_found` error exists for the 404 that decision 11 normalizes to an empty page, and a page past the end used to trip it, failing the call for a committee whose totals sit on page 1. The error is now reserved for a zero-count page; an exhausted page is an ordinary result.
+
+### 15. An estimated count is labelled as one
+
+OpenFEC reports `is_count_exact: false` on its highest-volume datasets — measured on `/schedules/schedule_a/`, `/schedules/schedule_b/`, `/schedules/schedule_e/` and `/filings/`, above a threshold bracketed between 156,863 and 1,429,442 rows — where `count` is an estimate and `pages` inherits its error. The service carries the flag verbatim through `PageResult` and `SeekResult`; an absent flag stays absent, since reading it as `false` would label a tallied count an estimate.
+
+Tools surface it as `count_is_approximate`, set only when upstream declared the count inexact, and `format()` then renders `≈N total (approximate)`. The polarity is deliberate: a positively-named flag that is simply absent for a tallied count keeps an exact response byte-identical on both surfaces, where an `is_count_exact: true` carried into the output would have to render a marker on every response to keep `structuredContent` and `content[]` in parity. The framework's `total` enrichment still renders a bare `**N total**` trailer from the number alone, so the four tools that measure inexact upstream also set the `notice` enrichment to say the total is an estimate. The static "may be approximate for itemized" caveat the three itemized tools used to carry on `count` is gone — it was wrong in both directions, hedging a `count: 1` terminal page while `openfec_search_filings` measured inexact with no caveat at all.
+
 ---
 
 ## Known Limitations
 
 - **Rate limits:** 1,000 requests/hour with a standard key. Complex multi-tool workflows can consume 5–10 requests per user interaction. Heavy use requires an elevated key.
 - **DEMO_KEY:** ~40 requests/hour. Barely functional for testing. Users need a real key.
-- **Approximate counts on high-volume endpoints:** Schedule A/B/E return `is_count_exact: false`. The `count` field is an estimate, not a precise total.
+- **Approximate counts on high-volume endpoints:** Schedule A/B/E and `/filings/` return `is_count_exact: false` above roughly a million rows. The `count` field is then an estimate, not a precise total, and `pages` inherits its error. Responses carry `count_is_approximate` and render the total as `≈N total (approximate)` when that happens (decision 15), but the estimate itself cannot be improved.
 - **Schedule A date range limitation:** The API does not support date ranges spanning multiple `two_year_transaction_period`s. Queries are scoped to a single cycle.
 - **Legal search vs. entity search:** Legal search is full-text, not entity-linked. Searching for a committee name may miss cases where the committee is referenced differently.
 - **Data freshness:** Nightly refresh for most data. E-filing data is near-real-time but only retained ~4 months and is excluded from this server's scope.
@@ -800,11 +819,14 @@ API key via query parameter `api_key` or header `X-Api-Key`. Keys from [api.data
       "last_index": "4121220241075839599",
       "last_contribution_receipt_date": "2024-01-15"
     },
+    "pages": 13195871,
     "per_page": 20
   },
   "results": [...]
 }
 ```
+
+`last_indexes` is populated on the last row of every page, so its presence says nothing about whether another page exists — the terminal page of a set carries it, and the empty page past the end carries `last_indexes: null`. The envelope also carries no `page`. See decision 2 for the signals the cursor decision reads instead.
 
 ### Legal Search Response
 

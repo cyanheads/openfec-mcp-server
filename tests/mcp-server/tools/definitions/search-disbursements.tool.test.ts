@@ -625,4 +625,113 @@ describe('searchDisbursements', () => {
       expect(text).toContain('SMITH, ANNA');
     });
   });
+
+  describe('exhausted cursor', () => {
+    it('renders no more-results trailer on a terminal page', () => {
+      const blocks = searchDisbursements.format!({
+        results: [disbursementRecord()],
+        mode: 'itemized',
+        next_cursor: null,
+        count: 1,
+        search_criteria: { mode: 'itemized', committee_id: 'C00703975' },
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('More results available');
+      expect(text).not.toContain('next_cursor');
+    });
+
+    it('reports a spent cursor as exhausted on both surfaces', async () => {
+      const query = { mode: 'itemized', committee_id: 'C00703975' };
+      const cursor = cursorFor(query, { last_index: '999' });
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 5, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({ ...query, cursor });
+      const result = await searchDisbursements.handler(input, ctx);
+
+      expect(getEnrichment(ctx).totalCount).toBe(5);
+      expect(getEnrichment(ctx).notice).toContain('cursor resumed past the last matching row');
+      expect(getEnrichment(ctx).notice).not.toContain('No itemized disbursements matched');
+
+      const text = formatText(searchDisbursements.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('5 total');
+      expect(text).not.toContain('No results found');
+      expect(text).not.toContain('broaden');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchDisbursements.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No itemized disbursements matched');
+
+      const text = formatText(searchDisbursements.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
+
+  describe('approximate counts', () => {
+    it('marks an inexact itemized count as approximate on both surfaces', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 157_672_929, per_page: 1, is_count_exact: false },
+        results: [disbursementRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        per_page: 1,
+      });
+      const result = await searchDisbursements.handler(input, ctx);
+
+      expect(result.count_is_approximate).toBe(true);
+      expect(formatText(searchDisbursements.format!(result))).toContain(
+        '≈157672929 total disbursements (approximate)',
+      );
+      expect(getEnrichment(ctx).notice).toContain('upstream estimate');
+    });
+
+    it.each([
+      ['an exact count', true],
+      ['a count whose exactness upstream never declared', undefined],
+    ])('renders %s as a plain total', async (_label, exact) => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: {
+          count: 97_818,
+          per_page: 20,
+          ...(exact === undefined ? {} : { is_count_exact: exact }),
+        },
+        results: [disbursementRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchDisbursements.handler(input, ctx);
+
+      expect(result.count_is_approximate).toBeUndefined();
+
+      const text = formatText(searchDisbursements.format!(result));
+      expect(text).toContain('**97818 total disbursements**');
+      expect(text).not.toContain('approximate');
+    });
+  });
 });

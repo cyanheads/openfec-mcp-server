@@ -7,11 +7,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
   fmt$,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   renderRecord,
   str,
+  toPagination,
 } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
 
 describe('buildSearchCriteria', () => {
@@ -112,6 +117,143 @@ describe('formatEmptyResult', () => {
 
   it('omits the mode line for single-mode tools', () => {
     expect(formatEmptyResult({ state: 'CA' }, 'Hint.')[0]!.text).not.toContain('**Mode:**');
+  });
+});
+
+describe('exhaustedPage', () => {
+  it('reports a page past the last one when the total is nonzero', () => {
+    expect(exhaustedPage({ page: 2, pages: 1, count: 1 }, 0)).toEqual({
+      kind: 'page',
+      page: 2,
+      pages: 1,
+      count: 1,
+    });
+  });
+
+  it('returns null when the page carries rows', () => {
+    expect(exhaustedPage({ page: 1, pages: 3, count: 50 }, 20)).toBeNull();
+  });
+
+  it('returns null for a genuine zero match, however high the page', () => {
+    expect(exhaustedPage({ page: 99, pages: 0, count: 0 }, 0)).toBeNull();
+  });
+
+  it('returns null on the last page itself', () => {
+    expect(exhaustedPage({ page: 3, pages: 3, count: 50 }, 0)).toBeNull();
+  });
+});
+
+describe('describeExhaustedPosition', () => {
+  it('names the page, the surviving total, and the last valid page', () => {
+    const text = describeExhaustedPosition({ kind: 'page', page: 2, pages: 1, count: 1 });
+    expect(text).toContain('Page 2');
+    expect(text).toContain('1 total');
+    expect(text).toContain('page 1');
+  });
+
+  it('reports a spent cursor and keeps the total', () => {
+    const text = describeExhaustedPosition({ kind: 'cursor', count: 1 });
+    expect(text).toContain('cursor');
+    expect(text).toContain('1 total');
+    expect(text).toContain('Omit cursor');
+  });
+
+  it('names from_hit and keeps the total for an offset past the end', () => {
+    const text = describeExhaustedPosition({ kind: 'offset', total_count: 7670 });
+    expect(text).toContain('from_hit');
+    expect(text).toContain('7670 total');
+  });
+
+  it('never suggests broadening the search', () => {
+    for (const position of [
+      { kind: 'page', page: 2, pages: 1, count: 1 },
+      { kind: 'cursor', count: 1 },
+      { kind: 'offset', total_count: 9 },
+    ] as const) {
+      expect(describeExhaustedPosition(position).toLowerCase()).not.toContain('broaden');
+    }
+  });
+});
+
+describe('formatExhaustedResult', () => {
+  it('states the position instead of reporting no match', () => {
+    const text = formatExhaustedResult(
+      { query: 'BIDEN' },
+      {
+        kind: 'page',
+        page: 2,
+        pages: 1,
+        count: 1,
+      },
+    )[0]!.text;
+
+    expect(text).toContain('No results at this position.');
+    expect(text).not.toContain('No results found.');
+    expect(text).toContain('1 total');
+  });
+
+  it('echoes the search criteria', () => {
+    const text = formatExhaustedResult({ state: 'CA' }, { kind: 'cursor', count: 4 })[0]!.text;
+    expect(text).toContain('**Search criteria used:**');
+    expect(text).toContain('state: CA');
+  });
+
+  it('renders the resolved mode when one is supplied', () => {
+    const text = formatExhaustedResult({}, { kind: 'cursor', count: 4 }, 'itemized')[0]!.text;
+    expect(text).toContain('**Mode:** itemized');
+  });
+
+  it('omits the mode line for single-mode tools', () => {
+    const text = formatExhaustedResult({}, { kind: 'offset', total_count: 4 })[0]!.text;
+    expect(text).not.toContain('**Mode:**');
+  });
+});
+
+describe('fmtTotal', () => {
+  it('renders a bare total when the count is exact', () => {
+    expect(fmtTotal(47, false)).toBe('47 total');
+  });
+
+  it('renders a bare total when exactness is unknown', () => {
+    expect(fmtTotal(47)).toBe('47 total');
+  });
+
+  it('marks an approximate count', () => {
+    expect(fmtTotal(2_623_224, true)).toBe('≈2623224 total (approximate)');
+  });
+
+  it('takes a caller-supplied unit', () => {
+    expect(fmtTotal(9, false, 'result(s)')).toBe('9 result(s)');
+    expect(fmtTotal(9, true, 'result(s)')).toBe('≈9 result(s) (approximate)');
+  });
+});
+
+describe('toPagination', () => {
+  it('flags an inexact count as approximate', () => {
+    expect(
+      toPagination({ page: 1, pages: 2, count: 2_623_224, per_page: 1, is_count_exact: false }),
+    ).toEqual({
+      page: 1,
+      pages: 2,
+      count: 2_623_224,
+      per_page: 1,
+      count_is_approximate: true,
+    });
+  });
+
+  it('carries no flag for an exact count', () => {
+    expect(
+      toPagination({ page: 1, pages: 1, count: 3, per_page: 20, is_count_exact: true }),
+    ).toStrictEqual({ page: 1, pages: 1, count: 3, per_page: 20 });
+  });
+
+  it('carries no flag when upstream declared no exactness', () => {
+    expect(toPagination({ page: 1, pages: 1, count: 3, per_page: 20 })).toStrictEqual({
+      page: 1,
+      pages: 1,
+      count: 3,
+      per_page: 20,
+    });
   });
 });
 

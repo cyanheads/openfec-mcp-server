@@ -15,12 +15,20 @@ import {
 import type { FecParams } from '@/services/openfec/types.js';
 import { currentCycle } from './utils/election-cycle.js';
 import {
+  APPROXIMATE_COUNT_NOTICE,
+  approximateCount,
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  exhaustedSchedule,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
@@ -256,7 +264,18 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Pagination cursor for the next page of itemized results. Null when no more pages.',
       ),
-    count: z.number().optional().describe('Total result count (may be approximate for itemized).'),
+    count: z
+      .number()
+      .optional()
+      .describe(
+        'Total matching independent expenditures (itemized mode). Check count_is_approximate before quoting it as a figure.',
+      ),
+    count_is_approximate: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when OpenFEC reports count as an estimate rather than a tally, which it does on its highest-volume queries. Absent means the count is a tally.',
+      ),
     pagination: PaginationSchema.optional().describe(
       'Page-based pagination info (by_candidate mode only).',
     ),
@@ -269,7 +288,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .string()
       .optional()
       .describe(
-        'Guidance when no expenditures matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, or that the total is an estimate.',
       ),
   },
 
@@ -372,8 +391,12 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       ctx.enrich.total(result.pagination.count);
       if (result.results.length === 0) {
         ctx.enrich.notice(
-          'No independent expenditures matched. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+          result.pagination.count > 0
+            ? describeExhaustedPosition({ kind: 'cursor', count: result.pagination.count })
+            : 'No independent expenditures matched. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
         );
+      } else if (result.pagination.is_count_exact === false) {
+        ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
       }
 
       /**
@@ -393,6 +416,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
+        ...approximateCount(result.pagination),
         search_criteria: buildSearchCriteria(applied),
       };
     }
@@ -452,7 +476,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     });
 
     ctx.enrich.total(result.pagination.count);
-    if (result.results.length === 0) {
+    const exhausted = exhaustedPage(result.pagination, result.results.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (result.results.length === 0) {
       ctx.enrich.notice(
         'No expenditures by candidate matched. Verify the candidate_id (or the office/state/district race scope) and the cycle are correct.',
       );
@@ -461,13 +488,17 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     return {
       results: result.results,
       mode: 'by_candidate' as const,
-      pagination: result.pagination,
+      pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
+      const exhausted = exhaustedSchedule(result);
+      if (exhausted) {
+        return formatExhaustedResult(result.search_criteria, exhausted, result.mode);
+      }
       return formatEmptyResult(
         result.search_criteria,
         'Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
@@ -483,7 +514,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
     if (isItemized) {
       if (result.count != null) {
-        lines.push(`**${result.count} total independent expenditures**\n`);
+        lines.push(
+          `**${fmtTotal(result.count, result.count_is_approximate, 'total independent expenditures')}**\n`,
+        );
       }
     }
     for (const r of result.results) {
@@ -499,7 +532,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
     if (result.pagination) {
       const p = result.pagination;
-      lines.push(`\n_Page ${p.page} of ${p.pages} · ${p.count} total · ${p.per_page} per page_`);
+      lines.push(
+        `\n_Page ${p.page} of ${p.pages} · ${fmtTotal(p.count, p.count_is_approximate)} · ${p.per_page} per page_`,
+      );
     }
 
     const criteria = formatSearchCriteria(result.search_criteria);

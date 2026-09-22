@@ -11,12 +11,17 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   str,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 
@@ -121,7 +126,7 @@ export const searchCommittees = tool('openfec_search_committees', {
       .string()
       .optional()
       .describe(
-        'Guidance when no committees matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response carries no committees: how to broaden a search that matched nothing, or which requested position ran out when committees did match.',
       ),
   },
 
@@ -179,7 +184,10 @@ export const searchCommittees = tool('openfec_search_committees', {
     }
 
     ctx.enrich.total(result.pagination.count);
-    if (result.results.length === 0) {
+    const exhausted = exhaustedPage(result.pagination, result.results.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (result.results.length === 0) {
       ctx.enrich.notice(
         'No committees matched. Try a partial name, remove type/designation filters, or search by candidate_id to find linked committees.',
       );
@@ -187,13 +195,15 @@ export const searchCommittees = tool('openfec_search_committees', {
 
     return {
       committees: result.results,
-      pagination: result.pagination,
+      pagination: toPagination(result.pagination),
       search_criteria: effectiveCriteria,
     };
   },
 
   format(result) {
     if (result.committees.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) return formatExhaustedResult(result.search_criteria, exhausted);
       return formatEmptyResult(
         result.search_criteria,
         'Try a partial name, remove type/designation filters, or search by candidate_id to find linked committees.',
@@ -210,8 +220,10 @@ export const searchCommittees = tool('openfec_search_committees', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
+    lines.push(
+      `\n---\nPage ${page} of ${pages} · ${fmtTotal(count, count_is_approximate)} · ${per_page} per page`,
+    );
 
     const criteria = formatSearchCriteria(result.search_criteria);
     if (criteria) lines.push(criteria);

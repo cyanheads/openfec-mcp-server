@@ -9,13 +9,19 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
+  APPROXIMATE_COUNT_NOTICE,
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   str,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
@@ -86,7 +92,9 @@ export const searchFilings = tool('openfec_search_filings', {
     notice: z
       .string()
       .optional()
-      .describe('Guidance when no filings matched — echoes filters and suggests how to broaden.'),
+      .describe(
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when filings did match, or that the total is an estimate.',
+      ),
   },
 
   async handler(input, ctx) {
@@ -127,21 +135,28 @@ export const searchFilings = tool('openfec_search_filings', {
     const result = await fec.searchFilings(params, ctx);
 
     ctx.enrich.total(result.pagination.count);
-    if (result.results.length === 0) {
+    const exhausted = exhaustedPage(result.pagination, result.results.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (result.results.length === 0) {
       ctx.enrich.notice(
         'No filings matched. Try removing the form_type or report_type filter, broadening the date range, or looking up the committee by name with openfec_search_committees.',
       );
+    } else if (result.pagination.is_count_exact === false) {
+      ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
     }
 
     return {
       results: result.results,
-      pagination: result.pagination,
+      pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };
   },
 
   format(result) {
     if (result.results.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) return formatExhaustedResult(result.search_criteria, exhausted);
       return formatEmptyResult(
         result.search_criteria,
         'Try removing the form_type or report_type filter, broadening the date range, or looking up the committee by name with openfec_search_committees.',
@@ -159,8 +174,10 @@ export const searchFilings = tool('openfec_search_filings', {
       return fields ? `${header}\n${fields}` : header;
     });
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
+    lines.push(
+      `\n---\nPage ${page} of ${pages} · ${fmtTotal(count, count_is_approximate)} · ${per_page} per page`,
+    );
 
     const criteria = formatSearchCriteria(result.search_criteria);
     if (criteria) lines.push(criteria);

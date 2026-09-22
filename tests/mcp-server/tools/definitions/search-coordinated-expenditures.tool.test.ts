@@ -270,4 +270,44 @@ describe('searchCoordinatedExpenditures', () => {
       expect(text).toContain('only party committees report Schedule F');
     });
   });
+
+  describe('exhausted position', () => {
+    it('reports a page past the end as exhausted on both surfaces', async () => {
+      mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
+        pagination: { page: 7, pages: 3, count: 52, per_page: 20 },
+        results: [],
+      });
+
+      const input = searchCoordinatedExpenditures.input.parse({
+        committee_id: 'C00003418',
+        page: 7,
+      });
+      const result = await searchCoordinatedExpenditures.handler(input, ctx);
+
+      expect(result.pagination).toMatchObject({ page: 7, pages: 3, count: 52 });
+      expect(getEnrichment(ctx).notice).toContain('Page 7 is past the last page');
+      expect(getEnrichment(ctx).notice).not.toContain('No coordinated party expenditures matched');
+
+      const text = formatText(searchCoordinatedExpenditures.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('52 total');
+      expect(text).not.toContain('No results found');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const input = searchCoordinatedExpenditures.input.parse({ committee_id: 'C00703975' });
+      const result = await searchCoordinatedExpenditures.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No coordinated party expenditures matched');
+
+      const text = formatText(searchCoordinatedExpenditures.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
 });

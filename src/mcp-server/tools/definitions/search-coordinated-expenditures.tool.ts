@@ -10,13 +10,18 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
   fmt$,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   str,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
@@ -96,7 +101,7 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       .string()
       .optional()
       .describe(
-        'Guidance when no coordinated expenditures matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response carries no coordinated expenditures: how to broaden a search that matched nothing, or which requested position ran out when expenditures did match.',
       ),
   },
 
@@ -141,7 +146,10 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
     const result = await fec.searchCoordinatedExpenditures(params, ctx);
 
     ctx.enrich.total(result.pagination.count);
-    if (result.results.length === 0) {
+    const exhausted = exhaustedPage(result.pagination, result.results.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (result.results.length === 0) {
       ctx.enrich.notice(
         'No coordinated party expenditures matched. Try a different cycle, drop the committee_id or candidate_id filter, or confirm the committee is a party committee — only party committees report Schedule F.',
       );
@@ -163,13 +171,15 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
     return {
       results: trimmed.results,
       ...(trimmed.committee ? { committee: trimmed.committee } : {}),
-      pagination: result.pagination,
+      pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) return formatExhaustedResult(result.search_criteria, exhausted);
       return formatEmptyResult(
         result.search_criteria,
         'Try a different cycle, drop the committee_id or candidate_id filter, or confirm the committee is a party committee — only party committees report Schedule F.',
@@ -187,8 +197,10 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       lines.push(fields ? `${header}\n${fields}` : header);
     }
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
+    lines.push(
+      `\n---\nPage ${page} of ${pages} · ${fmtTotal(count, count_is_approximate)} · ${per_page} per page`,
+    );
 
     const criteria = formatSearchCriteria(result.search_criteria);
     if (criteria) lines.push(criteria);

@@ -735,4 +735,115 @@ describe('searchContributions', () => {
       expect(text).toContain('SMITH, ANNA');
     });
   });
+
+  describe('exhausted cursor', () => {
+    it('renders no more-results trailer on a terminal page', () => {
+      const blocks = searchContributions.format!({
+        results: [contributionRecord()],
+        mode: 'itemized',
+        next_cursor: null,
+        count: 1,
+        search_criteria: { mode: 'itemized', committee_id: 'C00703975' },
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('More results available');
+      expect(text).not.toContain('next_cursor');
+    });
+
+    it('reports a spent cursor as exhausted on both surfaces', async () => {
+      const query = { mode: 'itemized', committee_id: 'C00703975' };
+      const cursor = cursorFor(query, { last_index: '999' });
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({ ...query, cursor });
+      const result = await searchContributions.handler(input, ctx);
+
+      expect(getEnrichment(ctx).totalCount).toBe(1);
+      expect(getEnrichment(ctx).notice).toContain('cursor resumed past the last matching row');
+      expect(getEnrichment(ctx).notice).not.toContain('No itemized contributions matched');
+
+      const text = formatText(searchContributions.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('1 total');
+      expect(text).toContain('Omit cursor');
+      expect(text).not.toContain('No results found');
+      expect(text).not.toContain('broaden');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchContributions.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No itemized contributions matched');
+
+      const text = formatText(searchContributions.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
+
+  describe('approximate counts', () => {
+    it('marks an inexact itemized count as approximate on both surfaces', async () => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: { count: 1_429_442, per_page: 1, is_count_exact: false },
+        results: [contributionRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+        contributor_state: 'CA',
+        per_page: 1,
+      });
+      const result = await searchContributions.handler(input, ctx);
+
+      expect(result.count_is_approximate).toBe(true);
+      expect(formatText(searchContributions.format!(result))).toContain(
+        '≈1429442 total contributions (approximate)',
+      );
+      expect(getEnrichment(ctx).notice).toContain('upstream estimate');
+    });
+
+    it.each([
+      ['an exact count', true],
+      ['a count whose exactness upstream never declared', undefined],
+    ])('renders %s as a plain total', async (_label, exact) => {
+      mockService.searchContributions.mockResolvedValueOnce({
+        pagination: {
+          count: 144_800,
+          per_page: 20,
+          ...(exact === undefined ? {} : { is_count_exact: exact }),
+        },
+        results: [contributionRecord()],
+        nextCursor: null,
+      });
+
+      const input = searchContributions.input.parse({
+        mode: 'itemized',
+        committee_id: 'C00703975',
+      });
+      const result = await searchContributions.handler(input, ctx);
+
+      expect(result.count_is_approximate).toBeUndefined();
+
+      const text = formatText(searchContributions.format!(result));
+      expect(text).toContain('**144800 total contributions**');
+      expect(text).not.toContain('approximate');
+    });
+  });
 });

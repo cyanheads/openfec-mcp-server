@@ -28,8 +28,11 @@ export interface FecPagePagination {
 export interface FecSeekPagination {
   count: number;
   is_count_exact?: boolean;
-  last_indexes?: Record<string, string | number>;
-  per_page: number;
+  /** Null on the page past the last row; populated on every page that carries rows, terminal ones included. */
+  last_indexes?: Record<string, string | number> | null;
+  /** Sent upstream but deliberately not carried into `SeekResult`: derived from `count`, with no `page` to compare it against. */
+  pages?: number;
+  per_page?: number;
 }
 
 /** Standard FEC API response envelope with page-based pagination. */
@@ -68,23 +71,37 @@ export interface FecLegalEnvelope {
 /*  Normalized service return types                                   */
 /* ------------------------------------------------------------------ */
 
-/** Normalized result from page-based endpoints. */
+/**
+ * Normalized result from page-based endpoints.
+ *
+ * `is_count_exact` carries the upstream flag verbatim: `false` marks `count` as
+ * an estimate, and an absent flag means upstream said nothing — it is never
+ * defaulted to `false`, which would label an exact count approximate.
+ */
 export interface PageResult<T = Record<string, unknown>> {
   pagination: {
     page: number;
     pages: number;
     count: number;
     per_page: number;
+    is_count_exact?: boolean;
   };
   results: T[];
 }
 
-/** Normalized result from keyset (SEEK) endpoints. */
+/**
+ * Normalized result from keyset (SEEK) endpoints.
+ *
+ * `pages` is deliberately not carried: the SEEK envelope has no `page` to
+ * compare it against, and when the count is an estimate `pages` is derived from
+ * that estimate and inherits its error.
+ */
 export interface SeekResult<T = Record<string, unknown>> {
   nextCursor: string | null;
   pagination: {
     count: number;
     per_page: number;
+    is_count_exact?: boolean;
   };
   results: T[];
 }

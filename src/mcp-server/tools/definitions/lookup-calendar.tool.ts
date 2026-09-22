@@ -7,14 +7,19 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
-import type { FecParams } from '@/services/openfec/types.js';
+import type { FecParams, PageResult } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateRange } from './utils/range-validators.js';
 
@@ -131,7 +136,7 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       .string()
       .optional()
       .describe(
-        'Guidance when no calendar entries matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response carries no calendar entries: how to broaden a search that matched nothing, or which requested position ran out when entries did match.',
       ),
   },
 
@@ -167,6 +172,27 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       valueType: 'date',
     });
 
+    /**
+     * Shape one mode's response: the total, then either the exhausted-position
+     * statement or the mode's own zero-match guidance — a page past the end of
+     * a nonzero result set is a position to correct, not a search to broaden.
+     */
+    const respond = (data: PageResult, mode: keyof typeof MODE_INPUTS, zeroMatchNotice: string) => {
+      ctx.enrich.total(data.pagination.count);
+      const exhausted = exhaustedPage(data.pagination, data.results.length);
+      if (exhausted) {
+        ctx.enrich.notice(describeExhaustedPosition(exhausted));
+      } else if (data.results.length === 0) {
+        ctx.enrich.notice(zeroMatchNotice);
+      }
+      return {
+        results: data.results,
+        mode,
+        pagination: toPagination(data.pagination),
+        search_criteria: criteria,
+      };
+    };
+
     if (input.mode === 'filing_deadlines') {
       // /reporting-dates/ uses min_due_date / max_due_date
       if (input.min_date) params.min_due_date = input.min_date;
@@ -179,18 +205,11 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         report_year: input.report_year,
       });
       const data = await fec.getReportingDates(params, ctx);
-      ctx.enrich.total(data.pagination.count);
-      if (data.results.length === 0) {
-        ctx.enrich.notice(
-          'No filing deadlines matched. Try widening the date range or removing the report_type filter.',
-        );
-      }
-      return {
-        results: data.results,
-        mode: 'filing_deadlines' as const,
-        pagination: data.pagination,
-        search_criteria: criteria,
-      };
+      return respond(
+        data,
+        'filing_deadlines',
+        'No filing deadlines matched. Try widening the date range or removing the report_type filter.',
+      );
     }
 
     if (input.mode === 'election_dates') {
@@ -206,18 +225,11 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
         election_year: input.election_year,
       });
       const data = await fec.getElectionDates(params, ctx);
-      ctx.enrich.total(data.pagination.count);
-      if (data.results.length === 0) {
-        ctx.enrich.notice(
-          'No election dates matched. Try widening the date range, removing the state or office filter, or checking a different election year.',
-        );
-      }
-      return {
-        results: data.results,
-        mode: 'election_dates' as const,
-        pagination: data.pagination,
-        search_criteria: criteria,
-      };
+      return respond(
+        data,
+        'election_dates',
+        'No election dates matched. Try widening the date range, removing the state or office filter, or checking a different election year.',
+      );
     }
 
     /* Default: events mode — /calendar-dates/ uses min_start_date / max_start_date */
@@ -228,22 +240,19 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
 
     ctx.log.info('Fetching calendar events', { description: input.description });
     const data = await fec.getCalendarDates(params, ctx);
-    ctx.enrich.total(data.pagination.count);
-    if (data.results.length === 0) {
-      ctx.enrich.notice(
-        'No calendar events matched. Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
-      );
-    }
-    return {
-      results: data.results,
-      mode: 'events' as const,
-      pagination: data.pagination,
-      search_criteria: criteria,
-    };
+    return respond(
+      data,
+      'events',
+      'No calendar events matched. Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
+    );
   },
 
   format: (result) => {
     if (result.results.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) {
+        return formatExhaustedResult(result.search_criteria, exhausted, result.mode);
+      }
       return formatEmptyResult(
         result.search_criteria,
         'Try widening the date range, removing filters, or checking a different mode (events, filing_deadlines, election_dates).',
@@ -261,8 +270,10 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       }),
     ];
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n_${count} result(s) · page ${page}/${pages} · ${per_page} per page_`);
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
+    lines.push(
+      `\n_${fmtTotal(count, count_is_approximate, 'result(s)')} · page ${page}/${pages} · ${per_page} per page_`,
+    );
 
     const criteriaLine = formatSearchCriteria(result.search_criteria);
     if (criteriaLine) lines.push(criteriaLine);

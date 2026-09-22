@@ -11,12 +11,17 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   str,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId } from './utils/id-validators.js';
 
@@ -151,7 +156,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .string()
       .optional()
       .describe(
-        'Guidance when no candidates matched — echoes filters and suggests how to broaden.',
+        'Guidance when the response carries no candidates: how to broaden a search that matched nothing, or which requested position ran out when candidates did match.',
       ),
   },
 
@@ -274,7 +279,10 @@ export const searchCandidates = tool('openfec_search_candidates', {
     }
 
     ctx.enrich.total(candidateResult.pagination.count);
-    if (candidates.length === 0) {
+    const exhausted = exhaustedPage(candidateResult.pagination, candidates.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (candidates.length === 0) {
       ctx.enrich.notice(
         'No candidates matched. Try a partial name, remove filters like state or office, or check a different election cycle.',
       );
@@ -284,13 +292,15 @@ export const searchCandidates = tool('openfec_search_candidates', {
       candidates,
       totals,
       missing_totals: missingTotals,
-      pagination: candidateResult.pagination,
+      pagination: toPagination(candidateResult.pagination),
       search_criteria: effectiveCriteria,
     };
   },
 
   format(result) {
     if (result.candidates.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) return formatExhaustedResult(result.search_criteria, exhausted);
       return formatEmptyResult(
         result.search_criteria,
         'Try broadening your search — use a partial name, remove filters like state or office, or check a different election cycle.',
@@ -334,8 +344,10 @@ export const searchCandidates = tool('openfec_search_candidates', {
       );
     }
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
+    lines.push(
+      `\n---\nPage ${page} of ${pages} · ${fmtTotal(count, count_is_approximate)} · ${per_page} per page`,
+    );
 
     const criteria = formatSearchCriteria(result.search_criteria);
     if (criteria) lines.push(criteria);

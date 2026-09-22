@@ -12,13 +12,18 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
+  describeExhaustedPosition,
+  exhaustedPage,
   fmt$,
+  fmtTotal,
   formatEmptyResult,
+  formatExhaustedResult,
   formatSearchCriteria,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   str,
+  toPagination,
 } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
@@ -205,7 +210,9 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
     notice: z
       .string()
       .optional()
-      .describe('Guidance when no totals matched — echoes filters and suggests how to broaden.'),
+      .describe(
+        'Guidance when the response carries no totals: how to broaden a search that matched nothing, or which requested position ran out when totals did match.',
+      ),
   },
 
   async handler(input, ctx) {
@@ -254,9 +261,13 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       /**
        * The endpoint answers 404 for every empty case — unknown committee_id,
        * a cycle the committee did not file, a committee that files no
-       * financial report — and the service normalizes that to a zero-row page.
+       * financial report — and the service normalizes that to a zero-row page,
+       * which is the miss this error reports. A page requested past the last
+       * one is a 200 carrying the committee's real totals count, so it is an
+       * exhausted position rather than a committee with nothing on file.
        */
-      if (result.results.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, result.results.length);
+      if (result.results.length === 0 && !exhausted) {
         throw ctx.fail(
           'committee_totals_not_found',
           input.cycle === undefined
@@ -271,11 +282,12 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       }
 
       ctx.enrich.total(result.pagination.count);
+      if (exhausted) ctx.enrich.notice(describeExhaustedPosition(exhausted));
 
       return {
         results: result.results,
         mode,
-        pagination: result.pagination,
+        pagination: toPagination(result.pagination),
         search_criteria: buildSearchCriteria(input),
       };
     }
@@ -326,7 +338,10 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
     const result = await fec.getCommitteeTotalsByEntityType(input.entity_type, params, ctx);
 
     ctx.enrich.total(result.pagination.count);
-    if (result.results.length === 0) {
+    const groupExhausted = exhaustedPage(result.pagination, result.results.length);
+    if (groupExhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(groupExhausted));
+    } else if (result.results.length === 0) {
       ctx.enrich.notice(
         'No committee totals matched. Try a different cycle, lower the receipts or disbursements threshold, or widen the entity_type — house-senate holds both chambers, and party is separate from pac-party.',
       );
@@ -335,13 +350,17 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
     return {
       results: result.results,
       mode,
-      pagination: result.pagination,
+      pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };
   },
 
   format: (result) => {
     if (result.results.length === 0) {
+      const exhausted = exhaustedPage(result.pagination, 0);
+      if (exhausted) {
+        return formatExhaustedResult(result.search_criteria, exhausted, result.mode);
+      }
       return formatEmptyResult(
         result.search_criteria,
         'Try a different cycle, lower the receipts or disbursements threshold, or widen the entity_type.',
@@ -362,8 +381,10 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       lines.push(fields ? `${header}\n${fields}` : header);
     }
 
-    const { page, pages, count, per_page } = result.pagination;
-    lines.push(`\n---\nPage ${page} of ${pages} · ${count} total · ${per_page} per page`);
+    const { page, pages, count, per_page, count_is_approximate } = result.pagination;
+    lines.push(
+      `\n---\nPage ${page} of ${pages} · ${fmtTotal(count, count_is_approximate)} · ${per_page} per page`,
+    );
 
     const criteria = formatSearchCriteria(result.search_criteria);
     if (criteria) lines.push(criteria);

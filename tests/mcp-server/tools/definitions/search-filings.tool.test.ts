@@ -273,4 +273,90 @@ describe('searchFilings', () => {
       expect(formatText(blocks)).toContain('No results found');
     });
   });
+
+  describe('exhausted position', () => {
+    it('reports a page past the end as exhausted on both surfaces', async () => {
+      mockService.searchFilings.mockResolvedValueOnce({
+        pagination: { page: 9, pages: 2, count: 24, per_page: 20 },
+        results: [],
+      });
+
+      const input = searchFilings.input.parse({ committee_id: 'C00703975', page: 9 });
+      const result = await searchFilings.handler(input, ctx);
+
+      expect(result.pagination).toMatchObject({ page: 9, pages: 2, count: 24 });
+      expect(getEnrichment(ctx).notice).toContain('Page 9 is past the last page');
+      expect(getEnrichment(ctx).notice).not.toContain('No filings matched');
+
+      const text = formatText(searchFilings.format!(result));
+      expect(text).toContain('No results at this position.');
+      expect(text).toContain('24 total');
+      expect(text).not.toContain('No results found');
+    });
+
+    it('keeps zero-match guidance when nothing matched at all', async () => {
+      mockService.searchFilings.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const input = searchFilings.input.parse({ form_type: 'F99' });
+      const result = await searchFilings.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toContain('No filings matched');
+
+      const text = formatText(searchFilings.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).not.toContain('No results at this position');
+    });
+  });
+
+  describe('approximate counts', () => {
+    const filing = { form_type: 'F3X', committee_name: 'ACTBLUE', committee_id: 'C00401224' };
+
+    it('marks an inexact count as approximate on both surfaces', async () => {
+      mockService.searchFilings.mockResolvedValueOnce({
+        pagination: {
+          page: 1,
+          pages: 2_623_224,
+          count: 2_623_224,
+          per_page: 1,
+          is_count_exact: false,
+        },
+        results: [filing],
+      });
+
+      const input = searchFilings.input.parse({ per_page: 1 });
+      const result = await searchFilings.handler(input, ctx);
+
+      expect(result.pagination.count_is_approximate).toBe(true);
+      expect(formatText(searchFilings.format!(result))).toContain('≈2623224 total (approximate)');
+      expect(getEnrichment(ctx).notice).toContain('upstream estimate');
+    });
+
+    it.each([
+      ['an exact count', true],
+      ['a count whose exactness upstream never declared', undefined],
+    ])('renders %s as a plain total', async (_label, exact) => {
+      mockService.searchFilings.mockResolvedValueOnce({
+        pagination: {
+          page: 1,
+          pages: 1,
+          count: 3,
+          per_page: 20,
+          ...(exact === undefined ? {} : { is_count_exact: exact }),
+        },
+        results: [filing],
+      });
+
+      const input = searchFilings.input.parse({ committee_id: 'C00401224' });
+      const result = await searchFilings.handler(input, ctx);
+
+      expect(result.pagination.count_is_approximate).toBeUndefined();
+
+      const text = formatText(searchFilings.format!(result));
+      expect(text).toContain('Page 1 of 1 · 3 total · 20 per page');
+      expect(text).not.toContain('approximate');
+    });
+  });
 });
