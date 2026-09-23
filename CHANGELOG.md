@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.8.3](changelog/0.8.x/0.8.3.md) — 2026-09-23
+
+Prompts resolve a cycle's principal committee via the correct source instead of current designation, committee reads fail on a rejected totals fetch, and election resources add empty-result guidance and a calendar district filter
+
 ## [0.8.2](changelog/0.8.x/0.8.2.md) — 2026-09-22
 
 Exhausted pagination positions now report the position instead of a false zero-match, and high-volume counts are labelled as estimates
