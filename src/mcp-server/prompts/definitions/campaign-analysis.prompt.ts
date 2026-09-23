@@ -50,12 +50,12 @@ export const campaignAnalysisPrompt = prompt('openfec_campaign_analysis', {
 Use openfec_search_candidates with include_totals=true to get:
 - Total receipts, disbursements, cash on hand, debt
 - Coverage period dates
-- The candidate record's office, state, and district — step 5 needs all three
+- The candidate record's office, state, and district — steps 2 and 5 need all three
 
 ## 2. Find the Principal Committee
-Use openfec_search_committees with the candidate_id to identify the principal campaign committee. Use that committee_id for the contribution and disbursement queries in steps 3 and 4.
+Use openfec_lookup_elections (mode: search) to resolve the cycle's principal campaign committee, before any committee-financial call. It requires office and cycle, plus state for a Senate race and both state and district for a House race — take them from the candidate record in step 1. Find the candidate's row (a large race can span several pages) and use its candidate_pcc_id and candidate_pcc_name for the contribution and disbursement queries in steps 3 and 4. Do not treat openfec_search_committees' designation as that answer: it reflects each committee's current designation, so a principal committee since redesignated drops out of a designation=P filter. Use openfec_search_committees with the candidate_id only for related committees such as leadership PACs and joint fundraising committees.
 
-Then use openfec_get_committee_totals (mode: single) on that committee_id, omitting cycle on this one call so every cycle the committee has filed comes back. That series is the trajectory step 7 asks about.
+Then use openfec_get_committee_totals (mode: single) with that candidate_pcc_id as committee_id, omitting cycle on this one call so every cycle the committee has filed comes back. That series is the trajectory step 7 asks about.
 
 ## 3. Fundraising Analysis
 Use openfec_search_contributions with the principal committee_id:
@@ -70,7 +70,7 @@ Use openfec_search_disbursements with the principal committee_id:
 - Calculate burn rate: disbursements / receipts
 
 ## 5. Competitive Position
-Use openfec_lookup_elections to find all candidates in the race. It requires office and cycle, plus state for a Senate race and both state and district for a House race — take them from the candidate record in step 1:
+Use openfec_lookup_elections to find all candidates in the race — the step 2 search already returned them, so reuse it rather than repeating the call. It requires office and cycle, plus state for a Senate race and both state and district for a House race — take them from the candidate record in step 1:
 - Compare total raised, cash on hand, and burn rates
 - Identify financial advantages and gaps
 

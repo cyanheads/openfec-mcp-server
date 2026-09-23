@@ -90,12 +90,65 @@ describe('campaignAnalysisPrompt', () => {
     }
   });
 
-  /** openfec_lookup_elections requires office and cycle, so step 5 must source them. */
+  /** Text of one `## N.` section, up to the next numbered heading. */
+  const section = (text: string, n: number) => {
+    const start = text.indexOf(`## ${n}. `);
+    if (start === -1) throw new Error(`section ${n} missing`);
+    const end = text.indexOf(`## ${n + 1}. `, start);
+    return text.slice(start, end === -1 ? undefined : end);
+  };
+
+  /**
+   * openfec_lookup_elections requires office and cycle, plus state/district
+   * below the presidency — so both the committee-discovery step and the
+   * competitive-position step must source them from the step 1 record.
+   */
   it('sources the required openfec_lookup_elections scope from the candidate record', () => {
     const text = firstMessage({ candidate_id: 'P00003392' }).content.text;
 
-    expect(text).toContain('office, state, and district');
-    expect(text).toContain('It requires office and cycle');
+    expect(section(text, 1)).toContain(
+      "The candidate record's office, state, and district — steps 2 and 5 need all three",
+    );
+    for (const n of [2, 5]) {
+      const step = section(text, n);
+      expect(step).toContain('openfec_lookup_elections');
+      expect(step).toContain('It requires office and cycle');
+      expect(step).toContain('take them from the candidate record in step 1');
+    }
+  });
+
+  describe.each([
+    ['candidate_id', { candidate_id: 'P80000722', cycle: '2024' }],
+    ['candidate_name', { candidate_name: 'Joe Biden' }],
+  ] as const)('principal committee resolution (by %s)', (_, args) => {
+    const text = firstMessage(args).content.text;
+
+    it('resolves the cycle principal committee via openfec_lookup_elections candidate_pcc_id', () => {
+      const step2 = section(text, 2);
+      expect(step2).toContain('openfec_lookup_elections (mode: search)');
+      expect(step2).toContain('candidate_pcc_id');
+      expect(step2).toContain('current designation');
+    });
+
+    it('calls openfec_lookup_elections before any committee-financial call', () => {
+      const lookup = text.indexOf('openfec_lookup_elections');
+      expect(lookup).toBeGreaterThan(-1);
+      for (const financial of [
+        'openfec_get_committee_totals',
+        'openfec_search_contributions',
+        'openfec_search_disbursements',
+      ]) {
+        expect(lookup).toBeLessThan(text.indexOf(financial));
+      }
+    });
+
+    it('keeps openfec_search_committees for related committees only', () => {
+      const step2 = section(text, 2);
+      const related = step2.slice(step2.indexOf('openfec_search_committees'));
+      expect(related).toContain('leadership PACs');
+      expect(related).toContain('joint fundraising committees');
+      expect(related).not.toContain('identify the principal campaign committee');
+    });
   });
 
   it('pins the cycle on every call when one was supplied', () => {

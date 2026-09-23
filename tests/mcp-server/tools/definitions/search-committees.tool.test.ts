@@ -70,6 +70,17 @@ describe('searchCommittees', () => {
     vi.clearAllMocks();
   });
 
+  describe('input schema', () => {
+    /** A designation filter is current-only, so it must not read as a per-cycle answer. */
+    it('scopes designation to the current value and points at the cycle-specific lookup', () => {
+      const description = searchCommittees.input.shape.designation.description;
+      expect(description).toContain('P (principal campaign)');
+      expect(description).toContain('current designation');
+      expect(description).toContain('openfec_lookup_elections');
+      expect(description).toContain('candidate_pcc_id');
+    });
+  });
+
   describe('handler', () => {
     it('searches committees by query', async () => {
       const committees = [committeeRecord()];

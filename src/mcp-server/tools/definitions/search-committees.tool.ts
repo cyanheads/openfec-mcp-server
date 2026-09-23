@@ -87,7 +87,7 @@ export const searchCommittees = tool('openfec_search_committees', {
       .string()
       .optional()
       .describe(
-        'Committee designation. A (authorized), B (lobbyist PAC), D (leadership PAC), J (joint fundraiser), P (principal campaign), U (unauthorized).',
+        "Committee designation. A (authorized), B (lobbyist PAC), D (leadership PAC), J (joint fundraiser), P (principal campaign), U (unauthorized). Matches each committee's current designation only, even with cycle set — a past principal committee since redesignated drops out of P. For a candidate's principal committee in a given cycle, use openfec_lookup_elections (mode: search) and read candidate_pcc_id.",
       ),
     cycle: z.number().optional().describe('Two-year election cycle (even year).'),
     treasurer_name: z.string().optional().describe('Full-text treasurer name search.'),

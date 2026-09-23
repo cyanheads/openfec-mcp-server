@@ -47,15 +47,16 @@ export const moneyTrailPrompt = prompt('openfec_money_trail', {
           text: `Trace the full money trail for ${target}${cycleNote}. Use the OpenFEC tools to investigate each layer:${cycleRule}
 
 ## Step 1: Identify the candidate
-${args.candidate_id ? `Look up candidate ${args.candidate_id} using openfec_search_candidates with include_totals=true.` : `Search for "${args.candidate_name}" using openfec_search_candidates. Once found, note the candidate_id and look up their financial totals.`}
+${args.candidate_id ? `Look up candidate ${args.candidate_id} using openfec_search_candidates with include_totals=true.` : `Search for "${args.candidate_name}" using openfec_search_candidates. Once found, note the candidate_id and look up their financial totals.`} Note the candidate record's office, state, and district — step 2 needs them.
 
 ## Step 2: Map their committees
-Use openfec_search_committees with the candidate_id to find:
-- Principal campaign committee
+First resolve the principal campaign committee for the cycle with openfec_lookup_elections (mode: search), before any committee-financial call. It requires office and cycle, plus state for a Senate race and both state and district for a House race — take them from the candidate record in step 1. Find the candidate's row (a large race can span several pages) and use its candidate_pcc_id and candidate_pcc_name as the cycle's principal campaign committee. Do not treat openfec_search_committees' designation as that answer: it reflects each committee's current designation, so a principal committee since redesignated drops out of a designation=P filter.
+
+Then use openfec_search_committees with the candidate_id to find related committees:
 - Leadership PACs
 - Joint fundraising committees
 
-For each committee_id found, use openfec_get_committee_totals (mode: single) to get that committee's own per-cycle receipts, disbursements, and cash on hand. The step 1 totals are candidate-scoped and cover the campaign account only, not a leadership PAC or a joint fundraising committee.
+For the principal campaign committee and each related committee_id found, use openfec_get_committee_totals (mode: single) to get that committee's own per-cycle receipts, disbursements, and cash on hand. The step 1 totals are candidate-scoped and cover the campaign account only, not a leadership PAC or a joint fundraising committee.
 
 ## Step 3: Follow direct fundraising
 Carry forward the receipt totals already retrieved in step 1. Use openfec_search_contributions with the principal campaign committee_id to break down where the money came from:
