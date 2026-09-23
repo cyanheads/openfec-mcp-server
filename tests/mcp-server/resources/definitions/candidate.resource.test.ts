@@ -105,6 +105,18 @@ describe('candidateResource', () => {
     );
   });
 
+  /**
+   * principal_committees comes from a current-designation filter with no cycle,
+   * so the description must say so and name the cycle-specific source.
+   */
+  it('describes principal_committees as current-designation and points at candidate_pcc_id', () => {
+    const { description } = candidateResource;
+    expect(description).toContain('principal_committees');
+    expect(description).toContain('current designation');
+    expect(description).toContain('openfec_lookup_elections');
+    expect(description).toContain('candidate_pcc_id');
+  });
+
   it('validates candidate_id param', () => {
     expect(() => paramsSchema.parse({})).toThrow();
     expect(() => paramsSchema.parse({ candidate_id: 123 })).toThrow();

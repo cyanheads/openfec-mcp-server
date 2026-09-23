@@ -12,7 +12,7 @@ import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 export const candidateResource = resource('openfec://candidate/{candidate_id}', {
   name: 'FEC Candidate Profile',
   description:
-    'Fetch a federal candidate profile with current financial totals. Candidate IDs start with H (House), S (Senate), or P (President) followed by exactly eight letters or digits.',
+    "Fetch a federal candidate profile with current financial totals and principal_committees. principal_committees lists committees by their current designation, with no cycle — it can include past campaigns' committees and miss one since redesignated. For a given cycle's principal committee, use openfec_lookup_elections (mode: search) and read candidate_pcc_id. Candidate IDs start with H (House), S (Senate), or P (President) followed by exactly eight letters or digits.",
   mimeType: 'application/json',
   params: z.object({
     candidate_id: z
