@@ -265,6 +265,12 @@ const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
     sort_nulls_last`),
 
   '/elections/summary/': paramSet(`state district cycle office election_full`),
+
+  '/election-dates/': paramSet(`
+    page per_page election_state election_district election_party office_sought
+    min_election_date max_election_date election_type_id min_create_date max_create_date
+    min_update_date max_update_date election_year min_primary_general_date
+    max_primary_general_date sort sort_hide_null sort_null_only sort_nulls_last`),
 };
 
 /**

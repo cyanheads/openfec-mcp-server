@@ -514,6 +514,19 @@ describe('outbound parameter-name guard', () => {
       '/elections/summary/',
       { state: 'AZ', district: '00', cycle: 2024, office: 'senate', election_full: true },
     ],
+    [
+      '/election-dates/',
+      {
+        page: 1,
+        per_page: 20,
+        election_state: 'CA',
+        election_district: '14',
+        office_sought: 'H',
+        election_year: 2026,
+        min_election_date: '2026-01-01',
+        max_election_date: '2026-12-31',
+      },
+    ],
   ] as const)('accepts the parameters declared for %s', (path, params) => {
     expect(() => assertKnownParams(path, params)).not.toThrow();
   });
@@ -526,6 +539,8 @@ describe('outbound parameter-name guard', () => {
     ['/schedules/schedule_a/by_size/by_candidate/', { committee_id: 'C00703975' }, 'committee_id'],
     ['/schedules/schedule_a/by_state/by_candidate/', { committee_id: 'C00703975' }, 'committee_id'],
     ['/elections/summary/', { page: 2 }, 'page'],
+    ['/election-dates/', { district: '14' }, 'district'],
+    ['/election-dates/', { state: 'CA' }, 'state'],
   ] as const)('rejects %s from %s', (path, params, field) => {
     expect(() => assertKnownParams(path, params)).toThrow(field);
   });

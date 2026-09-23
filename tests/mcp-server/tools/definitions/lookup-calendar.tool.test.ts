@@ -36,6 +36,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { lookupCalendar as lookupCalendarTool } from '@/mcp-server/tools/definitions/lookup-calendar.tool.js';
+import { assertKnownParams } from '@/services/openfec/openfec-service.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -285,6 +286,136 @@ describe('lookupCalendarTool', () => {
 
       expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeDefined();
+    });
+  });
+
+  describe('district filter (election_dates)', () => {
+    const run = async (raw: Record<string, unknown>) => {
+      mockService.getElectionDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 2 },
+        results: [
+          { election_date: '2026-06-02', election_state: 'CA', election_district: '14' },
+          { election_date: '2026-08-18', election_state: 'CA', election_district: '14' },
+        ],
+      });
+      const result = await lookupCalendarTool.handler(lookupCalendarTool.input.parse(raw), ctx);
+      const params = mockService.getElectionDates.mock.calls[0]![0] as Record<string, unknown>;
+      return { result, params };
+    };
+
+    it('sends district upstream as election_district and echoes it', async () => {
+      const { result, params } = await run({
+        mode: 'election_dates',
+        state: 'CA',
+        office: 'H',
+        district: '14',
+        election_year: 2026,
+      });
+
+      expect(params).toMatchObject({
+        election_state: 'CA',
+        office_sought: 'H',
+        election_district: '14',
+        election_year: 2026,
+      });
+      expect(params).not.toHaveProperty('district');
+      expect(result.search_criteria).toMatchObject({ mode: 'election_dates', district: '14' });
+      expect(getEnrichment(ctx).totalCount).toBe(2);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+
+      const text = formatText(lookupCalendarTool.format!(result));
+      expect(text).toContain('district=14');
+      expect(text).toContain('election_district: 14');
+    });
+
+    it('sends only names /election-dates/ accepts', async () => {
+      const { params } = await run({
+        mode: 'election_dates',
+        state: 'CA',
+        office: 'H',
+        district: '14',
+        election_year: 2026,
+        min_date: '2026-01-01',
+        max_date: '2026-12-31',
+      });
+
+      expect(() => assertKnownParams('/election-dates/', params as never)).not.toThrow();
+    });
+
+    it('sends district alone when state and office are omitted', async () => {
+      const { params } = await run({ mode: 'election_dates', district: '14' });
+
+      expect(params).toMatchObject({ election_district: '14' });
+      expect(params).not.toHaveProperty('election_state');
+      expect(params).not.toHaveProperty('office_sought');
+    });
+
+    it('zero-pads a one-digit district in the request and the echo', async () => {
+      const { result, params } = await run({ mode: 'election_dates', state: 'CA', district: '1' });
+
+      expect(params.election_district).toBe('01');
+      expect(result.search_criteria).toMatchObject({ district: '01' });
+    });
+
+    it.each(['01', '00', '99', '123', 'AL'])('passes %s through unchanged', async (district) => {
+      const { result, params } = await run({ mode: 'election_dates', district });
+
+      expect(params.election_district).toBe(district);
+      expect(result.search_criteria).toMatchObject({ district });
+    });
+
+    it('omits election_district when district is an empty form value', async () => {
+      const { result, params } = await run({ mode: 'election_dates', state: 'CA', district: '' });
+
+      expect(params).not.toHaveProperty('election_district');
+      expect(result.search_criteria).not.toHaveProperty('district');
+    });
+
+    it('explains an empty district match on both surfaces', async () => {
+      mockService.getElectionDates.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const input = lookupCalendarTool.input.parse({
+        mode: 'election_dates',
+        state: 'WY',
+        office: 'H',
+        district: '01',
+      });
+      const result = await lookupCalendarTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).totalCount).toBe(0);
+      expect(getEnrichment(ctx).notice).toContain('district');
+      expect(getEnrichment(ctx).notice).toMatch(/at-large/i);
+
+      const text = formatText(lookupCalendarTool.format!(result));
+      expect(text).toContain('No results found.');
+      expect(text).toContain('district: 01');
+    });
+
+    it.each([
+      ['events', 'description, category'],
+      ['filing_deadlines', 'report_type, report_year'],
+    ] as const)('rejects district in %s mode, naming the accepted set', async (mode, owned) => {
+      const input = lookupCalendarTool.input.parse({ mode, district: '14' });
+      const err = (await Promise.resolve(lookupCalendarTool.handler(input, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
+
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_mode',
+        mode,
+        inapplicable_inputs: ['district'],
+        supported_inputs: expect.not.arrayContaining(['district']),
+      });
+      expect(err.message).toContain('cannot apply district');
+      expect(err.message).toContain(owned);
+      expect((err.data as { recovery?: { hint?: string } }).recovery?.hint).toMatch(
+        /state, office, district and election_year to election_dates/,
+      );
+      expect(mockService.getCalendarDates).not.toHaveBeenCalled();
+      expect(mockService.getReportingDates).not.toHaveBeenCalled();
     });
   });
 

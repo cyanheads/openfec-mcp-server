@@ -32,8 +32,16 @@ import { validateRange } from './utils/range-validators.js';
 const MODE_INPUTS = {
   events: ['mode', 'min_date', 'max_date', 'description', 'category'],
   filing_deadlines: ['mode', 'min_date', 'max_date', 'report_type', 'report_year'],
-  election_dates: ['mode', 'min_date', 'max_date', 'state', 'office', 'election_year'],
+  election_dates: ['mode', 'min_date', 'max_date', 'state', 'office', 'district', 'election_year'],
 } as const satisfies Record<string, readonly string[]>;
+
+/**
+ * `/election-dates/` matches `election_district` only in its zero-padded form —
+ * `1` returns nothing where `01` returns the district's rows — so a lone digit
+ * is padded. Anything else goes upstream as given.
+ */
+const padDistrict = (district: string | undefined): string | undefined =>
+  district && /^\d$/.test(district) ? `0${district}` : district;
 
 export const lookupCalendar = tool('openfec_lookup_calendar', {
   description:
@@ -46,7 +54,7 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'A filter belonging to a different calendar mode was supplied, which the chosen mode cannot apply',
       recovery:
-        'Switch to the mode that owns the named inputs, or drop them: description and category belong to events, report_type and report_year to filing_deadlines, state, office and election_year to election_dates. min_date and max_date work in every mode.',
+        'Switch to the mode that owns the named inputs, or drop them: description and category belong to events, report_type and report_year to filing_deadlines, state, office, district and election_year to election_dates. min_date and max_date work in every mode.',
     },
   ],
 
@@ -65,6 +73,12 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       .enum(['H', 'S', 'P'])
       .optional()
       .describe('Office sought (H=House, S=Senate, P=President). Election dates mode.'),
+    district: z
+      .string()
+      .optional()
+      .describe(
+        'Two-digit House district (e.g., "14", "07"); a single digit is zero-padded. Pair it with state — alone it matches that district number in every state. At-large races carry no district upstream, so a district filter never matches them. Election dates mode.',
+      ),
     report_type: z
       .string()
       .optional()
@@ -149,7 +163,8 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
     };
 
     const applied: readonly string[] = MODE_INPUTS[input.mode];
-    const criteria = buildSearchCriteria(input);
+    const district = padDistrict(input.district);
+    const criteria = buildSearchCriteria({ ...input, district });
     const inapplicable = Object.keys(criteria).filter((key) => !applied.includes(key));
     if (inapplicable.length > 0) {
       throw ctx.fail(
@@ -218,17 +233,19 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       if (input.max_date) params.max_election_date = input.max_date;
       if (input.state) params.election_state = input.state;
       if (input.office) params.office_sought = input.office;
+      if (district) params.election_district = district;
       if (input.election_year) params.election_year = input.election_year;
 
       ctx.log.info('Fetching election dates', {
         state: input.state,
+        district,
         election_year: input.election_year,
       });
       const data = await fec.getElectionDates(params, ctx);
       return respond(
         data,
         'election_dates',
-        'No election dates matched. Try widening the date range, removing the state or office filter, or checking a different election year.',
+        'No election dates matched. Try widening the date range, removing the state, office, or district filter, or checking a different election year. At-large House races carry no district, so a district filter never matches them.',
       );
     }
 
