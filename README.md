@@ -52,7 +52,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 | Resource | Description |
 |:---|:---|
-| `openfec://candidate/{candidate_id}` | Federal candidate profile with current financial totals and principal committees. |
+| `openfec://candidate/{candidate_id}` | Federal candidate profile with current financial totals and principal committees by current designation — for a cycle's principal committee, use `openfec_lookup_elections` `candidate_pcc_id`. |
 | `openfec://committee/{committee_id}` | Political committee profile with type, designation, and financial summary. |
 | `openfec://election/{cycle}/{office}` | Presidential election race with candidate financial totals. |
 | `openfec://election/{cycle}/{office}/{state}` | Senate or at-large House election race with candidate financial totals. |
@@ -141,6 +141,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 ### `openfec_lookup_elections` <sub>tool</sub>
 
 - `mode: "search"` (default): candidates in a race with financial totals. `mode: "summary"`: aggregate race financial totals
+- Search rows carry `candidate_pcc_id`/`candidate_pcc_name` — the candidate's principal campaign committee for that cycle, even one since redesignated
 - Requires office and cycle; Senate/House also need state (House also needs district) unless a ZIP is given — ZIP resolves geography for search mode only
 - `election_full` defaults to true (expands to the full election period: 4yr president, 6yr senate, 2yr house); rejected on ZIP-scoped searches
 - Typed errors: `cycle_must_be_even`, `missing_state_for_office`, `missing_district_for_house`, `summary_does_not_support_zip`, `inputs_not_applicable_to_mode`
@@ -166,7 +167,8 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 ### `openfec_lookup_calendar` <sub>tool</sub>
 
-- Modes: `events` (calendar_category_id, one of 18 category codes), `filing_deadlines` (report_type, report_year), `election_dates` (state, office, election_year)
+- Modes: `events` (calendar_category_id, one of 18 category codes), `filing_deadlines` (report_type, report_year), `election_dates` (state, office, district, election_year)
+- `district` narrows election dates to one House district (sent as `election_district`; a single digit is zero-padded); at-large races carry no district upstream and never match it
 - `min_date`/`max_date` apply in every mode; other filters are mode-specific and rejected outside their mode
 - Typed error: `inputs_not_applicable_to_mode`
 
@@ -174,7 +176,8 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 ### `openfec://candidate/{candidate_id}` <sub>resource</sub>
 
-- Candidate record merged with its current financial totals and principal campaign committees (designation `P`)
+- Candidate record merged with its current financial totals and `principal_committees` (designation `P`)
+- `principal_committees` reflects each committee's current designation with no cycle, so it can list past campaigns and miss a committee since redesignated — for a cycle's principal committee, use `openfec_lookup_elections` `candidate_pcc_id`
 - `candidate_id` comes from `openfec_search_candidates`
 - Typed error: `candidate_not_found`
 
@@ -182,7 +185,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 ### `openfec://committee/{committee_id}` <sub>resource</sub>
 
-- Committee record merged with its financial totals; totals are simply omitted for a committee that files no Form 3/3X/3P
+- Committee record merged with its financial totals; totals are simply omitted for a committee that files no Form 3/3X/3P, while a totals request that fails (rate limit, timeout, malformed response) fails the read
 - `committee_id` comes from `openfec_search_committees`
 - Typed error: `committee_not_found`
 
@@ -192,34 +195,36 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 - Presidential races only (`office` literal `P`); candidates returned with financial totals for the full election period
 - Truncates to the first page when a race has more candidates than one page holds — use `openfec_lookup_elections` mode `search` to page further
+- An empty race carries an `empty_result_notice` (check the cycle is an even year, the state code, and that the district exists)
+- Any other `office` code is rejected with a message naming the sibling template that serves it
 
 ---
 
 ### `openfec://election/{cycle}/{office}/{state}` <sub>resource</sub>
 
 - Senate races, or an at-large House race in a single-district state (`office` `S` or `H`)
-- Same first-page truncation as the presidential variant
+- Same first-page truncation, empty-result notice, and office rejection as the presidential variant
 
 ---
 
 ### `openfec://election/{cycle}/{office}/{state}/{district}` <sub>resource</sub>
 
 - House district races (`office` `H`)
-- Same first-page truncation as the presidential variant
+- Same first-page truncation, empty-result notice, and office rejection as the presidential variant
 
 ---
 
 ### `openfec_money_trail` <sub>prompt</sub>
 
 - Args: `candidate_name` or `candidate_id` (one required), optional `cycle` (defaults to the current cycle)
-- Seven-step framework: identify the candidate → map committees → direct fundraising → outside independent expenditures → coordinated party spending → disbursements → synthesis
+- Seven-step framework: identify the candidate → map committees (the cycle's principal committee from `openfec_lookup_elections` `candidate_pcc_id`, related committees from `openfec_search_committees`) → direct fundraising → outside independent expenditures → coordinated party spending → disbursements → synthesis
 
 ---
 
 ### `openfec_campaign_analysis` <sub>prompt</sub>
 
 - Args: `candidate_name` or `candidate_id` (one required), optional `cycle` (defaults to the current cycle)
-- Seven-step framework: candidate overview → principal committee and per-cycle totals trajectory → fundraising breakdown → burn rate and spending → competitive position → outside money context → assessment
+- Seven-step framework: candidate overview → principal committee (from `openfec_lookup_elections` `candidate_pcc_id`) and per-cycle totals trajectory → fundraising breakdown → burn rate and spending → competitive position → outside money context → assessment
 
 ## Features
 

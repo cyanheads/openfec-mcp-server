@@ -27,9 +27,9 @@ All resource data is also reachable via tools. Resources add convenience for cli
 
 | URI Template | Description | Pagination |
 |:-------------|:------------|:-----------|
-| `openfec://candidate/{candidate_id}` | Candidate profile with current financial totals | No |
-| `openfec://committee/{committee_id}` | Committee profile with type, designation, and financial summary | No |
-| `openfec://election/{cycle}/{office}` | Election race summary. `state` and `district` appended as path segments when applicable (e.g., `openfec://election/2024/senate/AZ`). | First page only — returns the upstream `pagination` block, plus a `truncation_notice` pointing at `openfec_lookup_elections` when more pages exist |
+| `openfec://candidate/{candidate_id}` | Candidate profile with current financial totals and `principal_committees`. That list filters on each committee's current designation with no cycle, so it can include past campaigns and miss a committee since redesignated; a cycle's principal committee comes from `openfec_lookup_elections` `candidate_pcc_id`. | No |
+| `openfec://committee/{committee_id}` | Committee profile with type, designation, and financial summary. A committee with no totals on file resolves with its base record alone; a failed totals request fails the read. | No |
+| `openfec://election/{cycle}/{office}` | Election race summary. `state` and `district` appended as path segments when applicable (e.g., `openfec://election/2024/S/AZ`). Each template's `office` enum rejects the codes it does not serve with a message naming the sibling template that does. | First page only — returns the upstream `pagination` block, plus a `truncation_notice` pointing at `openfec_lookup_elections` when more pages exist. An empty race instead carries an `empty_result_notice` with the same guidance `openfec_lookup_elections` gives: check that the cycle is an even year, the state code, and that the district exists. |
 
 ### Prompts
 
@@ -120,7 +120,7 @@ Find political committees — campaign committees, PACs, Super PACs, party commi
 | `state` | string | No | Two-letter state code. |
 | `party` | string | No | Three-letter party code. |
 | `committee_type` | string | No | Committee type code. Common values: `H` (House), `S` (Senate), `P` (Presidential), `O` (Super PAC — independent expenditure-only), `N` (PAC nonqualified), `Q` (PAC qualified), `X` (Party nonqualified), `Y` (Party qualified). Full list: `C` (communication cost), `D` (delegate), `E` (electioneering communication), `I` (independent expenditure filer — not a committee), `U` (single candidate IE), `V` (PAC with non-contribution account, nonqualified), `W` (PAC with non-contribution account, qualified), `Z` (national party non-federal account). |
-| `designation` | string | No | Committee designation. `A` (authorized by candidate), `B` (lobbyist/registrant PAC), `D` (leadership PAC), `J` (joint fundraiser), `P` (principal campaign committee), `U` (unauthorized). |
+| `designation` | string | No | Committee designation. `A` (authorized by candidate), `B` (lobbyist/registrant PAC), `D` (leadership PAC), `J` (joint fundraiser), `P` (principal campaign committee), `U` (unauthorized). Matches each committee's current designation only, even with `cycle` set, so a past principal committee since redesignated drops out of `P`; a cycle's principal committee comes from `openfec_lookup_elections` `candidate_pcc_id`. |
 | `cycle` | number | No | Two-year election cycle. |
 | `treasurer_name` | string | No | Full-text treasurer name search. |
 | `page` | number | No | Page number. Default 1. |
@@ -525,6 +525,7 @@ Look up FEC calendar events, filing deadlines, and election dates.
 | `mode` | enum | No | `events` (default) — FEC calendar events. `filing_deadlines` — report due dates. `election_dates` — upcoming/past elections. |
 | `state` | string | No | Two-letter state code. Election dates mode. |
 | `office` | `H` \| `S` \| `P` | No | Office sought. Election dates mode. |
+| `district` | string | No | Two-digit House district (e.g., `14`), sent as `election_district`. A single digit is zero-padded, since upstream matches only the padded form; any other value passes through. Upstream applies it without `state` — alone it matches that district number in every state. At-large races carry a blank `election_district` upstream and never match. Election dates mode. |
 | `report_type` | string | No | Report type code (e.g., `Q1`, `Q2`). Filing deadlines mode only. |
 | `report_year` | number | No | Report year. Filing deadlines. |
 | `election_year` | number | No | Election year. Election dates mode. |
@@ -543,7 +544,7 @@ Look up FEC calendar events, filing deadlines, and election dates.
 **Pagination:** Page-based.
 
 **Error modes:**
-- An input belonging to another mode → `ValidationError` (`inputs_not_applicable_to_mode`). Each mode reads a different dataset: `events` accepts `description` and `category`, `filing_deadlines` accepts `report_type` and `report_year`, `election_dates` accepts `state`, `office`, and `election_year`; `min_date` and `max_date` work everywhere. The rejection names both the offending inputs, the mode that owns each, and the chosen mode's accepted set.
+- An input belonging to another mode → `ValidationError` (`inputs_not_applicable_to_mode`). Each mode reads a different dataset: `events` accepts `description` and `category`, `filing_deadlines` accepts `report_type` and `report_year`, `election_dates` accepts `state`, `office`, `district`, and `election_year`; `min_date` and `max_date` work everywhere. The rejection names both the offending inputs, the mode that owns each, and the chosen mode's accepted set.
 
 **Upstream endpoints:**
 - `/v1/calendar-dates/` — calendar events
@@ -657,9 +658,10 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 ## Workflow Analysis
 
 ### "Who's funding this candidate?"
-1. `openfec_search_candidates` → get `candidate_id`
-2. `openfec_search_committees` with `candidate_id` → get principal campaign committee `committee_id`
-3. `openfec_search_contributions` with `committee_id` (itemized or by_size/by_state/by_employer aggregates)
+1. `openfec_search_candidates` → get `candidate_id`, plus the record's `office`, `state`, and `district`
+2. `openfec_lookup_elections` (mode `search`) with `office` and `cycle` — plus `state` for Senate, `state` and `district` for House, carried from step 1 → the candidate's row gives the cycle's principal campaign committee as `candidate_pcc_id`. `openfec_search_committees` with `designation=P` is not a substitute: it matches current designation only, so a principal committee since redesignated drops out.
+3. `openfec_search_committees` with `candidate_id` → related committees (leadership PACs, joint fundraising committees)
+4. `openfec_search_contributions` with the principal `committee_id` (itemized or by_size/by_state/by_employer aggregates)
 
 ### "What's the outside money picture for this race?"
 1. `openfec_lookup_elections` → get `candidate_id`s for all candidates in the race
@@ -735,6 +737,8 @@ OpenFEC embeds a ~40-field committee object in every itemized Schedule A/B/E row
 `/committee/{committee_id}/totals/` and `/totals/{entity_type}/` answer different questions — one committee's cycles versus a ranked page of committees — and share only a row shape. They are one `mode`-dispatched tool rather than two, matching the consolidation in decision 1: the single-committee half is the common case and the default, and the grouped half costs one branch. Only the single half was reachable before, and only through a resource, so tool-only clients could not read committee totals at all.
 
 Both single-record endpoints answer 404 for a miss rather than an empty `results` array — `/committee/{id}/totals/` for an unknown ID, a cycle the committee did not file, and a committee that files no financial report alike. The service normalizes that to a zero-row page so the tool can throw its own `committee_totals_not_found` with an actionable message, instead of surfacing the framework's generic "verify the API path" hint for what is really an unknown ID. The normalization is gated on the 404 body parsing as OpenFEC's own JSON error object: the api.data.gov edge answers 404 with a plain-text routing error when the upstream host is unreachable, and reporting a whole-API outage as "this committee has no totals" would be a confidently wrong answer. Anything that is not the API's JSON error shape stays a failure and propagates. `openfec_get_legal_document` uses the same discriminator.
+
+The `openfec://committee/{committee_id}` resource relies on that normalization and adds no error handling of its own around the totals leg. "No totals on file" already arrives as an empty page, so a rejection reaching the resource is a real failure (rate limit, timeout, malformed envelope) and fails the read, as the candidate resource's totals leg does. Swallowing it would return a successful profile with the financial fields silently missing, which a caller cannot tell apart from a committee that never filed.
 
 ### 12. Coordinated expenditures use page-based pagination, unlike the other schedules
 
