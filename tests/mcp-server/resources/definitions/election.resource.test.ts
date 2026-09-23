@@ -50,6 +50,7 @@ type ElectionResult = {
   candidates: unknown[];
   pagination: { page: number; pages: number; count: number; per_page: number };
   truncation_notice?: string;
+  empty_result_notice?: string;
 };
 
 const electionParams = electionResource.params!;
@@ -159,6 +160,121 @@ describe('electionResource', () => {
       cycle: '2024',
       office: 'S',
       state: 'VT',
+    });
+  });
+  describe('empty result', () => {
+    const emptyPage = { pagination: { page: 1, pages: 0, count: 0, per_page: 20 }, results: [] };
+
+    it.each([
+      ['presidential', electionResource, { cycle: '2023', office: 'P' }],
+      ['state', electionStateResource, { cycle: '2024', office: 'S', state: 'XX' }],
+      [
+        'district',
+        electionDistrictResource,
+        { cycle: '2024', office: 'H', state: 'WA', district: '99' },
+      ],
+    ] as const)(
+      'explains a zero-candidate %s race instead of returning a bare list',
+      async (_, def, raw) => {
+        mockService.searchElections.mockResolvedValueOnce(emptyPage);
+
+        const ctx = createMockContext();
+        const params = def.params!.parse(raw);
+        const result = (await def.handler(params as never, ctx)) as ElectionResult;
+
+        expect(result.candidates).toEqual([]);
+        expect(result.pagination).toEqual(emptyPage.pagination);
+        const notice = result.empty_result_notice;
+        expect(notice).toContain('No election races matched');
+        expect(notice).toContain('cycle is an even year');
+        expect(notice).toContain('state code is correct');
+        expect(notice).toContain('district exists for the given state');
+        expect(result).not.toHaveProperty('truncation_notice');
+      },
+    );
+
+    it('carries no empty notice on a single-page race with candidates', async () => {
+      mockService.searchElections.mockResolvedValueOnce(
+        pageResult([{ candidate_id: 'S4AZ00139' }]),
+      );
+
+      const ctx = createMockContext();
+      const params = electionStateParams.parse({ cycle: '2024', office: 'S', state: 'AZ' });
+      const result = (await electionStateResource.handler(params, ctx)) as ElectionResult;
+
+      expect(result).not.toHaveProperty('empty_result_notice');
+      expect(result).not.toHaveProperty('truncation_notice');
+    });
+
+    it('carries only the truncation notice on a multi-page race', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 3, count: 45, per_page: 20 },
+        results: [{ candidate_id: 'H2CA30291' }],
+      });
+
+      const ctx = createMockContext();
+      const params = electionDistrictParams.parse({
+        cycle: '2024',
+        office: 'H',
+        state: 'CA',
+        district: '30',
+      });
+      const result = (await electionDistrictResource.handler(params, ctx)) as ElectionResult;
+
+      expect(result.truncation_notice).toContain('page 1 of 3');
+      expect(result).not.toHaveProperty('empty_result_notice');
+    });
+  });
+
+  describe('office rejection names the sibling templates', () => {
+    /** The rejection message a template's params schema produces for `office`. */
+    const officeMessage = (
+      schema: typeof electionParams | typeof electionStateParams | typeof electionDistrictParams,
+      raw: Record<string, string>,
+    ) => {
+      const parsed = schema.safeParse(raw);
+      expect(parsed.success).toBe(false);
+      const issue = parsed.error?.issues.find((i) => i.path[0] === 'office');
+      if (!issue) throw new Error('no office issue raised');
+      return issue.message;
+    };
+
+    it.each(['Z', 'S', 'H'])(
+      'presidential template rejects %s and points at senate and house',
+      (office) => {
+        const message = officeMessage(electionParams, { cycle: '2024', office });
+        expect(message).toContain('openfec://election/{cycle}/S/{state}');
+        expect(message).toContain('openfec://election/{cycle}/H/{state}/{district}');
+      },
+    );
+
+    it.each(['Z', 'P'])(
+      'state template rejects %s and points at presidential and district',
+      (office) => {
+        const message = officeMessage(electionStateParams, { cycle: '2024', office, state: 'AZ' });
+        expect(message).toContain('openfec://election/{cycle}/P');
+        expect(message).toContain('openfec://election/{cycle}/H/{state}/{district}');
+      },
+    );
+
+    it.each(['Z', 'S', 'P'])(
+      'district template rejects %s and points at presidential and senate',
+      (office) => {
+        const message = officeMessage(electionDistrictParams, {
+          cycle: '2024',
+          office,
+          state: 'CA',
+          district: '12',
+        });
+        expect(message).toContain('openfec://election/{cycle}/P');
+        expect(message).toContain('openfec://election/{cycle}/S/{state}');
+      },
+    );
+
+    it('surfaces the custom message through a thrown parse', () => {
+      expect(() => electionParams.parse({ cycle: '2024', office: 'Z' })).toThrow(
+        /openfec:\/\/election\/\{cycle\}\/S\/\{state\}/,
+      );
     });
   });
 });

@@ -11,6 +11,10 @@ import type { FecParams } from '@/services/openfec/types.js';
 const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
 type OfficeCode = keyof typeof OFFICE_API_FORM;
 
+/** Same guidance `openfec_lookup_elections` gives when a race search matches nothing. */
+const EMPTY_RESULT_NOTICE =
+  'No election races matched. Verify the cycle is an even year, the state code is correct for senate/house races, and the district exists for the given state.';
+
 /** Shared handler logic for all election resource URI variants. */
 async function fetchElection(
   params: { cycle: string; office: OfficeCode; state?: string; district?: string },
@@ -35,16 +39,21 @@ async function fetchElection(
   });
 
   /**
-   * The URI carries no page argument, so a race with more candidates than one
-   * upstream page always truncates here. Return the pagination block and name
-   * the tool that can walk the remaining pages rather than hiding the gap.
+   * An empty list is indistinguishable from a race nobody entered unless it
+   * says why it may be empty — an odd cycle, a wrong state code, or a district
+   * the state does not have. The URI carries no page argument, so a race with
+   * more candidates than one upstream page always truncates here; return the
+   * pagination block and name the tool that can walk the remaining pages
+   * rather than hiding the gap.
    */
-  const truncation =
-    result.pagination.pages > 1
-      ? {
-          truncation_notice: `Showing page 1 of ${result.pagination.pages} (${result.pagination.count} candidates total). This resource returns only the first page — use the openfec_lookup_elections tool with mode "search" and a page argument to retrieve the rest.`,
-        }
-      : {};
+  const notice =
+    result.results.length === 0
+      ? { empty_result_notice: EMPTY_RESULT_NOTICE }
+      : result.pagination.pages > 1
+        ? {
+            truncation_notice: `Showing page 1 of ${result.pagination.pages} (${result.pagination.count} candidates total). This resource returns only the first page — use the openfec_lookup_elections tool with mode "search" and a page argument to retrieve the rest.`,
+          }
+        : {};
 
   return {
     cycle: params.cycle,
@@ -53,7 +62,7 @@ async function fetchElection(
     district: params.district,
     candidates: result.results,
     pagination: result.pagination,
-    ...truncation,
+    ...notice,
   };
 }
 
@@ -65,7 +74,12 @@ export const electionResource = resource('openfec://election/{cycle}/{office}', 
   mimeType: 'application/json',
   params: z.object({
     cycle: z.string().describe('Election cycle year (e.g., 2024)'),
-    office: z.enum(['P']).describe('Office code: P=President.'),
+    office: z
+      .enum(['P'], {
+        error:
+          'This template serves presidential races only (office P). For a senate race use openfec://election/{cycle}/S/{state}; for a house race use openfec://election/{cycle}/H/{state}/{district}, or openfec://election/{cycle}/H/{state} for an at-large state.',
+      })
+      .describe('Office code: P=President.'),
   }),
   handler: (params, ctx) => fetchElection(params, ctx),
 });
@@ -78,7 +92,12 @@ export const electionStateResource = resource('openfec://election/{cycle}/{offic
   mimeType: 'application/json',
   params: z.object({
     cycle: z.string().describe('Election cycle year (e.g., 2024)'),
-    office: z.enum(['S', 'H']).describe('Office code: S=Senate, H=House (at-large).'),
+    office: z
+      .enum(['S', 'H'], {
+        error:
+          'This template serves senate races (office S) and at-large house races (office H). For a presidential race use openfec://election/{cycle}/P; for a house district race use openfec://election/{cycle}/H/{state}/{district}.',
+      })
+      .describe('Office code: S=Senate, H=House (at-large).'),
     state: z.string().describe('Two-letter US state code (e.g., AZ)'),
   }),
   handler: (params, ctx) => fetchElection(params, ctx),
@@ -93,7 +112,12 @@ export const electionDistrictResource = resource(
     mimeType: 'application/json',
     params: z.object({
       cycle: z.string().describe('Election cycle year (e.g., 2024)'),
-      office: z.enum(['H']).describe('Office code: H=House.'),
+      office: z
+        .enum(['H'], {
+          error:
+            'This template serves house district races only (office H). For a presidential race use openfec://election/{cycle}/P; for a senate race use openfec://election/{cycle}/S/{state}.',
+        })
+        .describe('Office code: H=House.'),
       state: z.string().describe('Two-letter US state code (e.g., CA)'),
       district: z.string().describe('Two-digit district number (e.g., 12)'),
     }),
