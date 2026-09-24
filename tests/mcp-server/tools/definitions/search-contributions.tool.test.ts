@@ -734,6 +734,44 @@ describe('searchContributions', () => {
       expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
       expect(text).toContain('SMITH, ANNA');
     });
+
+    it('renders a donor that is itself a committee compactly instead of as a JSON dump', () => {
+      const contributor = {
+        committee_id: 'C00010603',
+        name: 'MINNESOTA DFL',
+        committee_type_full: 'Party - Qualified',
+        designation_full: 'Unauthorized',
+        party_full: 'DEMOCRATIC-FARMER-LABOR',
+        state: 'MN',
+        treasurer_name: 'PARK, JOHN',
+        designated_agent_name: 'AGENT, ANN',
+        cycles: [1976, 1978, 2024],
+        sponsor: { nested: { deeper: 'NESTED VALUE' } },
+      };
+      const blocks = searchContributions.format!({
+        results: [
+          contributionRecord({ contributor_name: 'MINNESOTA DFL', contributor }),
+          contributionRecord(),
+        ],
+        mode: 'itemized',
+        committee: nestedCommittee('C00703975'),
+        next_cursor: null,
+        count: 2,
+        search_criteria: {},
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('{"');
+      expect(text).toContain('  contributor: MINNESOTA DFL (C00010603)');
+      expect(text).toContain(
+        '    Party - Qualified · Unauthorized · DEMOCRATIC-FARMER-LABOR · MN · Treasurer: PARK, JOHN',
+      );
+      expect(text).not.toContain('AGENT, ANN');
+      expect(text).not.toContain('1976');
+      expect(text).not.toContain('NESTED VALUE');
+      // An individual donor's row carries no contributor record and renders as before.
+      expect(text).toContain('**DOE, JANE**');
+    });
   });
 
   describe('exhausted cursor', () => {

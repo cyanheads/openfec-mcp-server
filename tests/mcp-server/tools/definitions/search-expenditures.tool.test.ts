@@ -452,6 +452,90 @@ describe('searchExpenditures', () => {
       expect(mockService.getExpendituresByCandidate).toHaveBeenCalledOnce();
     });
 
+    it('sends election_full=true upstream in by_candidate mode and echoes it on both surfaces', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'P80000722',
+        cycle: 2024,
+      });
+      expect(input.election_full).toBeUndefined();
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(mockService.getExpendituresByCandidate.mock.calls[0]![0]).toMatchObject({
+        election_full: true,
+        cycle: 2024,
+      });
+      expect(result.search_criteria).toMatchObject({ election_full: true, cycle: 2024 });
+      expect(formatText(searchExpenditures.format!(result))).toContain('election_full=true');
+    });
+
+    it('forwards an explicit election_full=false for the two-year cycle alone', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'P80000722',
+        cycle: 2024,
+        election_full: false,
+      });
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(mockService.getExpendituresByCandidate.mock.calls[0]![0].election_full).toBe(false);
+      expect(result.search_criteria).toMatchObject({ election_full: false });
+      expect(formatText(searchExpenditures.format!(result))).toContain('election_full=false');
+    });
+
+    it('echoes the effective election_full on an empty by_candidate response too', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 0, pages: 0 },
+        results: [],
+      });
+
+      const input = searchExpenditures.input.parse({
+        mode: 'by_candidate',
+        candidate_id: 'P80000722',
+      });
+      const result = await searchExpenditures.handler(input, ctx);
+
+      expect(result.search_criteria).toMatchObject({ election_full: true });
+      expect(formatText(searchExpenditures.format!(result))).toContain('election_full: true');
+    });
+
+    it.each([
+      [{ election_full: true }, ['election_full']],
+      [{ election_full: false }, ['election_full']],
+      [{ election_full: true, page: 2 }, ['page', 'election_full']],
+    ])(
+      'rejects %o in itemized mode, whose endpoint has no such parameter',
+      async (extra, named) => {
+        const input = searchExpenditures.input.parse({
+          mode: 'itemized',
+          candidate_id: 'P80000722',
+          ...extra,
+        });
+        const err = (await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
+          (e: unknown) => e,
+        )) as McpError;
+
+        expect(err).toBeInstanceOf(McpError);
+        expect(err.data).toMatchObject({
+          reason: 'inputs_not_applicable_to_mode',
+          inapplicable_inputs: named,
+          recovery: { hint: expect.stringContaining('election_full') },
+        });
+        expect(err.message).toContain('election_full');
+        expect(mockService.searchExpenditures).not.toHaveBeenCalled();
+      },
+    );
+
     it('hoists the shared committee out of the rows when scoped to one committee_id', async () => {
       mockService.searchExpenditures.mockResolvedValueOnce({
         pagination: { count: 2, per_page: 20 },
@@ -928,6 +1012,60 @@ describe('searchExpenditures', () => {
       expect(text).toContain('**Committee (applies to every row below):** PAC C00111111');
       expect(text.match(/PAC C00111111/g)).toHaveLength(1);
       expect(text).toContain('ROE, RICHARD');
+    });
+
+    it('renders an un-hoisted per-row committee compactly instead of as a JSON dump', () => {
+      const deep = {
+        ...nestedCommittee('C00111111'),
+        designation_full: 'Unauthorized',
+        state: 'DC',
+        designated_agent_street1: '430 SOUTH CAPITOL STREET SE',
+        sponsor: { name: 'SPONSOR ORG', address: { street: '1 MAIN ST' } },
+      };
+      /** The handler drops the nested candidate sub-object before format() sees a row. */
+      const { candidate: _first, ...first }: Record<string, unknown> = nestedExpenditureRecord(
+        'C00111111',
+        { committee: deep },
+      );
+      const { candidate: _second, ...second }: Record<string, unknown> = nestedExpenditureRecord(
+        'C00222222',
+        { payee_name: 'SECOND PAYEE' },
+      );
+      const blocks = searchExpenditures.format!({
+        results: [first, second],
+        mode: 'itemized',
+        next_cursor: null,
+        count: 2,
+        search_criteria: { mode: 'itemized', candidate_id: 'H2OH01234' },
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('{"');
+      expect(text).toContain('  committee: PAC C00111111 (C00111111)');
+      expect(text).toContain('    Super PAC · Unauthorized · DC · Treasurer: ROE, RICHARD');
+      expect(text).toContain('  committee: PAC C00222222 (C00222222)');
+      // Fields past the summary — first level and nested — stay on structuredContent only.
+      expect(text).not.toContain('430 SOUTH CAPITOL');
+      expect(text).not.toContain('SPONSOR ORG');
+      expect(text).not.toContain('1 MAIN ST');
+      expect(text).not.toContain('2020');
+      // The rest of each row still renders.
+      expect(text).toContain('MEDIA PARTNERS LLC');
+      expect(text).toContain('SECOND PAYEE');
+    });
+
+    it('falls back to the committee ID when a per-row committee has no name', () => {
+      const blocks = searchExpenditures.format!({
+        results: [expenditureRecord({ committee: { committee_id: 'C00999999' } })],
+        mode: 'itemized',
+        next_cursor: null,
+        count: 1,
+        search_criteria: {},
+      });
+
+      const text = formatText(blocks);
+      expect(text).toContain('  committee: C00999999 (C00999999)');
+      expect(text).not.toContain('{"');
     });
   });
 

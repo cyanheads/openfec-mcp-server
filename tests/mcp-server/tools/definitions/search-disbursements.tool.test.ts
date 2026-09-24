@@ -624,6 +624,38 @@ describe('searchDisbursements', () => {
       expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
       expect(text).toContain('SMITH, ANNA');
     });
+
+    it('renders a recipient that is itself a committee compactly instead of as a JSON dump', () => {
+      const recipient_committee = {
+        committee_id: 'C00114439',
+        name: 'WA STATE DEMOCRATIC CENTRAL COMMITTEE',
+        committee_type_full: 'Party - Qualified',
+        designation_full: 'Unauthorized',
+        state: 'WA',
+        treasurer_name: 'ROE, RICHARD',
+        affiliated_committee_name: 'DNC STATE PARTY VICTORY FUND',
+        cycles: [1976, 2024],
+        sponsor: { nested: { deeper: 'NESTED VALUE' } },
+      };
+      const blocks = searchDisbursements.format!({
+        results: [disbursementRecord({ recipient_committee }), disbursementRecord()],
+        mode: 'itemized',
+        committee: nestedCommittee('C00703975'),
+        next_cursor: null,
+        count: 2,
+        search_criteria: {},
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('{"');
+      expect(text).toContain(
+        '  recipient_committee: WA STATE DEMOCRATIC CENTRAL COMMITTEE (C00114439)',
+      );
+      expect(text).toContain('    Party - Qualified · Unauthorized · WA · Treasurer: ROE, RICHARD');
+      expect(text).not.toContain('DNC STATE PARTY VICTORY FUND');
+      expect(text).not.toContain('1976');
+      expect(text).not.toContain('NESTED VALUE');
+    });
   });
 
   describe('exhausted cursor', () => {

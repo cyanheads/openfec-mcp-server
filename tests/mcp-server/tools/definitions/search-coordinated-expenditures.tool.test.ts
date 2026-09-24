@@ -257,6 +257,39 @@ describe('searchCoordinatedExpenditures', () => {
       expect(text).toContain('REPUBLICAN NATIONAL COMMITTEE (C00003418)');
     });
 
+    it('renders an un-hoisted per-row committee compactly instead of as a JSON dump', () => {
+      const { subordinate_committee: _dropped, ...first } = row({
+        committee: {
+          ...committee(),
+          treasurer_name: 'DOE, JANE',
+          street_1: '310 FIRST STREET SE',
+          cycles: [1976, 1978],
+          sponsor: { nested: { deeper: 'NESTED VALUE' } },
+        },
+      });
+      const { subordinate_committee: _alsoDropped, ...second } = row({
+        committee_id: 'C00010603',
+        committee: { ...committee('C00010603'), name: 'DNC SERVICES CORP' },
+      });
+      const blocks = searchCoordinatedExpenditures.format!({
+        results: [first, second],
+        pagination: { ...PAGE, count: 2 },
+        search_criteria: { candidate_id: 'P80001571' },
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('{"');
+      expect(text).toContain('  committee: REPUBLICAN NATIONAL COMMITTEE (C00003418)');
+      expect(text).toContain(
+        '    Party - Qualified · Unauthorized · REPUBLICAN PARTY · DC · Treasurer: DOE, JANE',
+      );
+      expect(text).toContain('  committee: DNC SERVICES CORP (C00010603)');
+      expect(text).not.toContain('310 FIRST STREET');
+      expect(text).not.toContain('1976');
+      expect(text).not.toContain('NESTED VALUE');
+      expect(text).toContain('payee_name: NATIONAL MEDIA RESEARCH');
+    });
+
     it('renders the empty state with the criteria echo and a recovery hint', () => {
       const blocks = searchCoordinatedExpenditures.format!({
         results: [],
