@@ -26,8 +26,13 @@ import {
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
 import {
+  disclosePageBound,
   formatHoistedCommittee,
+  formatRowCommittee,
   HoistedCommitteeSchema,
+  PageBoundEnrichment,
+  PageBoundTrailer,
+  PER_PAGE_CAPS,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -77,7 +82,15 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       .describe(
         'Page number (1-indexed). Read pagination.pages in the response to see how many pages exist.',
       ),
-    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe(
+        `Results per page. At most ${PER_PAGE_CAPS.coordinatedExpenditures.committeeScoped} are requested upstream when scoped by committee_id and ${PER_PAGE_CAPS.coordinatedExpenditures.perRowCommittee} otherwise, keeping the response under a 100,000-byte budget. A page bounded below your request reports truncated and cap, and pagination.per_page echoes the size applied — page numbers count at that size, so continue with the next page number.`,
+      ),
   }),
 
   output: z.object({
@@ -101,9 +114,11 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       .string()
       .optional()
       .describe(
-        'Guidance when the response carries no coordinated expenditures: how to broaden a search that matched nothing, or which requested position ran out when expenditures did match.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, or that the page was bounded below the per_page requested and how to continue.',
       ),
+    ...PageBoundEnrichment,
   },
+  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     if (input.committee_id) validateCommitteeId(input.committee_id);
@@ -126,7 +141,19 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
 
     const fec = getOpenFecService();
 
-    const params: FecParams = { page: input.page, per_page: input.per_page };
+    /**
+     * A committee-scoped page hoists the committee record out of its rows; a
+     * page spanning committees keeps one per row. Upstream paginates at the
+     * size sent, so `pages` and every page number are counted at the capped
+     * size, which the response echoes as `pagination.per_page`.
+     */
+    const perPage = Math.min(
+      input.per_page,
+      input.committee_id
+        ? PER_PAGE_CAPS.coordinatedExpenditures.committeeScoped
+        : PER_PAGE_CAPS.coordinatedExpenditures.perRowCommittee,
+    );
+    const params: FecParams = { page: input.page, per_page: perPage };
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
     if (input.cycle !== undefined) params.cycle = input.cycle;
@@ -154,6 +181,12 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
         'No coordinated party expenditures matched. Try a different cycle, drop the committee_id or candidate_id filter, or confirm the committee is a party committee — only party committees report Schedule F.',
       );
     }
+    disclosePageBound(ctx, {
+      requested: input.per_page,
+      applied: perPage,
+      shown: result.results.length,
+      continuation: { kind: 'page', pagination: result.pagination },
+    });
 
     /**
      * Rows carry the spending committee as `committee`, hoisted when the caller
@@ -193,7 +226,7 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       const candidate = str(row, 'candidate_name') || str(row, 'candidate_id') || 'Unknown';
       const date = str(row, 'expenditure_date').slice(0, 10);
       const header = `**${fmt$(row.expenditure_amount)} for ${candidate}**${date ? ` — ${date}` : ''}`;
-      const fields = renderRecord(row, headerKeys);
+      const fields = renderRecord(row, headerKeys, { committee: formatRowCommittee });
       lines.push(fields ? `${header}\n${fields}` : header);
     }
 

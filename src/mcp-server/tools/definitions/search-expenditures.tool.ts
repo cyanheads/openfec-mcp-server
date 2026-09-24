@@ -33,8 +33,13 @@ import {
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
 import {
+  disclosePageBound,
   formatHoistedCommittee,
+  formatRowCommittee,
   HoistedCommitteeSchema,
+  PageBoundEnrichment,
+  PageBoundTrailer,
+  PER_PAGE_CAPS,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -58,6 +63,13 @@ const BY_CANDIDATE_OFFICE: Record<'H' | 'S' | 'P', string> = {
 const MOST_RECENT_DEFAULT = true;
 
 /**
+ * Applied when the caller leaves `election_full` unset in by_candidate mode —
+ * OpenFEC's own default, and the one `openfec_lookup_elections` applies to the
+ * same flag.
+ */
+const ELECTION_FULL_DEFAULT = true;
+
+/**
  * Inputs the itemized Schedule E endpoint accepts and `/by_candidate/` does
  * not. Sending one in by_candidate mode used to drop it silently, returning an
  * unnarrowed result set that looks like an answer to the narrowed question.
@@ -77,7 +89,7 @@ const ITEMIZED_ONLY_INPUTS = [
 
 /** What `/by_candidate/` does accept — quoted in the rejection. */
 const BY_CANDIDATE_INPUTS =
-  'committee_id, candidate_id, support_oppose, candidate_office, candidate_office_state, candidate_office_district, cycle, mode, page, per_page';
+  'committee_id, candidate_id, support_oppose, candidate_office, candidate_office_state, candidate_office_district, cycle, election_full, mode, page, per_page';
 const ITEMIZED_INPUTS = [
   'mode',
   'committee_id',
@@ -122,8 +134,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     {
       reason: 'inputs_not_applicable_to_mode',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'Itemized mode receives an explicit page number that its keyset endpoint cannot apply',
-      recovery: 'Remove page and use per_page plus cursor to navigate itemized results.',
+      when: 'Itemized mode receives an explicit page number or election_full, neither of which its keyset endpoint can apply',
+      recovery:
+        'Remove page and election_full. Navigate itemized results with per_page plus cursor, and use mode "by_candidate" for totals over a full election period.',
     },
   ],
 
@@ -181,7 +194,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .number()
       .optional()
       .describe(
-        'Two-year election cycle (e.g., 2024). Even years only. Itemized mode defaults to the current cycle when omitted — Schedule E spans all history and an unscoped scan times out upstream. Pass an explicit cycle to search an earlier period.',
+        'Two-year election cycle (e.g., 2024). Even years only. Itemized mode defaults to the current cycle when omitted — Schedule E spans all history and an unscoped scan times out upstream. Pass an explicit cycle to search an earlier period. In by_candidate mode the cycle names the election, and election_full decides whether the totals cover the full election period ending in it (4yr president, 6yr senate, 2yr house) or only this two-year cycle.',
       ),
     min_date: z
       .string()
@@ -209,6 +222,12 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Only the most recent version of amended filings. Itemized only — by_candidate rejects it. Defaults to true in itemized mode when omitted; pass false to see superseded versions of amended filings.',
       ),
+    election_full: z
+      .boolean()
+      .optional()
+      .describe(
+        'by_candidate only: expand cycle to the full election period (4yr president, 6yr senate, 2yr house) instead of the two-year cycle alone. Defaults to true when omitted; itemized mode rejects it, since that endpoint has no such parameter. Carries no schema default, so an explicit value is distinguishable from an omission.',
+      ),
     sort: z
       .enum([
         'expenditure_date',
@@ -230,7 +249,15 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Page number (1-indexed) for by_candidate mode. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for by_candidate.',
       ),
-    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe(
+        `Results per page. Itemized mode sends at most ${PER_PAGE_CAPS.expenditures.committeeScoped} upstream when scoped by committee_id and ${PER_PAGE_CAPS.expenditures.perRowCommittee} otherwise, keeping the response under a 100,000-byte budget; a page bounded below your request reports truncated and cap, and next_cursor continues it.`,
+      ),
     cursor: z
       .string()
       .optional()
@@ -288,9 +315,11 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, or that the total is an estimate.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, that the total is an estimate, or that the page was bounded below the per_page requested and how to continue.',
       ),
+    ...PageBoundEnrichment,
   },
+  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     const fec = getOpenFecService();
@@ -303,13 +332,21 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     /*  Itemized expenditures (keyset/SEEK)                             */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
-      if (input.page !== undefined) {
-        throw ctx.fail('inputs_not_applicable_to_mode', 'Mode "itemized" cannot apply page.', {
-          mode,
-          inapplicable_inputs: ['page'],
-          supported_inputs: [...ITEMIZED_INPUTS],
-          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
-        });
+      const inapplicableInputs = [
+        ...(input.page !== undefined ? ['page'] : []),
+        ...(input.election_full !== undefined ? ['election_full'] : []),
+      ];
+      if (inapplicableInputs.length > 0) {
+        throw ctx.fail(
+          'inputs_not_applicable_to_mode',
+          `Mode "itemized" cannot apply ${inapplicableInputs.join(', ')} — /schedules/schedule_e/ paginates by cursor and has no election_full parameter.`,
+          {
+            mode,
+            inapplicable_inputs: inapplicableInputs,
+            supported_inputs: [...ITEMIZED_INPUTS],
+            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
+          },
+        );
       }
 
       validateRange({
@@ -342,8 +379,20 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
        * keeps an omitted `most_recent` and an explicit `true` on one identity.
        */
       const applied = { ...input, cycle, most_recent: mostRecent };
+      /**
+       * A committee-scoped page hoists the committee record out of its rows; a
+       * page spanning committees keeps one per row, roughly doubling its weight.
+       * The cap lowers the upstream request itself, so the keyset cursor is
+       * minted from the last row actually returned and stays exact.
+       */
+      const perPage = Math.min(
+        input.per_page,
+        input.committee_id
+          ? PER_PAGE_CAPS.expenditures.committeeScoped
+          : PER_PAGE_CAPS.expenditures.perRowCommittee,
+      );
       const params: FecParams = {
-        per_page: input.per_page,
+        per_page: perPage,
         most_recent: mostRecent,
         cycle,
       };
@@ -398,6 +447,13 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       } else if (result.pagination.is_count_exact === false) {
         ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
       }
+      disclosePageBound(ctx, {
+        requested: input.per_page,
+        applied: perPage,
+        shown: result.results.length,
+        continuation: { kind: 'cursor', nextCursor: result.nextCursor },
+        approximate: result.pagination.is_count_exact === false,
+      });
 
       /**
        * Schedule E does not require a committee_id, so a candidate- or
@@ -459,7 +515,18 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       });
     }
 
-    const params: FecParams = { page: input.page ?? 1, per_page: input.per_page };
+    /**
+     * `election_full` carries no schema default, so the effective value is
+     * resolved here and both sent and echoed — upstream would apply the same
+     * default silently, reporting a full election period under a criteria echo
+     * that named only the two-year cycle.
+     */
+    const electionFull = input.election_full ?? ELECTION_FULL_DEFAULT;
+    const params: FecParams = {
+      page: input.page ?? 1,
+      per_page: input.per_page,
+      election_full: electionFull,
+    };
 
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
@@ -489,7 +556,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       results: result.results,
       mode: 'by_candidate' as const,
       pagination: toPagination(result.pagination),
-      search_criteria: buildSearchCriteria(input),
+      search_criteria: buildSearchCriteria({ ...input, election_full: electionFull }),
     };
   },
 
@@ -523,7 +590,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       const indicator = supportOpposeLabel(r.support_oppose_indicator);
       const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
       lines.push(
-        `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']))}`,
+        `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']), { committee: formatRowCommittee })}`,
       );
     }
     if (isItemized && result.next_cursor) {

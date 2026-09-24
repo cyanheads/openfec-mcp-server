@@ -24,6 +24,13 @@ import {
   toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId } from './utils/id-validators.js';
+import {
+  disclosePageBound,
+  dropEmptyFields,
+  PageBoundEnrichment,
+  PageBoundTrailer,
+  PER_PAGE_CAPS,
+} from './utils/trim-schedule-row.js';
 
 /**
  * `/candidates/totals/` is its own paged endpoint, not a view onto the candidate
@@ -119,7 +126,9 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .min(1)
       .max(100)
       .optional()
-      .describe('Search results per page. Defaults to 20 on the search path.'),
+      .describe(
+        `Search results per page. Defaults to 20 on the search path. With include_totals, at most ${PER_PAGE_CAPS.candidatesWithTotals.oneCycle} candidates are requested when cycle or election_year scopes the totals and ${PER_PAGE_CAPS.candidatesWithTotals.allCycles} when the totals span every cycle, keeping the response under a 100,000-byte budget. A page bounded below your request reports truncated and cap, and pagination.per_page echoes the size applied — page numbers count at that size, so continue with the next page number.`,
+      ),
   }),
 
   output: z.object({
@@ -156,9 +165,11 @@ export const searchCandidates = tool('openfec_search_candidates', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response carries no candidates: how to broaden a search that matched nothing, or which requested position ran out when candidates did match.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when candidates did match, or that the page was bounded below the per_page requested and how to continue.',
       ),
+    ...PageBoundEnrichment,
   },
+  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     const fec = getOpenFecService();
@@ -169,6 +180,8 @@ export const searchCandidates = tool('openfec_search_candidates', {
 
     let candidateResult: Awaited<ReturnType<typeof fec.getCandidate>>;
     let effectiveCriteria: Record<string, unknown>;
+    /** The per_page asked for and the one sent — search path only. */
+    let pageBound: { requested: number; applied: number } | undefined;
 
     if (input.candidate_id) {
       const inapplicableInputs = [
@@ -202,7 +215,21 @@ export const searchCandidates = tool('openfec_search_candidates', {
     } else {
       // Search with filters
       const page = input.page ?? 1;
-      const perPage = input.per_page ?? 20;
+      const requested = input.per_page ?? 20;
+      /**
+       * Totals bring one row per cycle each candidate filed in, so a page with
+       * totals is capped — harder when the totals span every cycle. Upstream
+       * paginates at the size sent, so page numbers count at the capped size.
+       */
+      const perPage = shouldIncludeTotals
+        ? Math.min(
+            requested,
+            input.cycle !== undefined || input.election_year !== undefined
+              ? PER_PAGE_CAPS.candidatesWithTotals.oneCycle
+              : PER_PAGE_CAPS.candidatesWithTotals.allCycles,
+          )
+        : requested;
+      pageBound = { requested, applied: perPage };
       const params: FecParams = {
         q: input.query,
         state: input.state,
@@ -227,7 +254,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
       });
     }
 
-    const candidates = candidateResult.results as Record<string, unknown>[];
+    const candidates = (candidateResult.results as Record<string, unknown>[]).map(dropEmptyFields);
 
     if (input.candidate_id && candidates.length === 0) {
       throw ctx.fail('candidate_not_found', `Candidate ${input.candidate_id} not found.`, {
@@ -259,7 +286,7 @@ export const searchCandidates = tool('openfec_search_candidates', {
       let page = 1;
       do {
         const totalsResult = await fec.getCandidateTotals({ ...totalsParams, page }, ctx);
-        rows.push(...(totalsResult.results as Record<string, unknown>[]));
+        rows.push(...(totalsResult.results as Record<string, unknown>[]).map(dropEmptyFields));
         totalsPages = totalsResult.pagination.pages;
         page += 1;
       } while (page <= totalsPages && page <= TOTALS_MAX_PAGES);
@@ -286,6 +313,13 @@ export const searchCandidates = tool('openfec_search_candidates', {
       ctx.enrich.notice(
         'No candidates matched. Try a partial name, remove filters like state or office, or check a different election cycle.',
       );
+    }
+    if (pageBound) {
+      disclosePageBound(ctx, {
+        ...pageBound,
+        shown: candidates.length,
+        continuation: { kind: 'page', pagination: candidateResult.pagination },
+      });
     }
 
     return {

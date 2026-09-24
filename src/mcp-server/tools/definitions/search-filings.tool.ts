@@ -25,6 +25,13 @@ import {
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
+import {
+  disclosePageBound,
+  dropEmptyFields,
+  PageBoundEnrichment,
+  PageBoundTrailer,
+  PER_PAGE_CAPS,
+} from './utils/trim-schedule-row.js';
 
 export const searchFilings = tool('openfec_search_filings', {
   description:
@@ -70,7 +77,15 @@ export const searchFilings = tool('openfec_search_filings', {
       .describe('Earliest date FEC received the filing (YYYY-MM-DD).'),
     max_receipt_date: z.string().optional().describe('Latest FEC receipt date (YYYY-MM-DD).'),
     page: z.number().int().min(1).default(1).describe('Page number (1-indexed).'),
-    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe(
+        `Results per page. At most ${PER_PAGE_CAPS.filings} are requested upstream, keeping the response under a 100,000-byte budget. A page bounded below your request reports truncated and cap, and pagination.per_page echoes the size applied — page numbers count at that size, so continue with the next page number.`,
+      ),
   }),
 
   output: z.object({
@@ -93,9 +108,11 @@ export const searchFilings = tool('openfec_search_filings', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when filings did match, or that the total is an estimate.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when filings did match, that the total is an estimate, or that the page was bounded below the per_page requested and how to continue.',
       ),
+    ...PageBoundEnrichment,
   },
+  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     if (input.committee_id) validateCommitteeId(input.committee_id);
@@ -111,6 +128,8 @@ export const searchFilings = tool('openfec_search_filings', {
 
     const fec = getOpenFecService();
 
+    /** Upstream paginates at the size sent, so page numbers count at the capped size. */
+    const perPage = Math.min(input.per_page, PER_PAGE_CAPS.filings);
     const params: FecParams = {
       committee_id: input.committee_id,
       candidate_id: input.candidate_id,
@@ -124,7 +143,7 @@ export const searchFilings = tool('openfec_search_filings', {
       min_receipt_date: input.min_receipt_date,
       max_receipt_date: input.max_receipt_date,
       page: input.page,
-      per_page: input.per_page,
+      per_page: perPage,
     };
 
     ctx.log.info('Searching filings', {
@@ -145,9 +164,16 @@ export const searchFilings = tool('openfec_search_filings', {
     } else if (result.pagination.is_count_exact === false) {
       ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
     }
+    disclosePageBound(ctx, {
+      requested: input.per_page,
+      applied: perPage,
+      shown: result.results.length,
+      continuation: { kind: 'page', pagination: result.pagination },
+      approximate: result.pagination.is_count_exact === false,
+    });
 
     return {
-      results: result.results,
+      results: result.results.map(dropEmptyFields),
       pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };

@@ -32,8 +32,13 @@ import {
 import { validateCommitteeId } from './utils/id-validators.js';
 import { validateRange } from './utils/range-validators.js';
 import {
+  disclosePageBound,
   formatHoistedCommittee,
+  formatRowCommittee,
   HoistedCommitteeSchema,
+  PageBoundEnrichment,
+  PageBoundTrailer,
+  PER_PAGE_CAPS,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -163,7 +168,15 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .describe(
         'Page number (1-indexed) for aggregate modes. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for aggregates.',
       ),
-    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
+    per_page: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe(
+        `Results per page. Itemized mode sends at most ${PER_PAGE_CAPS.disbursements} upstream, keeping the response under a 100,000-byte budget; a page bounded below your request reports truncated and cap, and next_cursor continues it.`,
+      ),
     cursor: z
       .string()
       .optional()
@@ -221,9 +234,11 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when disbursements did match, or that the total is an estimate.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when disbursements did match, that the total is an estimate, or that the page was bounded below the per_page requested and how to continue.',
       ),
+    ...PageBoundEnrichment,
   },
+  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     const fec = getOpenFecService();
@@ -266,10 +281,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
        * identity are both built from the effective values, not the raw input.
        */
       const applied = { ...input, cycle };
+      /** Lowered upstream, never trimmed after the fetch, so the keyset cursor stays exact. */
+      const perPage = Math.min(input.per_page, PER_PAGE_CAPS.disbursements);
       const params: FecParams = {
         committee_id: input.committee_id,
         two_year_transaction_period: cycle,
-        per_page: input.per_page,
+        per_page: perPage,
       };
 
       if (input.recipient_name) params.recipient_name = input.recipient_name;
@@ -311,6 +328,13 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       } else if (result.pagination.is_count_exact === false) {
         ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
       }
+      disclosePageBound(ctx, {
+        requested: input.per_page,
+        applied: perPage,
+        shown: result.results.length,
+        continuation: { kind: 'cursor', nextCursor: result.nextCursor },
+        approximate: result.pagination.is_count_exact === false,
+      });
 
       /** committee_id is required here, so every row carries the same committee. */
       const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
@@ -409,7 +433,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       }
       for (const r of result.results) {
         const name = String(r.recipient_name ?? 'Unknown');
-        lines.push(`**${name}**\n${renderRecord(r, new Set(['recipient_name']))}`);
+        lines.push(
+          `**${name}**\n${renderRecord(r, new Set(['recipient_name']), { recipient_committee: formatRowCommittee })}`,
+        );
       }
       if (result.next_cursor) {
         lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);

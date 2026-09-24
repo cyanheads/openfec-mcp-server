@@ -6,6 +6,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import { isRecord } from '@cyanheads/mcp-ts-core/utils';
 import type { PageResult } from '@/services/openfec/types.js';
 
 /**
@@ -234,15 +235,26 @@ export function fmtTotal(count: number, approximate?: boolean, unit = 'total'): 
   return approximate ? `≈${count} ${unit} (approximate)` : `${count} ${unit}`;
 }
 
+/** Renders one known nested-record field in place of the generic JSON fallback. */
+export type RecordFieldRenderer = (value: Record<string, unknown>) => string;
+
 /**
  * Render all non-empty fields from a record as indented `key: value` lines.
- * Pass `skip` to exclude fields already rendered in a header line.
+ * Pass `skip` to exclude fields already rendered in a header line, and
+ * `renderers` to give a field with a known nested-record shape its own
+ * rendering — applied only when the value is a plain object, so anything else
+ * under that key still takes the generic path.
  */
-export function renderRecord(rec: Record<string, unknown>, skip?: ReadonlySet<string>): string {
+export function renderRecord(
+  rec: Record<string, unknown>,
+  skip?: ReadonlySet<string>,
+  renderers?: Readonly<Record<string, RecordFieldRenderer>>,
+): string {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(rec)) {
     if (skip?.has(key)) continue;
-    const text = renderValue(value);
+    const render = renderers?.[key];
+    const text = render && isRecord(value) ? render(value) : renderValue(value);
     if (text !== null) lines.push(`  ${key}: ${text}`);
   }
   return lines.join('\n');
