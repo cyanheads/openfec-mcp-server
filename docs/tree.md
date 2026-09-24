@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-09-19 20:42:19
+Generated on: 2026-09-24 01:18:32
 
 ```text
 openfec-mcp-server/
@@ -185,6 +185,8 @@ openfec-mcp-server/
 ├── tests/
 │   ├── config/
 │   │   └── server-config.test.ts
+│   ├── fixtures/
+│   │   └── heaviest-rows.json
 │   ├── mcp-server/
 │   │   ├── prompts/
 │   │   │   └── definitions/
@@ -206,6 +208,7 @@ openfec-mcp-server/
 │   │           ├── get-legal-document.tool.test.ts
 │   │           ├── lookup-calendar.tool.test.ts
 │   │           ├── lookup-elections.tool.test.ts
+│   │           ├── response-bounds.test.ts
 │   │           ├── search-candidates.tool.test.ts
 │   │           ├── search-committees.tool.test.ts
 │   │           ├── search-contributions.tool.test.ts

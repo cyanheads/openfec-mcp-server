@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.8.4](changelog/0.8.x/0.8.4.md) — 2026-09-23
+
+High-volume pages from six search tools are bounded to 100,000 bytes per surface via null-field drop and per-tool per_page caps, nested committee records render compactly instead of as raw JSON, and by_candidate expenditure totals take an explicit election_full flag
+
 ## [0.8.3](changelog/0.8.x/0.8.3.md) — 2026-09-23
 
 Prompts resolve a cycle's principal committee via the correct source instead of current designation, committee reads fail on a rejected totals fetch, and election resources add empty-result guidance and a calendar district filter
