@@ -72,7 +72,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 - Full-text name search, or a direct lookup by FEC candidate ID (H/S/P + eight letters or digits) that returns full detail
 - Filters: state, district, office, party, cycle, election_year, incumbent_challenge, candidate_status, has_raised_funds
 - `include_totals` merges receipts/disbursements/cash-on-hand per cycle — defaults to true on an ID lookup, false on search; capped at 5 pages of 100 rows, with uncovered IDs listed in `missing_totals` for re-query
-- Pagination up to 100 results per page
+- Pagination up to 100 results per page; a search with totals requests at most 35 candidates per page (totals scoped by cycle or election_year) or 5 (totals across every cycle), reporting `truncated` when bounded below the request
 - Typed errors: `candidate_not_found`; `inputs_not_applicable_to_id_lookup` when search-only filters accompany a direct ID lookup
 
 ---
@@ -100,6 +100,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 - Modes: `itemized` (Schedule A records, requires committee_id, keyset cursor pagination), `by_size`/`by_state` (committee_id or candidate_id), `by_employer`/`by_occupation` (committee_id only)
 - Itemized filters: contributor name, employer, occupation, city, state, ZIP, date range, amount range, is_individual; defaults to the current cycle when omitted
 - Sort defaults to `-contribution_receipt_date`; a cursor is valid only for an otherwise-identical call
+- Itemized pages hold at most 30 rows, reporting `truncated` when bounded below the request; a donor that is itself a committee renders as name, ID, and one attribute line
 - Typed errors: `itemized_requires_committee_id`, `aggregate_requires_committee_id`, `itemized_only_filters_in_aggregate_mode`, `inputs_not_applicable_to_mode`
 
 ---
@@ -109,6 +110,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 - Modes: `itemized` (Schedule B records, keyset cursor pagination), `by_purpose`, `by_recipient`, `by_recipient_id` — committee_id required for every mode
 - Itemized filters: recipient name/state/city/committee ID, description, purpose category, date range, amount range; defaults to the current cycle when omitted
 - Sort defaults to `-disbursement_date`
+- Itemized pages hold at most 30 rows, reporting `truncated` when bounded below the request; a recipient that is itself a committee renders as name, ID, and one attribute line
 - Typed errors: `itemized_only_filters_in_aggregate_mode`; `inputs_not_applicable_to_mode` for an explicit page in itemized mode
 
 ---
@@ -117,6 +119,8 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 - Modes: `itemized` (Schedule E, keyset cursor pagination, defaults to the current cycle and `most_recent: true`) and `by_candidate` (aggregated per targeted candidate — needs candidate_id or a full race scope: office alone for President, plus state for Senate, plus district for House)
 - Itemized filters: payee_name, candidate_party, is_notice (24/48-hour notices), date range, amount range, support_oppose (S/O)
+- `by_candidate`: `election_full` defaults to true (totals over the full election period ending in `cycle`: 4yr president, 6yr senate, 2yr house); pass false for the two-year cycle alone. The effective value is echoed in `search_criteria`; itemized mode rejects it
+- Itemized pages hold at most 60 rows when scoped by committee_id and 30 otherwise, reporting `truncated` when bounded below the request; a page spanning committees renders each row's committee as name, ID, and one attribute line
 - Typed errors: `by_candidate_requires_scope`, `itemized_only_filters_in_aggregate_mode`, `inputs_not_applicable_to_mode`
 
 ---
@@ -125,7 +129,8 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 
 - Schedule F — party committee spending coordinated with a candidate's campaign, a separate legal category from independent expenditures and direct contributions
 - Filters: committee_id (spending party committee), candidate_id (benefiting candidate), cycle, payee_name, date range, amount range; unscoped queries span all years
-- Page-based pagination; the spending committee is hoisted out of rows when committee_id is supplied
+- Page-based pagination; the spending committee is hoisted out of rows when committee_id is supplied, and otherwise renders per row as name, ID, and one attribute line
+- At most 80 rows per page when scoped by committee_id and 25 otherwise; `pagination.per_page` echoes the size applied and `truncated` reports a page bounded below the request
 
 ---
 
@@ -134,7 +139,7 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 - Form types: F3 (House/Senate quarterly), F3P (Presidential), F3X (PAC/party), F24 (24-hour IE notice), F1 (statement of organization), F2 (statement of candidacy), F5 (IE by persons)
 - Filters: committee_id, candidate_id, filer_name, report_type, report_year, cycle, is_amended, receipt date range
 - `most_recent` defaults to true, filtering out superseded amendments
-- Page-based pagination, up to 100 results per page
+- Page-based pagination; `per_page` accepts up to 100, at most 65 rows are requested per page, `pagination.per_page` echoes the size applied, and `truncated` reports a page bounded below the request
 
 ---
 
