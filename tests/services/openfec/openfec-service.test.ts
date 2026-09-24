@@ -105,14 +105,19 @@ describe('cursorQuery', () => {
 describe('cursor encoding', () => {
   it('round-trips last_indexes through encode/decode', () => {
     const indexes = { last_index: '123', last_contribution_receipt_date: '2024-01-15' };
-    const cursor = encodeCursor(indexes, QUERY);
+    const cursor = encodeCursor(indexes, QUERY, 60);
     expect(typeof cursor).toBe('string');
-    expect(decodeCursor(cursor, QUERY)).toEqual(indexes);
+    expect(decodeCursor(cursor, QUERY)).toEqual({ indexes, delivered: 60 });
   });
 
   it('handles empty indexes', () => {
     const cursor = encodeCursor({}, QUERY);
-    expect(decodeCursor(cursor, QUERY)).toEqual({});
+    expect(decodeCursor(cursor, QUERY).indexes).toEqual({});
+  });
+
+  it('reads a cursor minted without a delivered count as position 0', () => {
+    const cursor = btoa(JSON.stringify({ q: QUERY, i: { last_index: '99' } }));
+    expect(decodeCursor(cursor, QUERY)).toEqual({ indexes: { last_index: '99' }, delivered: 0 });
   });
 
   it('embeds the issuing query alongside the indexes', () => {
@@ -146,6 +151,8 @@ describe('cursor validation', () => {
       JSON.stringify({ q: QUERY }), // missing indexes
       JSON.stringify({ q: { scope: 1, args: {} }, i: {} }), // non-string scope
       JSON.stringify({ q: QUERY, i: { last_index: 99 } }), // non-string index value
+      JSON.stringify({ q: QUERY, i: {}, n: -1 }), // negative delivered count
+      JSON.stringify({ q: QUERY, i: {}, n: '30' }), // non-numeric delivered count
       JSON.stringify([1, 2, 3]), // not an object
     ]) {
       expectCursorRejection(() => decodeCursor(btoa(payload), QUERY), 'invalid_cursor');
@@ -223,7 +230,7 @@ describe('cursor validation', () => {
       cursor,
       cursorQuery('openfec_search_contributions', { committee_id: 'C00431056', page: 4 }),
     );
-    expect(decoded).toEqual({ last_index: '99' });
+    expect(decoded.indexes).toEqual({ last_index: '99' });
   });
 
   it('accepts a cursor replayed with per_page changed', () => {
@@ -236,7 +243,7 @@ describe('cursor validation', () => {
       cursor,
       cursorQuery('openfec_search_contributions', { committee_id: 'C00431056', per_page: 100 }),
     );
-    expect(decoded).toEqual({ last_index: '99' });
+    expect(decoded.indexes).toEqual({ last_index: '99' });
   });
 });
 
@@ -399,8 +406,8 @@ describe('OpenFecService', () => {
       expect(result.results).toEqual(contributions);
       expect(result.nextCursor).toBeTruthy();
       expect(decodeCursor(result.nextCursor as string, QUERY)).toEqual({
-        last_index: '99',
-        last_contribution_receipt_date: '2024-06-01',
+        indexes: { last_index: '99', last_contribution_receipt_date: '2024-06-01' },
+        delivered: 1,
       });
     });
 
@@ -472,6 +479,26 @@ describe('OpenFecService', () => {
       expect(result.nextCursor).toBeNull();
     });
 
+    it('returns null nextCursor on a resumed full page that reaches an exact count', async () => {
+      const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(rows, { last_index: '99' }, 6, { perPage: 3, exact: true }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx, 3);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it('carries the running row count forward on a resumed full page short of an exact count', async () => {
+      const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
+      mockFetch.mockResolvedValueOnce(
+        seekEnvelope(rows, { last_index: '99' }, 7, { perPage: 3, exact: true }) as never,
+      );
+
+      const result = await svc.searchContributions({}, QUERY, ctx, 3);
+      expect(decodeCursor(result.nextCursor as string, QUERY).delivered).toBe(6);
+    });
+
     it('mints a cursor on a full page whose count is inexact', async () => {
       const rows = [{ amount: 100 }, { amount: 200 }, { amount: 300 }];
       mockFetch.mockResolvedValueOnce(
@@ -523,7 +550,7 @@ describe('OpenFecService', () => {
 
       const result = await svc.searchExpenditures({}, QUERY, ctx);
 
-      expect(decodeCursor(result.nextCursor as string, QUERY)).toEqual({
+      expect(decodeCursor(result.nextCursor as string, QUERY).indexes).toEqual({
         last_index: '4060220251204384181',
         last_office_total_ytd: '503313627.73',
       });
@@ -540,7 +567,9 @@ describe('OpenFecService', () => {
 
       const result = await svc.searchContributions({ committee_id: 'C00431056' }, issued, ctx);
 
-      expect(decodeCursor(result.nextCursor as string, issued)).toEqual({ last_index: '7' });
+      expect(decodeCursor(result.nextCursor as string, issued).indexes).toEqual({
+        last_index: '7',
+      });
       expect(() =>
         decodeCursor(
           result.nextCursor as string,

@@ -424,11 +424,10 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       }
 
       const query = cursorQuery('openfec_search_expenditures', applied);
-      if (input.cursor) {
-        Object.assign(params, decodeCursor(input.cursor, query));
-      }
+      const resume = input.cursor ? decodeCursor(input.cursor, query) : undefined;
+      if (resume) Object.assign(params, resume.indexes);
 
-      const result = await fec.searchExpenditures(params, query, ctx);
+      const result = await fec.searchExpenditures(params, query, ctx, resume?.delivered);
       ctx.log.info('Itemized expenditures fetched', {
         committee_id: input.committee_id,
         candidate_id: input.candidate_id,

@@ -366,11 +366,10 @@ export const searchContributions = tool('openfec_search_contributions', {
       if (input.sort) params.sort = input.sort;
 
       const query = cursorQuery('openfec_search_contributions', applied);
-      if (input.cursor) {
-        Object.assign(params, decodeCursor(input.cursor, query));
-      }
+      const resume = input.cursor ? decodeCursor(input.cursor, query) : undefined;
+      if (resume) Object.assign(params, resume.indexes);
 
-      const result = await fec.searchContributions(params, query, ctx);
+      const result = await fec.searchContributions(params, query, ctx, resume?.delivered);
       ctx.log.info('Itemized contributions fetched', {
         committee_id: input.committee_id,
         cycle,

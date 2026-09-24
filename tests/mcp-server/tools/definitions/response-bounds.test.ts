@@ -681,6 +681,25 @@ describe.each(KEYSET_SCOPES)('keyset cap — $label', ({ definition, args, path,
     expect(sc(result).truncated).toBeUndefined();
   });
 
+  it('does not report truncation for a full page that ends exactly at the last row', async () => {
+    const rows = make(cap * 2);
+    http.route({ match: endpoint(path), respond: keysetUpstream(rows) });
+
+    const first = await runToolContract(definition, { ...args, per_page: 100 } as never);
+    expect(sc(first).truncated).toBe(true);
+
+    const second = await runToolContract(definition, {
+      ...args,
+      per_page: 100,
+      cursor: sc(first).next_cursor,
+    } as never);
+
+    expect(rowsOf(second)).toHaveLength(cap);
+    expect(sc(second).next_cursor).toBeNull();
+    expect(sc(second).truncated).toBeUndefined();
+    expect(text(second)).not.toContain('100,000-byte');
+  });
+
   it('does not report truncation for a cursor that resumes past the last row', async () => {
     const rows = make(cap);
     http.route({

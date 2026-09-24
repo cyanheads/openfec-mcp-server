@@ -38,10 +38,26 @@ export interface CursorQuery {
   scope: string;
 }
 
-/** Cursor payload as it is serialized: `q` = issuing query, `i` = `last_indexes`. */
+/**
+ * Cursor payload as it is serialized: `q` = issuing query, `i` = `last_indexes`,
+ * `n` = rows delivered through the page that minted it.
+ */
 interface CursorPayload {
   i: Record<string, string>;
+  n?: number;
   q: CursorQuery;
+}
+
+/** Where a keyset walk resumes: the upstream keys, and how many rows came before. */
+export interface CursorPosition {
+  /**
+   * Rows delivered by the pages before this one, which lets an exact count say
+   * the walk is over. A cursor minted without it reads as 0, which can only
+   * under-count the position — it never ends a walk early.
+   */
+  delivered: number;
+  /** `last_indexes` query params to send upstream. */
+  indexes: Record<string, string>;
 }
 
 /**
@@ -73,27 +89,31 @@ export function cursorQuery(scope: string, input: Record<string, unknown>): Curs
 }
 
 /**
- * Encode `last_indexes` and the issuing query into an opaque cursor.
- * Index values are stringified first — OpenFEC returns some of them as raw
- * numbers (Schedule E's `last_office_total_ytd`), and they go back out as
- * query params either way.
+ * Encode `last_indexes`, the issuing query, and the rows delivered so far into
+ * an opaque cursor. Index values are stringified first — OpenFEC returns some
+ * of them as raw numbers (Schedule E's `last_office_total_ytd`), and they go
+ * back out as query params either way.
  */
 export function encodeCursor(
   lastIndexes: Record<string, string | number>,
   query: CursorQuery,
+  delivered?: number,
 ): string {
   const i = Object.fromEntries(
     Object.entries(lastIndexes).map(([key, value]) => [key, String(value)]),
   );
-  return btoa(JSON.stringify({ q: query, i } satisfies CursorPayload));
+  const payload: CursorPayload =
+    delivered === undefined ? { q: query, i } : { q: query, i, n: delivered };
+  return btoa(JSON.stringify(payload));
 }
 
 /**
- * Decode an opaque cursor back to `last_indexes` query params.
+ * Decode an opaque cursor back to its resume position: the `last_indexes`
+ * query params and the rows delivered before it.
  * Throws a `validationError` when the cursor is malformed (`invalid_cursor`)
  * or was issued for a different query (`cursor_query_mismatch`).
  */
-export function decodeCursor(cursor: string, expected: CursorQuery): Record<string, string> {
+export function decodeCursor(cursor: string, expected: CursorQuery): CursorPosition {
   const echo = cursor.length > 100 ? `${cursor.slice(0, 100)}…` : cursor;
 
   let raw: unknown;
@@ -137,7 +157,7 @@ export function decodeCursor(cursor: string, expected: CursorQuery): Record<stri
     );
   }
 
-  return payload.i;
+  return { indexes: payload.i, delivered: payload.n ?? 0 };
 }
 
 /** True when `value` is a plain object whose values are all strings. */
@@ -149,11 +169,12 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 /** Narrow a decoded cursor body to a `CursorPayload`, or `null` when the shape is wrong. */
 function parseCursorPayload(raw: unknown): CursorPayload | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const { q, i } = raw as { q?: unknown; i?: unknown };
+  const { q, i, n } = raw as { q?: unknown; i?: unknown; n?: unknown };
   if (!isStringRecord(i) || typeof q !== 'object' || q === null) return null;
+  if (n !== undefined && !(Number.isSafeInteger(n) && (n as number) >= 0)) return null;
   const { scope, args } = q as { scope?: unknown; args?: unknown };
   if (typeof scope !== 'string' || !isStringRecord(args)) return null;
-  return { q: { scope, args }, i };
+  return n === undefined ? { q: { scope, args }, i } : { q: { scope, args }, i, n: n as number };
 }
 
 /** Render one side of an argument comparison — a quoted value, or `omitted` when absent. */
@@ -408,12 +429,15 @@ export class OpenFecService {
    * Fetch JSON from a keyset (SEEK) endpoint with retry.
    * Returns a `nextCursor` from `last_indexes` when more results exist, bound
    * to `query` so a replay under different arguments is rejected on decode.
+   * `delivered` is the rows the walk returned before this page (the resumed
+   * cursor's `CursorPosition.delivered`, 0 on a first page).
    */
   private async fetchSeek<T = Record<string, unknown>>(
     path: string,
     params: FecParams,
     query: CursorQuery,
     ctx: Context,
+    delivered: number,
   ): Promise<SeekResult<T>> {
     const url = this.buildUrl(path, params);
     try {
@@ -432,21 +456,22 @@ export class OpenFecService {
            * OpenFEC populates `last_indexes` for the last row of every page,
            * terminal pages included, so on its own it cannot say whether more
            * rows exist. A page shorter than `per_page` is the end of the set,
-           * and so is a set an exact count says fits in the page just returned
-           * — the only cross-check available here, since the SEEK envelope
-           * carries no `page` to compare against `pages`.
+           * and so is a full page an exact count says reaches the last row —
+           * the SEEK envelope carries no `page` to compare against `pages`,
+           * so the cursor carries the running row count instead.
            */
-          const fitsOnePage = is_count_exact === true && count <= rows;
+          const deliveredThroughPage = delivered + rows;
+          const reachedCount = is_count_exact === true && count <= deliveredThroughPage;
           /** The page past the last row carries `last_indexes: null`, not an omitted key. */
           const hasMore =
             lastIndexes != null &&
             Object.keys(lastIndexes).length > 0 &&
             rows >= per_page &&
-            !fitsOnePage;
+            !reachedCount;
           return {
             pagination: { count, per_page, ...exactness(is_count_exact) },
             results: body.results,
-            nextCursor: hasMore ? encodeCursor(lastIndexes, query) : null,
+            nextCursor: hasMore ? encodeCursor(lastIndexes, query, deliveredThroughPage) : null,
           };
         },
         {
@@ -583,8 +608,14 @@ export class OpenFecService {
   /*  Contributions (Schedule A)                                      */
   /* ---------------------------------------------------------------- */
 
-  searchContributions(params: FecParams, query: CursorQuery, ctx: Context): Promise<SeekResult> {
-    return this.fetchSeek('/schedules/schedule_a/', params, query, ctx);
+  /** `delivered`: rows the walk returned before this page — `CursorPosition.delivered`. */
+  searchContributions(
+    params: FecParams,
+    query: CursorQuery,
+    ctx: Context,
+    delivered = 0,
+  ): Promise<SeekResult> {
+    return this.fetchSeek('/schedules/schedule_a/', params, query, ctx, delivered);
   }
 
   getContributionAggregates(mode: string, params: FecParams, ctx: Context): Promise<PageResult> {
@@ -605,8 +636,14 @@ export class OpenFecService {
   /*  Disbursements (Schedule B)                                      */
   /* ---------------------------------------------------------------- */
 
-  searchDisbursements(params: FecParams, query: CursorQuery, ctx: Context): Promise<SeekResult> {
-    return this.fetchSeek('/schedules/schedule_b/', params, query, ctx);
+  /** `delivered`: rows the walk returned before this page — `CursorPosition.delivered`. */
+  searchDisbursements(
+    params: FecParams,
+    query: CursorQuery,
+    ctx: Context,
+    delivered = 0,
+  ): Promise<SeekResult> {
+    return this.fetchSeek('/schedules/schedule_b/', params, query, ctx, delivered);
   }
 
   getDisbursementAggregates(mode: string, params: FecParams, ctx: Context): Promise<PageResult> {
@@ -624,8 +661,14 @@ export class OpenFecService {
   /*  Independent Expenditures (Schedule E)                           */
   /* ---------------------------------------------------------------- */
 
-  searchExpenditures(params: FecParams, query: CursorQuery, ctx: Context): Promise<SeekResult> {
-    return this.fetchSeek('/schedules/schedule_e/', params, query, ctx);
+  /** `delivered`: rows the walk returned before this page — `CursorPosition.delivered`. */
+  searchExpenditures(
+    params: FecParams,
+    query: CursorQuery,
+    ctx: Context,
+    delivered = 0,
+  ): Promise<SeekResult> {
+    return this.fetchSeek('/schedules/schedule_e/', params, query, ctx, delivered);
   }
 
   getExpendituresByCandidate(params: FecParams, ctx: Context): Promise<PageResult> {
