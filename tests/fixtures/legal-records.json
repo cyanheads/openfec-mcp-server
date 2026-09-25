@@ -1,0 +1,527 @@
+{
+  "mur_8343": {
+    "case_serial": 8343,
+    "close_date": "2025-03-27T00:00:00",
+    "commission_votes": [
+      {
+        "action": "The Commission decided by a vote of 4-0 to take the following actions in MURs 8342 and 8343:1.  Dismiss the complaint consistent with the Commission’s prosecuto",
+        "vote_date": "2025-02-24T00:00:00"
+      }
+    ],
+    "dispositions": [
+      {
+        "citations": [
+          {
+            "text": "30104(g)",
+            "title": "52",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          },
+          {
+            "text": "30118(a)",
+            "title": "52",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30118"
+          },
+          {
+            "text": "100.73",
+            "title": "11",
+            "type": "regulation",
+            "url": "/regulations/100-73/CURRENT"
+          },
+          {
+            "text": "100.132",
+            "title": "11",
+            "type": "regulation",
+            "url": "/regulations/100-132/CURRENT"
+          },
+          {
+            "text": "114.2(b), (d)",
+            "title": "11",
+            "type": "regulation",
+            "url": "/regulations/114-2/CURRENT"
+          }
+        ],
+        "disposition": "Dismiss Pursuant to Prosecutorial Discretion",
+        "mur_disposition_category_id": 8,
+        "penalty": null,
+        "respondent": "Harris for President"
+      },
+      {
+        "citations": [
+          {
+            "text": "30104(g)",
+            "title": "52",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          },
+          {
+            "text": "30118(a)",
+            "title": "52",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30118"
+          },
+          {
+            "text": "100.73",
+            "title": "11",
+            "type": "regulation",
+            "url": "/regulations/100-73/CURRENT"
+          },
+          {
+            "text": "100.132",
+            "title": "11",
+            "type": "regulation",
+            "url": "/regulations/100-132/CURRENT"
+          },
+          {
+            "text": "114.2(b), (d)",
+            "title": "11",
+            "type": "regulation",
+            "url": "/regulations/114-2/CURRENT"
+          }
+        ],
+        "disposition": "Dismiss Pursuant to Prosecutorial Discretion",
+        "mur_disposition_category_id": 8,
+        "penalty": null,
+        "respondent": "Spencer, Keana"
+      }
+    ],
+    "doc_id": "mur_8343",
+    "documents": [
+      {
+        "category": "Complaint, Responses, Designation of Counsel and Extensions of Time",
+        "description": "Notification from Donald J. Trump for President, 2024",
+        "doc_order_id": 2,
+        "document_date": "2025-01-17T00:00:00",
+        "document_id": 100514347,
+        "filename": "8343_07",
+        "length": 676230,
+        "url": "/files/legal/murs/8343/8343_07.pdf"
+      },
+      {
+        "category": "Complaint, Responses, Designation of Counsel and Extensions of Time",
+        "description": "Response from Harris for President and Keana Spencer in her official capacity as treasurer",
+        "doc_order_id": 2,
+        "document_date": "2024-12-23T00:00:00",
+        "document_id": 100514346,
+        "filename": "8343_06",
+        "length": 790400,
+        "url": "/files/legal/murs/8343/8343_06.pdf"
+      }
+    ],
+    "election_cycles": [2024],
+    "mur_type": "current",
+    "name": "The Washington Post",
+    "no": "8343",
+    "open_date": "2024-10-31T00:00:00",
+    "participants": [
+      {
+        "name": "Washington Post, The",
+        "role": "Primary Respondent"
+      },
+      {
+        "name": "Crate, Bradley T.",
+        "role": "Complainant"
+      },
+      {
+        "name": "Never Surrender Inc.",
+        "role": "Complainant"
+      }
+    ],
+    "published_flg": true,
+    "respondents": ["Washington Post, The", "Harris for President", "Spencer, Keana"],
+    "sort1": -8343,
+    "sort2": null,
+    "subjects": [
+      {
+        "primary_subject_id": "3",
+        "secondary_subject_id": "15",
+        "subject": "Contributions-Prohibited"
+      },
+      {
+        "primary_subject_id": "18",
+        "subject": "Reporting"
+      }
+    ],
+    "type": "murs",
+    "url": "/legal/matter-under-review/8343/"
+  },
+  "mur_1704": {
+    "case_serial": 1704,
+    "citations": {
+      "regulations": [
+        {
+          "text": "11 C.F.R. 100.5(g)",
+          "url": "/regulations/100-5/CURRENT"
+        },
+        {
+          "text": "11 C.F.R. 110.3",
+          "url": "/regulations/110-3/CURRENT"
+        }
+      ],
+      "us_code": [
+        {
+          "text": "52 U.S.C. 30103(b)(2)",
+          "url": "https://www.govinfo.gov/link/uscode/52/30103"
+        },
+        {
+          "text": "52 U.S.C. 30103(c)",
+          "url": "https://www.govinfo.gov/link/uscode/52/30103"
+        }
+      ]
+    },
+    "close_date": "1984-11-27T00:00:00",
+    "complainants": ["Americans with Hart, Inc", "Hettinga, Ralph Martin, Jr (Bud)"],
+    "doc_id": "mur_1704",
+    "documents": [
+      {
+        "document_id": 1,
+        "filename": "1704",
+        "length": 169780787,
+        "url": "/files/legal/murs/1704_A.pdf"
+      },
+      {
+        "document_id": 2,
+        "filename": "1704",
+        "length": 169328420,
+        "url": "/files/legal/murs/1704_B.pdf"
+      }
+    ],
+    "mur_name": "MONDALE DELEGATE COMMITTEES",
+    "mur_type": "archived",
+    "no": "1704",
+    "open_date": "1984-04-06T00:00:00",
+    "respondents": [
+      "10th CD Delegates for Mondale (NY)",
+      "10th CD Mondale Delegates Cmte (PA)",
+      "10th Dist Mondale Delegate Cmte"
+    ],
+    "subject": [
+      {
+        "text": "Affiliation"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "text": "of prohibited contribution"
+              }
+            ],
+            "text": "Acceptance"
+          },
+          {
+            "children": [
+              {
+                "text": "annual limit for individuals"
+              },
+              {
+                "text": "exceeding limitations prohibited"
+              },
+              {
+                "text": "on contributions by multicandidate committees"
+              },
+              {
+                "text": "on contributions by persons"
+              },
+              {
+                "text": "single limit for committees established, maintained or controlled by the same entity"
+              }
+            ],
+            "text": "Limitations"
+          }
+        ],
+        "text": "Contributions"
+      }
+    ],
+    "type": "murs"
+  },
+  "adr_172": {
+    "case_serial": 172,
+    "case_status": "No status found",
+    "close_date": "2004-10-18T00:00:00",
+    "commission_votes": [
+      {
+        "action": "The Commission decided by a vote of 6-0 to:\n\nto take the following actions in ADR #172/MUR 5431:\n\n1. Approve the negotia",
+        "commissioner_name": "Mason, David M.",
+        "vote_date": "2004-10-18T00:00:00",
+        "vote_type": "Affirmed"
+      }
+    ],
+    "complainant": ["Owens, Major R."],
+    "dispositions": [
+      {
+        "citations": [
+          {
+            "text": "434(a)",
+            "title": "2",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          },
+          {
+            "text": "434(a)(11)",
+            "title": "2",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          }
+        ],
+        "disposition": "Dismissed",
+        "penalty": null,
+        "respondent": "The Osborne Group"
+      },
+      {
+        "citations": [
+          {
+            "text": "434(a)",
+            "title": "2",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          },
+          {
+            "text": "434(a)(11)",
+            "title": "2",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          }
+        ],
+        "disposition": "Dismissed",
+        "penalty": null,
+        "respondent": "Solon Contracting Corp"
+      }
+    ],
+    "doc_id": "adr_172",
+    "documents": [
+      {
+        "category": "ADR Settlement Agreements",
+        "description": "Citizens for Tracy L. Boyland and Sabrina Postles, Treasurer",
+        "doc_order_id": 1001,
+        "document_date": "2004-10-20T00:00:00",
+        "document_id": 108308,
+        "filename": "0000312D",
+        "length": 320109,
+        "url": "/files/legal/adrs/172/0000312D.pdf"
+      },
+      {
+        "category": "Complaint, Responses, Designation of Counsel and Extensions of Time",
+        "description": "Response from Sigma Contracting Corp.",
+        "doc_order_id": 1002,
+        "document_date": "2004-05-28T00:00:00",
+        "document_id": 108366,
+        "filename": "000030DB",
+        "length": 39176,
+        "url": "/files/legal/adrs/172/000030DB.pdf"
+      }
+    ],
+    "election_cycles": [2004],
+    "name": "Citizens for Tracy L. Boyland",
+    "no": "172",
+    "non_monetary_terms": ["Attend FEC seminar", "Develop a FEC Compliance Manual"],
+    "non_monetary_terms_respondents": ["Postles, Sabrina", "Citizens for Tracy L. Boyland"],
+    "open_date": "2004-05-26T00:00:00",
+    "participants": [
+      {
+        "name": "Mandelker, Lawrence , Esq.",
+        "role": "Respondent's Counsel"
+      },
+      {
+        "name": "Wagner, Peter  J.",
+        "role": "Respondent's Counsel"
+      },
+      {
+        "name": "Feder, Frederick",
+        "role": "Respondent's Counsel"
+      }
+    ],
+    "published_flg": true,
+    "respondents": ["4502 Park Avenue LLC", "4502 Park Avenue, LLC", "A. Aleem Contracting"],
+    "sort1": -172,
+    "sort2": null,
+    "subjects": [
+      {
+        "primary_subject_id": "3",
+        "secondary_subject_id": "15",
+        "subject": "Contributions-Prohibited"
+      }
+    ],
+    "type": "adrs",
+    "url": "/legal/alternative-dispute-resolution/172/"
+  },
+  "ao_2003_37": {
+    "ao_citations": [
+      {
+        "name": "Minnesota House DFL Caucus",
+        "no": "2000-25"
+      },
+      {
+        "name": "Cantor",
+        "no": "2003-03"
+      }
+    ],
+    "ao_no": "2003-37",
+    "ao_serial": 37,
+    "ao_year": 2003,
+    "aos_cited_by": [],
+    "commenter_names": [
+      "Mr. Charles Spies Esq.",
+      "National Association of Realtors",
+      "Mr. Ralph W. Holmen Esq."
+    ],
+    "doc_id": "advisory_opinions_2003-37",
+    "documents": [
+      {
+        "ao_doc_category_id": "F",
+        "category": "Final Opinion",
+        "date": "2004-02-19T00:00:00",
+        "description": "AO 2003-37",
+        "document_id": 63769,
+        "filename": "2003-37",
+        "url": "/files/legal/aos/2003-37/2003-37.pdf"
+      },
+      {
+        "ao_doc_category_id": "C",
+        "category": "Comments and Ex parte Communications",
+        "date": "2004-02-04T00:00:00",
+        "description": "Ex Parte Communication from God's Love We Deliver",
+        "document_id": 63754,
+        "filename": "570578",
+        "url": "/files/legal/aos/2003-37/570578.pdf"
+      }
+    ],
+    "entities": [
+      {
+        "name": "Mr. Charles Spies Esq.",
+        "role": "Commenter",
+        "type": "Individual"
+      },
+      {
+        "name": "National Association of Realtors",
+        "role": "Commenter",
+        "type": "Corporation (including LLCs electing corporate status)"
+      },
+      {
+        "name": "Mr. Ralph W. Holmen Esq.",
+        "role": "Commenter",
+        "type": "Individual"
+      }
+    ],
+    "is_pending": false,
+    "issue_date": "2004-02-19",
+    "name": "ABC",
+    "no": "2003-37",
+    "published_flg": true,
+    "regulatory_citations": [
+      {
+        "part": 100,
+        "section": 4,
+        "title": 11
+      },
+      {
+        "part": 100,
+        "section": 16,
+        "title": 11
+      },
+      {
+        "part": 100,
+        "section": 22,
+        "title": 11
+      }
+    ],
+    "representative_names": [
+      "Mr. Keith A. Davis",
+      "Mr. Craig Shirley",
+      "Mr. Frank J. Donatelli Esq.",
+      "Mr. George J. Terwilliger Esq."
+    ],
+    "request_date": "2003-11-19",
+    "requestor_names": ["Americans for a Better Country"],
+    "requestor_types": ["Nonconnected political committee"],
+    "sort1": -2003,
+    "sort2": -37,
+    "status": "Final",
+    "statutory_citations": [
+      {
+        "section": "527",
+        "title": 26
+      },
+      {
+        "section": "30101",
+        "title": 52
+      },
+      {
+        "section": "30104",
+        "title": 52
+      }
+    ],
+    "summary": "Superseded by 2004 Political Committee Status Regulations, 69 FR 68056, 68063 (November 23, 2004).  Nonconnected PAC's u",
+    "type": "advisory_opinions"
+  },
+  "af_4229": {
+    "case_serial": 4229,
+    "challenge_outcome": "",
+    "challenge_receipt_date": null,
+    "civil_penalty_due_date": "2022-03-31T00:00:00",
+    "civil_penalty_payment_status": "Needn't Pay",
+    "commission_votes": [
+      {
+        "action": "",
+        "vote_date": null
+      }
+    ],
+    "committee_id": "C00721027",
+    "dispositions": [
+      {
+        "disposition_date": "2021-09-15",
+        "disposition_description": "Initial finding and penalty assessed",
+        "penalty": 6735.0
+      },
+      {
+        "disposition_date": "2022-02-25",
+        "disposition_description": "Initial finding upheld but no penalty assessed",
+        "penalty": 0.0
+      }
+    ],
+    "doc_id": "af_4229",
+    "documents": [
+      {
+        "category": "Administrative Fine Case",
+        "description": "AF 4229",
+        "doc_order_id": 2001,
+        "document_date": "2022-03-17T00:00:00",
+        "document_id": 300502737,
+        "filename": "4229_01",
+        "length": 2192708,
+        "url": "/files/legal/admin_fines/4229/4229_01.pdf"
+      }
+    ],
+    "final_determination_amount": 0.0,
+    "final_determination_date": "2022-02-25T00:00:00",
+    "name": "FOSTER FOR KANSAS",
+    "no": "4229",
+    "payment_amount": null,
+    "petition_court_decision_date": null,
+    "petition_court_filing_date": null,
+    "published_flg": true,
+    "reason_to_believe_action_date": "2021-09-15T00:00:00",
+    "reason_to_believe_fine_amount": 6735.0,
+    "report_type": "Q2",
+    "report_year": "2021",
+    "sort1": -4229,
+    "sort2": null,
+    "treasury_referral_amount": null,
+    "treasury_referral_date": null,
+    "type": "admin_fines",
+    "url": "/legal/administrative-fine/4229/"
+  },
+  "mur_highlight_search": {
+    "no": "8363",
+    "name": "Calspan Corporation",
+    "type": "murs",
+    "highlights": [
+      "The  reimbursement process used for that New York State <em>contribution</em> is identical to the one used for",
+      "Since the reimbursed <em>contribution</em> was for a state instead of a federal committee, the Commission would",
+      "not have  jurisdiction over this particular <em>contribution</em>.  19  Our review of the Commission’s <em>contribution</em>",
+      "to the Jacobs Committee under the mistaken belief that a political <em>contribution</em> could  8 be reimbursed",
+      "Sauer states that he also sought and approved reimbursement for a $1,000 <em>contribution</em>  made in 2021 to"
+    ]
+  }
+}

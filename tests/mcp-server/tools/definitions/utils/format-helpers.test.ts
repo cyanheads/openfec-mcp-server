@@ -18,6 +18,7 @@ import {
   str,
   toPagination,
 } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
+import { formatRowCommittee } from '@/mcp-server/tools/definitions/utils/trim-schedule-row.js';
 
 describe('buildSearchCriteria', () => {
   it('includes truthy non-pagination fields', () => {
@@ -52,6 +53,16 @@ describe('buildSearchCriteria', () => {
       hits_returned: 20,
     });
     expect(Object.keys(result)).toEqual(['query']);
+  });
+
+  it('strips the legal detail entry offset but keeps the array it pages', () => {
+    const result = buildSearchCriteria({
+      doc_type: 'murs',
+      no: '6916',
+      array: 'dispositions',
+      offset: 227,
+    });
+    expect(result).toEqual({ doc_type: 'murs', no: '6916', array: 'dispositions' });
   });
 
   it('keeps query-shaping booleans that narrow the result set', () => {
@@ -404,5 +415,41 @@ describe('renderRecord', () => {
   it('handles unicode in values', () => {
     const result = renderRecord({ name: 'Ñoño, José 💰' });
     expect(result).toContain('Ñoño, José 💰');
+  });
+
+  it('applies a field renderer to a plain-object value under its key', () => {
+    const result = renderRecord({ committee: { name: 'PAC' } }, undefined, {
+      committee: formatRowCommittee,
+    });
+    expect(result).toBe('  committee: PAC');
+  });
+
+  it('falls back to the generic rendering when the value is not the renderer shape', () => {
+    const renderers = { committee: formatRowCommittee };
+    expect(renderRecord({ committee: [{ name: 'PAC' }] }, undefined, renderers)).toBe(
+      '  committee: {"name":"PAC"}',
+    );
+    expect(renderRecord({ committee: 'C00000001' }, undefined, renderers)).toBe(
+      '  committee: C00000001',
+    );
+    expect(renderRecord({ committee: null }, undefined, renderers)).toBe('');
+  });
+
+  it('applies an array-valued renderer and falls back when it declines the value', () => {
+    const renderers = {
+      tags: (value: unknown) =>
+        Array.isArray(value) && value.every((v) => typeof v === 'string')
+          ? value.join(' | ')
+          : null,
+    };
+    expect(renderRecord({ tags: ['a', 'b'] }, undefined, renderers)).toBe('  tags: a | b');
+    expect(renderRecord({ tags: [{ a: 1 }] }, undefined, renderers)).toBe('  tags: {"a":1}');
+  });
+
+  it('opens a block value on the line after its key', () => {
+    const renderers = { votes: () => '\n    - first\n    - second' };
+    expect(renderRecord({ votes: [1] }, undefined, renderers)).toBe(
+      '  votes:\n    - first\n    - second',
+    );
   });
 });

@@ -5,13 +5,14 @@
  * across the page, so it is hoisted out once instead of being shipped per row.
  * Every itemized and filing row also sheds its null and empty fields, and each
  * tool caps the page size it requests upstream so a full page stays inside the
- * per-surface response budget.
+ * per-surface response budget. The budget and its byte measure are shared with
+ * the legal tools, which hold to it by measuring each response instead.
  * @module src/mcp-server/tools/definitions/utils/trim-schedule-row
  */
 
 import { type Context, z } from '@cyanheads/mcp-ts-core';
 import { isRecord } from '@cyanheads/mcp-ts-core/utils';
-import { APPROXIMATE_COUNT_NOTICE } from './format-helpers.js';
+import { APPROXIMATE_COUNT_NOTICE, type RecordFieldRenderer } from './format-helpers.js';
 
 export interface TrimScheduleRowsOptions {
   /** Row keys to delete outright — sub-objects fully covered by a flat field. */
@@ -132,14 +133,15 @@ export function formatHoistedCommittee(committee: Record<string, unknown> | unde
  * Render a committee record left nested in a row — the spender on a page that
  * spans several committees, or a donor or recipient that is itself a
  * committee — as its title plus one attribute line, a `renderRecord` field
- * renderer. The full
- * record stays on `structuredContent`; the text surface carries what tells the
- * rows apart.
+ * renderer. A value that is not a committee record is declined, so it takes
+ * the generic rendering. The full record stays on `structuredContent`; the
+ * text surface carries what tells the rows apart.
  */
-export function formatRowCommittee(committee: Record<string, unknown>): string {
+export const formatRowCommittee: RecordFieldRenderer = (committee) => {
+  if (!isRecord(committee)) return null;
   const { title, detail } = summarizeCommittee(committee);
   return detail ? `${title}\n    ${detail}` : title;
-}
+};
 
 /* ------------------------------------------------------------------ */
 /*  Page-size budget                                                  */
@@ -150,6 +152,20 @@ export function formatRowCommittee(committee: Record<string, unknown>): string {
  * independently — is sized to stay under at a tool's largest effective page.
  */
 export const RESPONSE_BUDGET_BYTES = 100_000;
+
+const utf8 = new TextEncoder();
+
+/** UTF-8 byte length of `text` — the unit {@link RESPONSE_BUDGET_BYTES} is counted in. */
+export const utf8Bytes = (text: string): number => utf8.encode(text).length;
+
+/**
+ * An upper bound on the `content[]` bytes the framework's enrichment trailer
+ * adds for these rendered field lines: the block it opens with a blank line,
+ * the separator a reader joining text blocks inserts, and at most a blank line
+ * between fields.
+ */
+export const enrichmentTrailerBytes = (lines: readonly string[]): number =>
+  lines.reduce((sum, line) => sum + utf8Bytes(line) + 2, 3);
 
 /**
  * The largest `per_page` each high-volume tool sends upstream, per scope. Each

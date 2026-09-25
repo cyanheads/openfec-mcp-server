@@ -15,6 +15,7 @@ import type {
   FecPageEnvelope,
   FecParams,
   FecSeekEnvelope,
+  LegalDocType,
   LegalResult,
   PageResult,
   SeekResult,
@@ -334,6 +335,28 @@ export function assertKnownParams(path: string, params: FecParams): void {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Legal search document types                                       */
+/* ------------------------------------------------------------------ */
+
+/** Every `/legal/search/` document type, in the order results are flattened. */
+export const LEGAL_DOC_TYPES = [
+  'advisory_opinions',
+  'murs',
+  'adrs',
+  'admin_fines',
+  'statutes',
+] as const satisfies readonly LegalDocType[];
+
+/** The singular `document_type` each flattened result is tagged with, keyed by its plural type. */
+export const LEGAL_DOCUMENT_TYPE: Readonly<Record<LegalDocType, string>> = {
+  advisory_opinions: 'advisory_opinion',
+  murs: 'mur',
+  adrs: 'adr',
+  admin_fines: 'admin_fine',
+  statutes: 'statute',
+};
+
+/* ------------------------------------------------------------------ */
 /*  Pagination normalization                                          */
 /* ------------------------------------------------------------------ */
 
@@ -499,24 +522,17 @@ export class OpenFecService {
           });
           const body = (await response.json()) as FecLegalEnvelope;
           const results: LegalResult['results'] = [];
+          const typeTotals: LegalResult['typeTotals'] = {};
 
-          for (const ao of body.advisory_opinions ?? []) {
-            results.push({ ...ao, document_type: 'advisory_opinion' });
-          }
-          for (const mur of body.murs ?? []) {
-            results.push({ ...mur, document_type: 'mur' });
-          }
-          for (const adr of body.adrs ?? []) {
-            results.push({ ...adr, document_type: 'adr' });
-          }
-          for (const fine of body.admin_fines ?? []) {
-            results.push({ ...fine, document_type: 'admin_fine' });
-          }
-          for (const statute of body.statutes ?? []) {
-            results.push({ ...statute, document_type: 'statute' });
+          for (const type of LEGAL_DOC_TYPES) {
+            const documentType = LEGAL_DOCUMENT_TYPE[type];
+            for (const doc of body[type] ?? [])
+              results.push({ ...doc, document_type: documentType });
+            const total = body[`total_${type}`];
+            if (typeof total === 'number') typeTotals[type] = total;
           }
 
-          return { results, totalCount: body.total_all ?? results.length };
+          return { results, totalCount: body.total_all ?? results.length, typeTotals };
         },
         {
           maxRetries: this.config.fecMaxRetries,

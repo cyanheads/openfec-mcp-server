@@ -5,9 +5,10 @@
  * @module tests/mcp-server/tools/definitions/get-legal-document.tool.test
  */
 
+import { readFileSync } from 'node:fs';
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -66,6 +67,22 @@ const mur = () => ({
   ],
   documents: [],
 });
+
+/** Live `/legal/docs/` records (arrays shortened), one per nested shape family. */
+const LIVE = JSON.parse(
+  readFileSync(new URL('../../../fixtures/legal-records.json', import.meta.url), 'utf8'),
+) as Record<
+  'mur_8343' | 'mur_1704' | 'adr_172' | 'ao_2003_37' | 'af_4229',
+  Record<string, unknown>
+>;
+
+const LIVE_CASES = [
+  ['murs', '8343', 'mur_8343'],
+  ['murs', '1704', 'mur_1704'],
+  ['adrs', '172', 'adr_172'],
+  ['advisory_opinions', '2003-37', 'ao_2003_37'],
+  ['admin_fines', '4229', 'af_4229'],
+] as const;
 
 /** Narrows the first `format()` block to its text payload. */
 const formatText = (blocks: ContentBlock[]): string => {
@@ -162,6 +179,76 @@ describe('getLegalDocument', () => {
         getLegalDocument.input.parse({ doc_type: 'advisory_opinions', no: '' }),
       ).toThrow();
     });
+
+    it('declares a contract entry for an array the record lacks and an offset with no array', () => {
+      const reasons = getLegalDocument.errors?.map((entry) => entry.reason);
+      expect(reasons).toEqual(
+        expect.arrayContaining(['array_not_in_record', 'offset_without_array']),
+      );
+    });
+
+    it('rejects a negative offset and an empty array name at the schema', () => {
+      expect(() =>
+        getLegalDocument.input.parse({ doc_type: 'murs', no: '1', array: 'documents', offset: -1 }),
+      ).toThrow();
+      expect(() =>
+        getLegalDocument.input.parse({ doc_type: 'murs', no: '1', array: '' }),
+      ).toThrow();
+    });
+
+    it('pages a non-section array through its legal rendering, scalars alongside', async () => {
+      mockService.getLegalDocument.mockResolvedValueOnce(structuredClone(LIVE.mur_8343));
+
+      const result = await runToolContract(getLegalDocument, {
+        doc_type: 'murs',
+        no: '8343',
+        array: 'participants',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const structured = result.structuredContent as {
+        document: Record<string, unknown>;
+        slice: { entries: unknown[]; offset: number; total: number };
+        attachedDocumentCount: number;
+      };
+      expect(structured.slice.offset).toBe(0);
+      expect(structured.slice.entries).toEqual(LIVE.mur_8343.participants);
+      expect(structured.document).not.toHaveProperty('participants');
+      expect(structured.document).not.toHaveProperty('documents');
+      expect(structured.document.name).toBe('The Washington Post');
+      expect(structured.attachedDocumentCount).toBe((LIVE.mur_8343.documents as unknown[]).length);
+      const text = formatText(result.content as ContentBlock[]);
+      expect(text).toContain('1. Washington Post, The (Primary Respondent)');
+      expect(text).toContain('_End of participants._');
+    });
+
+    it('reports an empty array as holding no entries, not as an error', async () => {
+      mockService.getLegalDocument.mockResolvedValueOnce({ no: '1', name: 'X', documents: [] });
+
+      const result = await runToolContract(getLegalDocument, {
+        doc_type: 'murs',
+        no: '1',
+        array: 'documents',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.slice).toEqual({ array: 'documents', offset: 0, total: 0, entries: [] });
+      expect(structured.notice).toBe('documents holds no entries on this record.');
+    });
+
+    it.each(LIVE_CASES)(
+      'returns the %s %s record byte-identical on structuredContent',
+      async (docType, no, key) => {
+        mockService.getLegalDocument.mockResolvedValueOnce(structuredClone(LIVE[key]));
+
+        const result = await runToolContract(getLegalDocument, { doc_type: docType, no });
+
+        expect(result.isError).toBeFalsy();
+        const structured = result.structuredContent as { document: unknown };
+        expect(JSON.stringify(structured.document)).toBe(JSON.stringify(LIVE[key]));
+      },
+    );
   });
 
   describe('format', () => {
@@ -193,6 +280,144 @@ describe('getLegalDocument', () => {
       expect(text).toContain('### dispositions (1)');
       expect(text).toContain('disposition_description: Dismissed');
       expect(text).not.toContain('### documents');
+    });
+
+    it.each(LIVE_CASES)(
+      'renders no JSON object literal for any nested field of %s %s',
+      async (docType, no, key) => {
+        mockService.getLegalDocument.mockResolvedValueOnce(structuredClone(LIVE[key]));
+
+        const result = await runToolContract(getLegalDocument, { doc_type: docType, no });
+
+        const text = formatText(result.content as ContentBlock[]);
+        expect(text).not.toContain('{"');
+      },
+    );
+
+    it('renders a current MUR: participants, subjects, and citations inside each disposition', () => {
+      const text = formatText(
+        getLegalDocument.format!({
+          document: structuredClone(LIVE.mur_8343),
+          search_criteria: { doc_type: 'murs', no: '8343' },
+        }),
+      );
+
+      expect(text).toContain('**8343** — The Washington Post');
+      expect(text).toContain(
+        'participants: Washington Post, The (Primary Respondent); Crate, Bradley T. (Complainant)',
+      );
+      expect(text).toContain('subjects: Contributions-Prohibited; Reporting');
+      expect(text).toContain('### dispositions (2)');
+      expect(text).toContain('respondent: Harris for President');
+      expect(text).toContain(
+        'citations: 52 U.S.C. 30104(g) (https://www.govinfo.gov/link/uscode/52/30104); 52 U.S.C. 30118(a) (https://www.govinfo.gov/link/uscode/52/30118); 11 CFR 100.73 (/regulations/100-73/CURRENT)',
+      );
+    });
+
+    it('heads an archived MUR by mur_name and renders its citations and subject tree', () => {
+      const text = formatText(
+        getLegalDocument.format!({
+          document: structuredClone(LIVE.mur_1704),
+          search_criteria: { doc_type: 'murs', no: '1704' },
+        }),
+      );
+
+      expect(text).toContain('**1704** — MONDALE DELEGATE COMMITTEES');
+      expect(text).toContain(
+        'citations: 11 C.F.R. 100.5(g) (/regulations/100-5/CURRENT); 11 C.F.R. 110.3 (/regulations/110-3/CURRENT); 52 U.S.C. 30103(b)(2) (https://www.govinfo.gov/link/uscode/52/30103)',
+      );
+      expect(text).toContain(
+        'subject: Affiliation; Contributions > Acceptance > of prohibited contribution; Contributions > Limitations > annual limit for individuals',
+      );
+    });
+
+    it('renders an advisory opinion: entities, AO references, and citation lists', () => {
+      const text = formatText(
+        getLegalDocument.format!({
+          document: structuredClone(LIVE.ao_2003_37),
+          search_criteria: { doc_type: 'advisory_opinions', no: '2003-37' },
+        }),
+      );
+
+      expect(text).toContain('entities: Mr. Charles Spies Esq. (Commenter, Individual)');
+      expect(text).toContain(
+        'ao_citations: AO 2000-25 (Minnesota House DFL Caucus); AO 2003-03 (Cantor)',
+      );
+      expect(text).toContain('regulatory_citations: 11 CFR 100.4; 11 CFR 100.16; 11 CFR 100.22');
+      expect(text).toContain(
+        'statutory_citations: 26 U.S.C. 527; 52 U.S.C. 30101; 52 U.S.C. 30104',
+      );
+    });
+
+    it('keeps an unknown nested shape on the generic JSON rendering', () => {
+      const text = formatText(
+        getLegalDocument.format!({
+          document: { no: '1', name: 'X', unknown_nested: [{ a: 1 }], participants: [{ id: 7 }] },
+          search_criteria: { doc_type: 'murs', no: '1' },
+        }),
+      );
+
+      expect(text).toContain('unknown_nested: {"a":1}');
+      expect(text).toContain('participants: {"id":7}');
+    });
+
+    it('renders the held-back arrays with their entry counts, sizes, and the re-call', () => {
+      const text = formatText(
+        getLegalDocument.format!({
+          document: { no: '8123', name: 'Example' },
+          withheld: [{ array: 'dispositions', count: 53, bytes: 72797 }],
+          search_criteria: { doc_type: 'murs', no: '8123' },
+        }),
+      );
+
+      expect(text).toContain('### Arrays held back by the response budget');
+      expect(text).toContain('- dispositions — 53 entries, 72,797 bytes');
+      expect(text).toContain('Re-call with array set to one of these names');
+    });
+
+    it('renders a slice numbered from its offset, with where it continues', () => {
+      const text = formatText(
+        getLegalDocument.format!({
+          document: { no: '8123', name: 'Example' },
+          slice: {
+            array: 'documents',
+            offset: 10,
+            total: 154,
+            next_offset: 12,
+            entries: [
+              { category: 'Complaint', url: '/a.pdf' },
+              { category: 'GCR', url: '/b.pdf' },
+            ],
+          },
+          search_criteria: { doc_type: 'murs', no: '8123' },
+        }),
+      );
+
+      expect(text).toContain('### documents — entries 11–12 of 154 (offset 10)');
+      expect(text).toContain('11.\n  category: Complaint');
+      expect(text).toContain('12.\n  category: GCR');
+      expect(text).toContain('_Continue with array documents and offset 12._');
+    });
+
+    it('marks the end of an array and an offset with no entries', () => {
+      const last = formatText(
+        getLegalDocument.format!({
+          document: { no: '1' },
+          slice: { array: 'respondents', offset: 2, total: 3, entries: ['Roe, Richard'] },
+          search_criteria: { doc_type: 'murs', no: '1' },
+        }),
+      );
+      expect(last).toContain('3. Roe, Richard');
+      expect(last).toContain('_End of respondents._');
+
+      const past = formatText(
+        getLegalDocument.format!({
+          document: { no: '1' },
+          slice: { array: 'respondents', offset: 5, total: 3, entries: [] },
+          search_criteria: { doc_type: 'murs', no: '1' },
+        }),
+      );
+      expect(past).toContain('### respondents — no entries at offset 5 of 3');
     });
 
     it('falls back to a generic heading when the record carries no identifier or name', () => {

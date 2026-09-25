@@ -1,16 +1,19 @@
 /**
  * @fileoverview Tests for the itemized schedule row trimmer — committee hoist
- * scope rules, dropped sub-objects, the empty-field drop, and the hoisted and
- * per-row committee renderers.
+ * scope rules, dropped sub-objects, the empty-field drop, the hoisted and
+ * per-row committee renderers, and the shared response-budget measure.
  * @module tests/mcp-server/tools/definitions/utils/trim-schedule-row.test
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   dropEmptyFields,
+  enrichmentTrailerBytes,
   formatHoistedCommittee,
   formatRowCommittee,
+  RESPONSE_BUDGET_BYTES,
   trimScheduleRows,
+  utf8Bytes,
 } from '@/mcp-server/tools/definitions/utils/trim-schedule-row.js';
 
 const committee = (id: string) => ({
@@ -233,5 +236,30 @@ describe('formatRowCommittee', () => {
 
   it('marks a record carrying neither name nor ID as unknown rather than inventing one', () => {
     expect(formatRowCommittee({ state: 'DC' })).toBe('Unknown\n    DC');
+  });
+
+  it('declines a value that is not a committee record, leaving it to the generic rendering', () => {
+    expect(formatRowCommittee(null)).toBeNull();
+    expect(formatRowCommittee('C00000001')).toBeNull();
+    expect(formatRowCommittee([committee('C001')])).toBeNull();
+  });
+});
+
+describe('response budget measure', () => {
+  it('pins the budget at 100,000 bytes per surface', () => {
+    expect(RESPONSE_BUDGET_BYTES).toBe(100_000);
+  });
+
+  it('counts UTF-8 bytes, not UTF-16 code units', () => {
+    expect(utf8Bytes('abc')).toBe(3);
+    expect(utf8Bytes('§')).toBe(2);
+    expect(utf8Bytes('—')).toBe(3);
+    expect(utf8Bytes('😀')).toBe(4);
+    expect('😀'.length).toBe(2);
+  });
+
+  it('bounds the trailer a framework join could produce for the given lines', () => {
+    expect(enrichmentTrailerBytes([])).toBe(3);
+    expect(enrichmentTrailerBytes(['**5 total**', '> note'])).toBe(3 + 13 + 8);
   });
 });

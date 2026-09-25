@@ -6,7 +6,6 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
-import { isRecord } from '@cyanheads/mcp-ts-core/utils';
 import type { PageResult } from '@/services/openfec/types.js';
 
 /**
@@ -15,7 +14,14 @@ import type { PageResult } from '@/services/openfec/types.js';
  * filter and belongs in the echo, including query-shaping booleans such as
  * `most_recent` and `election_full`.
  */
-const PAGINATION_KEYS = new Set(['page', 'per_page', 'cursor', 'from_hit', 'hits_returned']);
+const PAGINATION_KEYS = new Set([
+  'page',
+  'per_page',
+  'cursor',
+  'from_hit',
+  'hits_returned',
+  'offset',
+]);
 
 /**
  * Build a search criteria summary from tool input.
@@ -96,7 +102,7 @@ export function describeExhaustedPosition(position: ExhaustedPosition): string {
     case 'cursor':
       return `This pagination cursor resumed past the last matching row — ${position.count} total matched. Omit cursor to read the result set from its first page.`;
     case 'offset':
-      return `from_hit is past the end of the matching documents — ${position.total_count} total matched across all document types. Lower from_hit: it offsets within each document type's own list, while the total sums across types.`;
+      return `from_hit is past the end of the matching documents — ${position.total_count} total matched across the document types searched. Lower from_hit: it offsets within each document type's own list, while the total sums across types.`;
   }
 }
 
@@ -235,15 +241,19 @@ export function fmtTotal(count: number, approximate?: boolean, unit = 'total'): 
   return approximate ? `≈${count} ${unit} (approximate)` : `${count} ${unit}`;
 }
 
-/** Renders one known nested-record field in place of the generic JSON fallback. */
-export type RecordFieldRenderer = (value: Record<string, unknown>) => string;
+/**
+ * Renders one field with a known nested shape in place of the generic JSON
+ * fallback. Returns null when the value is not the shape it knows, which hands
+ * the field back to the generic rendering. A result opening with a newline is
+ * a block: it starts on the line after the key rather than beside it.
+ */
+export type RecordFieldRenderer = (value: unknown) => string | null;
 
 /**
  * Render all non-empty fields from a record as indented `key: value` lines.
  * Pass `skip` to exclude fields already rendered in a header line, and
- * `renderers` to give a field with a known nested-record shape its own
- * rendering — applied only when the value is a plain object, so anything else
- * under that key still takes the generic path.
+ * `renderers` to give a field with a known nested shape its own rendering —
+ * a renderer that declines the value leaves it on the generic path.
  */
 export function renderRecord(
   rec: Record<string, unknown>,
@@ -253,9 +263,8 @@ export function renderRecord(
   const lines: string[] = [];
   for (const [key, value] of Object.entries(rec)) {
     if (skip?.has(key)) continue;
-    const render = renderers?.[key];
-    const text = render && isRecord(value) ? render(value) : renderValue(value);
-    if (text !== null) lines.push(`  ${key}: ${text}`);
+    const text = renderers?.[key]?.(value) ?? renderValue(value);
+    if (text !== null) lines.push(text.startsWith('\n') ? `  ${key}:${text}` : `  ${key}: ${text}`);
   }
   return lines.join('\n');
 }

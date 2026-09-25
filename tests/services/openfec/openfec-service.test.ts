@@ -270,6 +270,7 @@ describe('OpenFecService', () => {
     svc = new OpenFecService();
     ctx = createMockContext();
     vi.clearAllMocks();
+    mockFetch.mockRejectedValue(new Error('unmocked fetch'));
   });
 
   afterEach(() => {
@@ -714,6 +715,45 @@ describe('OpenFecService', () => {
 
       const result = await svc.searchLegal({}, ctx);
       expect(result.totalCount).toBe(1);
+    });
+
+    it('carries every per-type total an untyped search reports', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () =>
+          Promise.resolve({
+            advisory_opinions: [{ no: '2024-01' }],
+            murs: [{ no: '8363' }],
+            adrs: [],
+            admin_fines: [],
+            statutes: [{ no: '9001' }],
+            total_advisory_opinions: 1,
+            total_murs: 7670,
+            total_adrs: 1084,
+            total_admin_fines: 0,
+            total_statutes: 57,
+            total_all: 8812,
+          }),
+      } as never);
+
+      const result = await svc.searchLegal({ ao_no: '2024-01' }, ctx);
+      expect(result.typeTotals).toEqual({
+        advisory_opinions: 1,
+        murs: 7670,
+        adrs: 1084,
+        admin_fines: 0,
+        statutes: 57,
+      });
+    });
+
+    it('carries only the type a typed search reports, leaving the others absent rather than zero', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({ murs: [{ no: '8274' }], total_murs: 95, total_all: 95 }),
+      } as never);
+
+      const result = await svc.searchLegal({ type: 'murs' }, ctx);
+      expect(result.typeTotals).toEqual({ murs: 95 });
+      expect(result.results).toEqual([{ no: '8274', document_type: 'mur' }]);
+      expect(result.totalCount).toBe(95);
     });
   });
 

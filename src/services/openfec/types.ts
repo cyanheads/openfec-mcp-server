@@ -51,20 +51,21 @@ export interface FecSeekEnvelope<T = Record<string, unknown>> {
 
 /**
  * Legal search response — type-keyed result arrays instead of a
- * uniform `results` array. Each type has its own array and total count.
+ * uniform `results` array. Each type has its own array and total count; a
+ * search scoped by `type` carries only that type's pair.
  */
 export interface FecLegalEnvelope {
-  admin_fines: Record<string, unknown>[];
-  adrs: Record<string, unknown>[];
-  advisory_opinions: Record<string, unknown>[];
-  murs: Record<string, unknown>[];
-  statutes: Record<string, unknown>[];
-  total_admin_fines: number;
-  total_adrs: number;
-  total_advisory_opinions: number;
+  admin_fines?: Record<string, unknown>[];
+  adrs?: Record<string, unknown>[];
+  advisory_opinions?: Record<string, unknown>[];
+  murs?: Record<string, unknown>[];
+  statutes?: Record<string, unknown>[];
+  total_admin_fines?: number;
+  total_adrs?: number;
+  total_advisory_opinions?: number;
   total_all: number;
-  total_murs: number;
-  total_statutes: number;
+  total_murs?: number;
+  total_statutes?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -106,10 +107,19 @@ export interface SeekResult<T = Record<string, unknown>> {
   results: T[];
 }
 
+/** The five `/legal/search/` document types, in the plural form `type` takes. */
+export type LegalDocType = 'advisory_opinions' | 'murs' | 'adrs' | 'admin_fines' | 'statutes';
+
 /** Normalized legal search result with a flat results array. */
 export interface LegalResult {
   results: Array<Record<string, unknown> & { document_type: string }>;
+  /** `total_all` — the sum across every type upstream searched. */
   totalCount: number;
+  /**
+   * The per-type `total_<type>` counts upstream reported. A typed search
+   * reports only its own type; the other keys are absent, not zero.
+   */
+  typeTotals: Partial<Record<LegalDocType, number>>;
 }
 
 /** Flat response from the /elections/summary/ endpoint (no pagination wrapper). */
