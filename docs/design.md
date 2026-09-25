@@ -17,8 +17,8 @@ All tools are read-only and idempotent (`readOnlyHint: true`, `idempotentHint: t
 | `openfec_search_coordinated_expenditures` | Search coordinated party expenditures (Schedule F) — party committee spending made on behalf of a candidate, in coordination with that campaign. | `committee_id`, `candidate_id`, `cycle`, `payee_name`, `min_date`, `max_date`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_filings` | Search FEC filings and reports by committee, candidate, form type, or date range. | `committee_id`, `candidate_id`, `form_type`, `report_type`, `cycle`, `most_recent` | readOnly, idempotent |
 | `openfec_lookup_elections` | Look up federal election races and candidate financial summaries. Find who's running with fundraising totals. | `mode`, `office`, `cycle`, `state`, `district` | readOnly, idempotent |
-| `openfec_search_legal` | Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, and administrative fines. | `query`, `type`, `ao_number`, `case_number`, `respondent` | readOnly, idempotent |
-| `openfec_get_legal_document` | Fetch one legal document in full by type and number — the detail counterpart to the compact search results. | `doc_type`, `no` | readOnly, idempotent |
+| `openfec_search_legal` | Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, administrative fines, and statutes. | `query`, `type`, `ao_number`, `case_number`, `respondent` | readOnly, idempotent |
+| `openfec_get_legal_document` | Fetch one legal document in full by type and number — the detail counterpart to the compact search results. A record over the response budget pages its arrays by entry offset. | `doc_type`, `no`, `array`, `offset` | readOnly, idempotent |
 | `openfec_lookup_calendar` | Look up FEC calendar events, filing deadlines, and election dates. | `mode`, `state`, `min_date`, `max_date` | readOnly, idempotent |
 
 ### Resources
@@ -439,32 +439,46 @@ Search FEC legal documents. Powered by OpenSearch with proximity search and high
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `query` | string | No | Full-text search across legal documents. Supports proximity search. |
-| `type` | enum | No | `advisory_opinions`, `murs` (Matters Under Review), `adrs` (Alternative Dispute Resolution), `admin_fines`, `statutes`. Omit to search all types. |
-| `ao_number` | string | No | Specific advisory opinion number (e.g., `2024-01`). |
-| `case_number` | string | No | Specific MUR or ADR case number. |
-| `respondent` | string | No | Respondent name (enforcement cases). |
-| `regulatory_citation` | string | No | CFR citation (e.g., `11 CFR 112.4`). |
-| `statutory_citation` | string | No | U.S.C. citation (e.g., `52 U.S.C. 30106`). |
-| `min_penalty_amount` | number | No | Minimum penalty amount. Sent as `case_min_penalty_amount` — filters enforcement cases (`murs`, `adrs`) only. |
-| `max_penalty_amount` | number | No | Maximum penalty amount. Sent as `case_max_penalty_amount` — filters enforcement cases only. |
+| `type` | enum | No | `advisory_opinions`, `murs` (Matters Under Review), `adrs` (Alternative Dispute Resolution), `admin_fines`, `statutes`. Omit to search every type the type-specific filters below apply to — all five when none is given. |
+| `ao_number` | string | No | Specific advisory opinion number (e.g., `2024-01`). `advisory_opinions` only. |
+| `case_number` | string | No | Specific MUR, ADR, or administrative fine case number. `murs`, `adrs`, `admin_fines`. |
+| `respondent` | string | No | Respondent name. `murs`, `adrs`. |
+| `regulatory_citation` | string | No | One CFR citation, `<title> CFR <part>.<section>` (e.g., `11 CFR 110.1`). `advisory_opinions`, `murs`, `adrs`. |
+| `statutory_citation` | string | No | One U.S.C. citation, `<title> U.S.C. <section>` (e.g., `52 U.S.C. 30104`). `advisory_opinions`, `murs`, `adrs`. |
+| `min_penalty_amount` | number | No | Minimum penalty amount. `murs`, `adrs`, `admin_fines` — an administrative fine matches on its reason-to-believe or final-determination amount. |
+| `max_penalty_amount` | number | No | Maximum penalty amount. `murs`, `adrs`, `admin_fines`. |
 | `date_kind` | enum | No | Which date `min_date`/`max_date` bound: `issue_date`, `request_date`, `open_date`, `close_date`, `document_date`, `rtb_date`, `fd_date`. Must be one the chosen `type` records. Required alongside `type` whenever a bound is given. |
 | `min_date` | string | No | Earliest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
 | `max_date` | string | No | Latest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
 | `from_hit` | number | No | Offset for pagination (0-indexed), counted within each document type. Default 0, max 9999. Bounded with `hits_returned` by the upstream result window: `from_hit + hits_returned <= 10000` (decision 4). |
-| `hits_returned` | number | No | Results per page, applied per document type. Default 20, max 200. |
+| `hits_returned` | number | No | Results per page, applied per document type. Default 20, max 200. A page of large results can return fewer, held to the response budget below. |
 
 **Output:** Varies by `type`:
-- *Advisory opinions:* `ao_no`, `name`, `summary`, `issue_date`, `request_date`, `status`, `requestor_names`, `regulatory_citations`, `statutory_citations`, `highlights`, `documents` (array with `url`, `filename`, `category`).
-- *MURs:* Case number, name, respondents, penalty amounts, disposition, citations.
+- *Advisory opinions:* `ao_no`, `name`, `summary`, `issue_date`, `request_date`, `status`, `requestor_names`, `regulatory_citations`, `statutory_citations`, `highlights`, and the related-filing summary `document_count` / `document_categories`.
+- *MURs:* Case number, name, respondents, participants, subjects, and a disposition summary (`disposition_count`, `disposition_categories`).
 - *Admin fines:* Case details, penalty amounts, respondents.
 - *Statutes:* Citation, title, text.
 
-The server normalizes the type-keyed response arrays into a uniform `results` array with a `document_type` discriminator.
+The server normalizes the type-keyed response arrays into a uniform `results` array with a `document_type` discriminator. Every result is trimmed: `documents` becomes `document_count` and `document_categories`, `dispositions` becomes `disposition_count` and `disposition_categories` (the distinct `disposition` values, or `disposition_description` on administrative fines), `document_highlights` is dropped, highlights stop at three, and each `commission_votes` entry is cut to its `vote_date` and a 200-character `action`; `retrievalHint` points at `openfec_get_legal_document` for all of it. Each kept highlight has upstream's `<em>`/`</em>` match markup removed — only those two tokens, since the prose itself carries literal `<`, `>`, and `&` — and `content[]` puts each highlight on its own list line, since the snippets carry commas, with a snippet's own line breaks indented under its item. `format()` groups results by type, heads each by its number and `name` (or `mur_name` on an archived MUR), and renders nested fields through the legal field renderers of decision 18.
 
-**Pagination:** Custom model — `from_hit`/`hits_returned` (not page-based). The tool exposes this directly since it differs from other tools. Response includes `total_count` for the queried type(s).
+**Type-specific filters:** each is sent under the upstream name the selected type reads (decision 17):
+
+| Input | `advisory_opinions` | `murs`, `adrs` | `admin_fines` | `statutes` |
+|:--|:--|:--|:--|:--|
+| `regulatory_citation` / `statutory_citation` | `ao_regulatory_citation` / `ao_statutory_citation` | `case_regulatory_citation` / `case_statutory_citation` | rejected (matches none) | rejected (ignored) |
+| `min_penalty_amount` / `max_penalty_amount` | rejected (ignored) | `case_min_penalty_amount` / `case_max_penalty_amount` | `case_min_penalty_amount` / `case_max_penalty_amount` | rejected (ignored) |
+| `respondent` | rejected (ignored) | `case_respondents` | rejected (matches none) | rejected (ignored) |
+| `ao_number` | `ao_no` | rejected (ignored) | rejected (ignored) | rejected (ignored) |
+| `case_number` | rejected (ignored) | `case_no` | `case_no` | rejected (ignored) |
+
+**Pagination:** Custom model — `from_hit`/`hits_returned` (not page-based). The tool exposes this directly since it differs from other tools. `total_count` covers the types searched: `total_all` for a search scoped to one type (by `type`, or by filters that leave only one) or one with no type-specific filter, and otherwise the sum of the per-type `total_<type>` counts over the types kept.
+
+**Response budget:** a page is held to 100,000 bytes per surface by admitting whole results, one type at a time (decision 20). When results upstream returned are held back, the `truncated`, `shown`, and `nextFromHit` enrichment fields are set and the `notice` names the continuation: `nextFromHit` maps each type with results held back (keyed by its `type` value) to the `from_hit` that resumes it, and the caller re-calls with the same filters, that `type`, and that `from_hit`. A naturally short page, a page that fits, and an exhausted offset set none of them.
 
 **Error modes:**
 - No scoping filter at all → `ValidationError` (`missing_filter`). Any one of `query`, `type`, `ao_number`, `case_number`, `respondent`, `regulatory_citation`, `statutory_citation`, a penalty bound, or a date bound satisfies it.
+- A type-specific filter the selected `type` ignores or never matches, or — with `type` omitted — type-specific filters no single type accepts together (`ao_number` with `respondent`) → `ValidationError` (`filter_not_valid_for_type`), carrying `accepted_by`: each offending filter mapped to the types it applies to. A citation on `murs` or `adrs` sent with `case_number`, `respondent`, a penalty bound, or an `open_date`/`close_date` bound fails the same way, carrying `ignored_with_citation` (decision 17).
+- A citation the search index cannot parse, or a value holding a second citation → `ValidationError` (`invalid_citation`), carrying `invalid_citations` (decision 19).
 - A date bound without both `type` and `date_kind`, or a `date_kind` with neither bound → `ValidationError` (`date_filter_incomplete`).
 - A `date_kind` the chosen `type` does not record → `ValidationError` (`date_kind_not_valid_for_type`), carrying `valid_date_kinds`.
 - `from_hit + hits_returned` above 10,000 → `ValidationError` (`legal_window_exceeded`), carrying `max_from_hit` for the supplied page size.
@@ -490,7 +504,7 @@ The server normalizes the type-keyed response arrays into a uniform `results` ar
 
 ### `openfec_get_legal_document`
 
-Fetch one legal document in full. The detail counterpart to `openfec_search_legal`, which trims every result unconditionally and offered no way to recover what it cut.
+Fetch one legal document in full. The detail counterpart to `openfec_search_legal`, which trims every result unconditionally and offered no way to recover what it cut. A record too large for the 100,000-byte response budget is returned in parts (decision 20).
 
 **Input schema:**
 
@@ -498,8 +512,17 @@ Fetch one legal document in full. The detail counterpart to `openfec_search_lega
 |:----------|:-----|:---------|:------------|
 | `doc_type` | enum | Yes | `advisory_opinions`, `murs`, `adrs`, `admin_fines`, `statutes` — the plural of a search result's `document_type` discriminator. |
 | `no` | string | Yes | Document number from the matching search result's `no` field. Advisory opinions are year-serial (`2024-01`); MURs, ADRs, and admin fines are digit strings (`8363`); statutes are U.S. Code section numbers (`30123`). |
+| `array` | string | No | One top-level array field of the record to page through by entry — usually one `withheld` named. |
+| `offset` | number | No | Entry offset (0-indexed) into `array`; requires `array`, defaults to 0 with it. |
 
-**Output:** `document` — the complete record, carrying the full `documents` array that search replaces with a count and category summary, the complete `commission_votes` it reduces to a vote date and a truncated action, and the `dispositions` and scalar/date fields. Fields present vary by document type. `search_criteria` echoes both inputs. `attachedDocumentCount` enrichment reports the length of `documents`, so it can be checked against the `document_count` the search result reported.
+**Output:** one flat object with three arms, rendered on field presence:
+- *Whole:* `document` — the complete record as upstream sends it, carrying the full `documents` array that search replaces with a count and category summary, the complete `dispositions` and `commission_votes`, and the scalar/date fields. Fields present vary by document type.
+- *Bounded* (the whole record would exceed the budget): `document` carries every non-array field and the arrays that fit, smallest first, in the record's own key order; `withheld` lists the rest, smallest first, as `{ array, count, bytes }` — `bytes` is the array's JSON size in UTF-8. The `notice` names the re-call.
+- *Slice* (`array` given): `document` carries the record's non-array fields; `slice` is `{ array, offset, total, next_offset?, entries }` — entries from `offset` while they fit, at least one while `offset` is inside the array, and `next_offset` until the last entry is in. An `offset` at or past the end returns no entries and a `notice` naming the array's length (decision 14); an empty array returns none and says so.
+
+`search_criteria` echoes `doc_type`, `no`, and `array`, minus the paging `offset`. `attachedDocumentCount` enrichment reports the length of the record's `documents` in every arm — whether they are inline, in a slice, or held back — so it can be checked against the `document_count` the search result reported.
+
+**Rendering:** `format()` heads the record by its number and `name`, or `mur_name` for an archived MUR whose `name` is null, and renders the nested fields through the legal field renderers of decision 18 — each `dispositions` entry's `citations` included. `withheld` renders as a list of array names with entry counts and sizes; a slice renders its entries numbered from `offset + 1` — every field of a `documents`, `commission_votes`, or `dispositions` entry, as their whole-record sections do, and an entry of any other array through that array's legal renderer — then the offset that continues it.
 
 **Not returned:** `highlights` and `document_highlights`. Those are a relevance artifact `/legal/search/` computes against a query, not data attached to a canonical record — the detail endpoint has no such field.
 
@@ -507,6 +530,8 @@ Fetch one legal document in full. The detail counterpart to `openfec_search_lega
 
 **Error modes:**
 - No record at the given `doc_type`/`no` → `NotFound` (`legal_document_not_found`).
+- `array` names a field the record does not carry as an array → `ValidationError` (`array_not_in_record`), carrying `arrays`: the record's array fields.
+- `offset` without `array` → `ValidationError` (`offset_without_array`), before any upstream call (decision 8).
 
 **Response envelope:** the live endpoint wraps the record in a `docs` array; `docs/openapi-spec.json` documents a flat single object with the same fields at the top level. The service accepts both, preferring the array form when present.
 
@@ -707,6 +732,8 @@ Legal search uses `from_hit`/`hits_returned` (offset-based, max 200) with type-k
 
 Both ride the OpenSearch result window behind `/legal/search/`, which serves a request only while `from_hit + hits_returned <= 10000`, inclusive. Past it upstream answers 400 with `Opensearch failed to execute query` — a message that names the engine, not the window. The ceiling moves with the page size, so it cannot be expressed as a static `.max()` on its own: `from_hit` advertises the ceiling it has at `hits_returned: 1` (9999) and the sum is checked in the handler before dispatch, rejected as `legal_window_exceeded` with the largest `from_hit` the supplied page size allows. That follows decision 8 — reject an unservable input rather than spend the round trip on a 400 that misattributes the cause. No document type holds enough records to reach the window (the largest single-type total measured is 7,670 MURs), so a paging run runs out of documents first; this is about the advertised contract and the error text.
 
+Because `from_hit` offsets within each type, a page the response budget bounds (decision 20) continues per type: `nextFromHit` gives each type with results held back the `from_hit` of its first unshown result, and a re-call with that `type` returns it next. Measured live, a typed search at `from_hit: n - 1` returns the last result an untyped page showed for that type and then the one its continuation starts at, so the typed and untyped orders agree.
+
 ### 5. `_full` fields for LLM readability
 
 The API provides both code and human-readable versions of enumerated fields (`party` / `party_full`, `office` / `office_full`). The `format()` function uses `_full` variants for display. Output schemas include both for chaining (codes are needed for follow-up queries).
@@ -717,7 +744,7 @@ The API sets `Cache-Control: public, max-age=3600`. Server-side caching is worth
 
 ### 7. Every response states the query it ran
 
-All twelve tools return `search_criteria` on every response, not only empty ones, and the six multi-mode tools also return the resolved `mode`. A caller cannot otherwise tell that a cycle defaulted, that `by_size` resolved to `by_size_candidate` against a different endpoint, or which of several row shapes it is holding. `search_criteria` echoes the **effective** filters — the caller's parsed input with every server-applied default folded in — minus paging arguments (`page`, `per_page`, `cursor`, `from_hit`, `hits_returned`); query-shaping booleans such as `most_recent` and `election_full` stay in, because they narrow the result set. Echoing the raw input instead would reproduce the failure the field exists to close: the itemized branches fall back to the current cycle and to `most_recent: true`, and a caller who omitted both would see neither in the echo while both shaped the result. The itemized keyset cursor is bound to the same effective values, so an omitted default and an explicit one resolve to one cursor identity rather than two. `format()` renders both fields, so `content[]`-only clients see the same record as `structuredContent` clients.
+All twelve tools return `search_criteria` on every response, not only empty ones, and the six multi-mode tools also return the resolved `mode`. A caller cannot otherwise tell that a cycle defaulted, that `by_size` resolved to `by_size_candidate` against a different endpoint, or which of several row shapes it is holding. `search_criteria` echoes the **effective** filters — the caller's parsed input with every server-applied default folded in — minus paging arguments (`page`, `per_page`, `cursor`, `from_hit`, `hits_returned`, and `openfec_get_legal_document`'s entry `offset`); query-shaping booleans such as `most_recent` and `election_full` stay in, because they narrow the result set. Echoing the raw input instead would reproduce the failure the field exists to close: the itemized branches fall back to the current cycle and to `most_recent: true`, and a caller who omitted both would see neither in the echo while both shaped the result. The itemized keyset cursor is bound to the same effective values, so an omitted default and an explicit one resolve to one cursor identity rather than two. `format()` renders both fields, so `content[]`-only clients see the same record as `structuredContent` clients.
 
 ### 8. Endpoint-inapplicable inputs are rejected, never dropped
 
@@ -772,6 +799,8 @@ At `per_page: 100` a single page from the six high-volume search tools ran 310�
 
 A page bounded below the caller's request, with rows remaining past it, sets the `truncated`/`shown`/`cap` enrichment and a `notice` naming the continuation; `totalCount` and `count` keep the full upstream total. A page the cap did not bound, a naturally short last page, and an exhausted position report nothing — they are complete.
 
+The surfaces are measured as the caller receives them, from the assembled `CallToolResult`: the UTF-8 bytes of `JSON.stringify(structuredContent)` with the enrichment fields merged in, and of the `content[]` text blocks joined by a newline, the enrichment trailer included. The legal tools hold to the same budget and measure (`RESPONSE_BUDGET_BYTES`, `utf8Bytes`) by measuring each response rather than capping a request (decision 20).
+
 Each cap is the largest multiple of 5 for which a page of the heaviest row measured live in that scope stays within the budget on both surfaces, and a page at the heaviest measured per-row average stays within 90% of it. Measured 2026-09-23 against 2024 data, after the null-drop and compact committee rendering; `structuredContent` bytes per row (it outweighs `content[]` in every scope):
 
 | Tool | Scope | Heaviest avg / row | Heaviest row | Cap |
@@ -790,6 +819,50 @@ A candidate row is the candidate plus its totals rows — one per cycle filed, s
 
 Rejected: truncating a fetched page (breaks keyset continuation and discards rows the caller paid a request for), lowering the schema maximum (a breaking contract change for a budget the server can meet on its own), and DataCanvas `spillover()` (needs a canvas provider this server does not register).
 
+### 17. Legal search routes each type-specific filter by document type
+
+`/legal/search/` names the same filter differently per document type — `ao_regulatory_citation` for advisory opinions, `case_regulatory_citation` for MURs and ADRs — and answers 200 for a name a type does not read, returning that type unfiltered while the filter still looks applied. Measured live, a `case_*` citation or `case_respondents` against administrative fines matches none of them rather than being ignored. `FILTER_PARAMS` in the tool records, per filter, the upstream name each type reads; a typed search sends only that name and rejects a filter with no entry for its type as `filter_not_valid_for_type` (decision 8). With `type` omitted, the search keeps only the types every supplied type-specific filter applies to, sends only their names, and totals over them from the per-type `total_<type>` counts — `total_all` would count the other types unfiltered. Filters that share no type are rejected rather than returning a union nobody asked for. Filters that leave exactly one type send that `type` upstream, so the other types' pages — heavy MUR rows among them — are never fetched only to be discarded; the total is then that type's `total_all`, the same count the per-type sum gives. A search with no type-specific filter still returns all five types. Upstream computes every per-type total on an untyped search, so a missing one fails the call rather than being estimated.
+
+Case search has a second blind spot: when a MUR or ADR search carries a citation, upstream returns the citation clause in place of the rest of its case filters, so `case_no`, `case_respondents`, the penalty bounds, and the open- and close-date bounds are dropped while the query and a `document_date` bound still apply. Measured live, `case_regulatory_citation=11 CFR 110.1` returns the same 95 MURs alone and with `case_respondents=Obama` (24 MURs alone), `case_no=6916`, `case_min_penalty_amount=1000000`, or `case_min_open_date=2020-01-01`; adding `q` or `case_min_document_date` narrows it. The tool rejects those combinations as `filter_not_valid_for_type` with `ignored_with_citation` naming the inputs that would be dropped. Advisory-opinion search applies a citation together with its other filters. The two citation fields combine as either-or on both families: `11 CFR 110.1` (95 MURs) with `52 U.S.C. 30104` (783) matches 833.
+
+### 18. Nested legal fields render as text
+
+Legal records nest participants, subjects, citations (a flat array per disposition on current MURs and ADRs, an object of `regulations`/`us_code` arrays on archived MURs), a recursive `subject` tree on archived MURs, advisory-opinion citation lists, and commission votes. `utils/legal-field-renderers.ts` gives each a text rendering — `name (role)`, `52 U.S.C. 30104(g) (url)`, `11 CFR 100.4`, `AO 2000-25 (name)`, `>`-joined subject paths — through `renderRecord` field renderers, which take the raw value and decline (null) anything that is not the whole shape they know. A declined value, and any field with no renderer, keeps the generic JSON rendering, so an upstream shape change shows up as JSON rather than as silently missing text. `structuredContent` is untouched. Dispositions need no renderer of their own: search summarizes them to `disposition_count` and `disposition_categories` (decision 20), and the detail tool renders each one as a section entry, every field on its own line, with its `citations` through the citation renderer.
+
+### 19. Legal citations are checked against the form upstream parses
+
+`/legal/search/` reads a citation with a prefix match — `<title> U.S.C. <section>` or `<title> CFR <part>.<section>`, periods optional, `§` optional, anything after ignored — and drops a value that does not match, answering 200 with the type unfiltered. `30106`, `110.1`, and `52 U.S.C. zz` all return every MUR. The tool mirrors that prefix (case-insensitive, as upstream behaves) and rejects a non-matching citation as `invalid_citation` before dispatch; a matching one is sent byte-identical. The grammar was established by live probe against the unfiltered total as control, over subsection suffixes (`30104(g)`, `110.1(b)`), lettered sections (`441b`), `USC` and `C.F.R.` spellings, lowercase, repeated spaces and tabs, and `§`. Upstream's own pattern writes `\s+§*\s*`, which backtracks quadratically on a long run of spaces; the tool's `\s+(?:§+\s*)?` accepts the same strings in linear time.
+
+Because the match ignores everything after the section number, a value holding two citations filters on the first alone: `52 U.S.C. 30104, 52 U.S.C. 30118` returns the 783 MURs `52 U.S.C. 30104` does, not the 346 of `30118`, and the reversed order returns 346. The tool rejects such a value as `invalid_citation` too, one citation per field. It reads the text after the section number, with parenthesized subsections removed, as a second citation when it holds another `U.S.C.` or `CFR` code, or another section number introduced by a list separator (`,` `;` `&` `/`), a range dash, `and`/`or`/`through`/`to`, or bare whitespace. A letter suffix (`441b`, `441a-1`), a dotted continuation (`110.1.2`), subsection lists (`30104(a), (b)`), and trailing words carry no second section and stay accepted, each confirmed live to narrow the result like its bare citation. Upstream takes each citation parameter as a repeatable array; exposing that is a schema change this tool does not make.
+
+### 20. Legal responses are bounded by measurement, not by count
+
+Legal record size is heavy-tailed — across the first 200 MURs the median search result is 3 KB and the largest 79 KB — so no result count holds decision 16's budget: MUR 6916 alone exceeds it at `hits_returned: 1`, and eleven MURs and one ADR exceed it as detail records. Both legal tools therefore measure what they return, against the same 100,000-byte, per-surface budget, measured the same way.
+
+- **Charge.** A result, an array, or an array entry is charged the larger of its UTF-8 bytes on the two surfaces — its JSON and its `format()` rendering — plus its separator, against the budget minus the envelope: every byte that is not content (criteria echo, totals, headings, the `withheld` list or slice metadata, and the enrichment with its trailer), reserved at its largest. Charging the larger surface keeps both under the budget; the cost is that the lighter surface — `content[]` for search results — runs well under it.
+- **Search.** `dispositions` is summarized like `documents` (in MUR search results it was 467 KB of a 792 KB page), then whole results are admitted round-robin across the types the search covers, one per type per round. A type whose next result does not fit is closed while the others continue, so an untyped page carries every type that matched and each type's admitted results are a prefix of its list, resumable at `from_hit + shown`. The page upstream returned is cut after the fetch: offset paging, unlike a keyset cursor (decision 16), loses nothing by it. The first result is always admitted, so a walk never stalls.
+- **Detail.** A record that fits returns whole and unchanged. Otherwise it returns its non-array fields plus its arrays smallest-first while they fit, and lists the rest in `withheld`. A re-call naming one array and an entry `offset` returns entries from there while they fit, plus `next_offset`; the first entry is always returned, so an entry larger than the budget alone still advances the walk (the largest entry measured is a 7 KB commission vote).
+
+The framework's `outlineOnOverflow`/`selectSections` was the alternative for detail and does not fit: it measures UTF-16 `length` rather than bytes, its outline carries none of the record's scalar fields, and `selectSections` returns a named top-level section whole — MUR 6916's `dispositions` alone is 333 KB, MUR 7594's `documents` 219 KB.
+
+Measured live 2026-09-24, UTF-8 bytes per surface, before and after:
+
+| Call | Before `structuredContent` / `content[]` | After | After, shape |
+|:--|--:|--:|:--|
+| search, `type: murs`, `hits_returned: 200` | 792,307 / 778,650 | 98,639 / 80,416 | 65 results, `nextFromHit` `murs: 65` |
+| search, `query: "contribution"`, `hits_returned: 200` | 2,480,951 / 2,376,266 | 97,795 / 82,851 | 49 results, all five types |
+| search, `query: "contribution"`, default `hits_returned` | 232,186 / 221,655 | 99,259 / 84,106 | 50 results, all five types |
+| search, MUR 6916 alone | 400,205 / 400,931 | 67,126 / 53,085 | whole, 763 dispositions summarized |
+| detail, MUR 8123 | 126,499 / 126,429 | 53,943 / 52,825 | `dispositions` withheld |
+| detail, MUR 7594 | 350,658 / 346,109 | 41,352 / 34,939 | `dispositions`, `documents` withheld |
+| detail, MUR 6916 | 497,977 / 488,820 | 68,136 / 54,278 | `documents`, `dispositions` withheld |
+| detail, MUR 7594 `documents` by offset | — | ≤ 99,488 / ≤ 99,727 | 3 calls, 667 entries |
+| detail, MUR 6916 `dispositions` by offset | — | ≤ 99,732 / ≤ 71,813 | 4 calls, 763 entries |
+
+Statute 30113, advisory opinion 1980-35, and administrative fine 4229 return whole and byte-identical. The three heaviest MURs are kept as a test fixture — masked scalars and the exact byte size of every array entry, expanded to each record's live weight — so a renderer or envelope that outgrows the budget fails the suite.
+
+Rejected: a count cap on `hits_returned` (one record breaks it), stop-at-first admission (a heavy MUR page would crowd out every later type), and a per-array entry `limit` (entries run from 30 bytes to 7 KB, so no count suits every array).
+
 ---
 
 ## Known Limitations
@@ -801,7 +874,8 @@ Rejected: truncating a fetched page (breaks keyset continuation and discards row
 - **Legal search vs. entity search:** Legal search is full-text, not entity-linked. Searching for a committee name may miss cases where the committee is referenced differently.
 - **Data freshness:** Nightly refresh for most data. E-filing data is near-real-time but only retained ~4 months and is excluded from this server's scope.
 - **No field selection:** The API does not support a `fields` parameter, so full records come back — a Schedule A/B/E row runs 3–4KB. The nested committee object, roughly a third of that weight, is hoisted out of the rows whenever the query is scoped to a single `committee_id`, null and empty fields are dropped, and each high-volume tool caps the page size it requests (decision 16). The cost is more calls per result set: at `per_page: 100` a bounded tool returns 5–80 rows a page, and walking a large set takes proportionally more requests against the rate limit.
-- **Page budget is measured, not enforced:** The per-scope caps come from the heaviest rows measured live, not from serializing each response. An unusually heavy page can still exceed 100,000 bytes — most plausibly an all-cycles candidate search with totals, where one long-serving incumbent's totals alone run ~30KB.
+- **Schedule page budget is measured, not enforced:** The per-scope caps come from the heaviest rows measured live, not from serializing each response. An unusually heavy page can still exceed 100,000 bytes — most plausibly an all-cycles candidate search with totals, where one long-serving incumbent's totals alone run ~30KB. The legal tools serialize each response instead (decision 20).
+- **Legal responses over the budget:** a single search result, a single array entry, or a detail record's non-array fields larger than the budget are still returned alone rather than stalling the walk — the heaviest measured is a 67 KB search result (MUR 6916) and a 7 KB entry, both within it. A bounded search page discards the results it held back after upstream sent them, so walking a heavy type spends more requests than its result count suggests; each continuation re-fetches from `nextFromHit`.
 
 ---
 
@@ -872,6 +946,8 @@ API key via query parameter `api_key` or header `X-Api-Key`. Keys from [api.data
   "total_all": 2093
 }
 ```
+
+An untyped search carries all five arrays and `total_<type>` counts, which sum to `total_all`. A search with `type` set carries only that type's array and count; the other keys are absent, not zero.
 
 ### ID Formats
 
