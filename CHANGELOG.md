@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.9.0](changelog/0.9.x/0.9.0.md) — 2026-09-24 · ⚠️ Breaking
+
+openfec_search_legal and openfec_get_legal_document hold each response to 100,000 bytes with a per-type or per-array continuation, legal search rejects filters and citations upstream would silently ignore, and legal records render nested fields and highlights as readable text
+
 ## [0.8.4](changelog/0.8.x/0.8.4.md) — 2026-09-23
 
 High-volume pages from six search tools are bounded to 100,000 bytes per surface via null-field drop and per-tool per_page caps, nested committee records render compactly instead of as raw JSON, and by_candidate expenditure totals take an explicit election_full flag

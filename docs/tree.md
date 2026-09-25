@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-09-24 01:18:32
+Generated on: 2026-09-25 05:38:39
 
 ```text
 openfec-mcp-server/
@@ -32,6 +32,7 @@ openfec-mcp-server/
 │   ├── 0.6.x/
 │   ├── 0.7.x/
 │   ├── 0.8.x/
+│   ├── 0.9.x/
 │   └── template.md
 ├── claude-plans/
 ├── docs/
@@ -162,6 +163,7 @@ openfec-mcp-server/
 │   │           │   ├── election-cycle.ts
 │   │           │   ├── format-helpers.ts
 │   │           │   ├── id-validators.ts
+│   │           │   ├── legal-field-renderers.ts
 │   │           │   ├── range-validators.ts
 │   │           │   └── trim-schedule-row.ts
 │   │           ├── get-committee-totals.tool.ts
@@ -186,7 +188,9 @@ openfec-mcp-server/
 │   ├── config/
 │   │   └── server-config.test.ts
 │   ├── fixtures/
-│   │   └── heaviest-rows.json
+│   │   ├── heaviest-legal-records.json
+│   │   ├── heaviest-rows.json
+│   │   └── legal-records.json
 │   ├── mcp-server/
 │   │   ├── prompts/
 │   │   │   └── definitions/
@@ -202,10 +206,12 @@ openfec-mcp-server/
 │   │           ├── utils/
 │   │           │   ├── format-helpers.test.ts
 │   │           │   ├── id-validators.test.ts
+│   │           │   ├── legal-field-renderers.test.ts
 │   │           │   ├── range-validators.test.ts
 │   │           │   └── trim-schedule-row.test.ts
 │   │           ├── get-committee-totals.tool.test.ts
 │   │           ├── get-legal-document.tool.test.ts
+│   │           ├── legal-response-bounds.test.ts
 │   │           ├── lookup-calendar.tool.test.ts
 │   │           ├── lookup-elections.tool.test.ts
 │   │           ├── response-bounds.test.ts
@@ -217,6 +223,7 @@ openfec-mcp-server/
 │   │           ├── search-expenditures.tool.test.ts
 │   │           ├── search-filings.tool.test.ts
 │   │           ├── search-legal.tool.test.ts
+│   │           ├── search-legal.upstream.test.ts
 │   │           └── security.test.ts
 │   └── services/
 │       └── openfec/
