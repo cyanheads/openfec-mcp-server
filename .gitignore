@@ -8,8 +8,9 @@ Thumbs.db
 # IDE AND EDITOR FILES
 # =============================================================================
 .idea/
-.vscode/!settings.json
-.vscode/!extensions.json
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 *.swp
 *.swo
 *~
@@ -58,9 +59,10 @@ logs/
 # =============================================================================
 # ENVIRONMENT & CONFIGURATION
 # =============================================================================
-.env
-.env.local
-.env.*.local
+.env*
+!.env.example
+!.env.template
+!.env.sample
 .wrangler
 worker-configuration.d.ts
 
