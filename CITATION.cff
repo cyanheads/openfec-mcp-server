@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: openfec-mcp-server
-abstract: "Model Context Protocol (MCP) server for the OpenFEC REST API, providing U.S. federal campaign finance data — candidates, political committees, itemized and aggregated contributions (Schedule A), disbursements (Schedule B), independent expenditures (Schedule E), filings, elections, calendar, and FEC legal documents (advisory opinions, enforcement cases)."
+abstract: "Model Context Protocol (MCP) server for the OpenFEC REST API, providing U.S. federal campaign finance data: candidates, political committees, itemized and aggregated contributions (Schedule A), disbursements (Schedule B), independent expenditures (Schedule E), filings, elections, calendar, and FEC legal documents (advisory opinions, enforcement cases)."
 type: software
 authors:
   - family-names: Hand
