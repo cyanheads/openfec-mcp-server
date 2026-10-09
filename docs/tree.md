@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-09-25 05:38:39
+Generated on: 2026-10-09 04:25:44
 
 ```text
 openfec-mcp-server/
@@ -136,9 +136,11 @@ openfec-mcp-server/
 │   ├── clean-mcpb.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
+│   ├── install-otel.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── prune-musl-packages.ts
 │   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
@@ -209,6 +211,7 @@ openfec-mcp-server/
 │   │           │   ├── legal-field-renderers.test.ts
 │   │           │   ├── range-validators.test.ts
 │   │           │   └── trim-schedule-row.test.ts
+│   │           ├── contract-failure.ts
 │   │           ├── get-committee-totals.tool.test.ts
 │   │           ├── get-legal-document.tool.test.ts
 │   │           ├── legal-response-bounds.test.ts

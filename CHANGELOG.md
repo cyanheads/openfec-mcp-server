@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.9.1](changelog/0.9.x/0.9.1.md) — 2026-10-08
+
+mcp-ts-core ^0.13.14: numeric strings and null optionals in tool arguments are repaired before validation, tool errors carry their request ID, server.json HTTP entries start over HTTP, and the Docker image installs dependencies in a build-platform stage
+
 ## [0.9.0](changelog/0.9.x/0.9.0.md) — 2026-09-24 · ⚠️ Breaking
 
 openfec_search_legal and openfec_get_legal_document hold each response to 100,000 bytes with a per-type or per-array continuation, legal search rejects filters and citations upstream would silently ignore, and legal records render nested fields and highlights as readable text
