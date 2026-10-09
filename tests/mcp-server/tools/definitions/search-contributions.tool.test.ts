@@ -37,6 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 
 import { searchContributions } from '@/mcp-server/tools/definitions/search-contributions.tool.js';
 import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -251,19 +252,18 @@ describe('searchContributions', () => {
     });
 
     it('rejects explicit page in itemized mode before the keyset call', async () => {
-      const input = searchContributions.input.parse({
+      const err = await contractFailure(searchContributions, {
         mode: 'itemized',
         committee_id: 'C00703975',
         page: 7,
       });
-      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
 
       expect(err.data).toMatchObject({
         reason: 'inputs_not_applicable_to_mode',
         inapplicable_inputs: ['page'],
-        recovery: { hint: expect.any(String) },
+        recovery: {
+          hint: declaredRecovery(searchContributions, 'inputs_not_applicable_to_mode'),
+        },
       });
       expect((err.data as { supported_inputs: string[] }).supported_inputs).toEqual(
         expect.arrayContaining(['per_page', 'cursor']),
@@ -455,22 +455,17 @@ describe('searchContributions', () => {
     });
 
     it('names the rejected inputs and the ones the aggregate does accept', async () => {
-      const input = searchContributions.input.parse({
+      const err = await contractFailure(searchContributions, {
         mode: 'by_state',
         committee_id: 'C00703975',
         contributor_state: 'WA',
         min_date: '2024-10-01',
       });
 
-      const err = (await Promise.resolve(searchContributions.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
-
       expect(err.message).toContain('contributor_state');
       expect(err.message).toContain('min_date');
       expect(err.message).toContain('committee_id, candidate_id, cycle');
-      const data = err.data as { supported_inputs: string[]; recovery: { hint: string } };
-      expect(data.supported_inputs).toEqual([
+      expect(err.data.supported_inputs).toEqual([
         'committee_id',
         'candidate_id',
         'cycle',
@@ -478,7 +473,7 @@ describe('searchContributions', () => {
         'page',
         'per_page',
       ]);
-      expect(data.recovery.hint).toContain('itemized');
+      expect(err.data.recovery?.hint).toContain('itemized');
     });
 
     it('still accepts the filters the aggregate endpoints support', async () => {

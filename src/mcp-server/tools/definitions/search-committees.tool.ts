@@ -148,7 +148,6 @@ export const searchCommittees = tool('openfec_search_committees', {
           {
             inapplicable_inputs: inapplicableInputs,
             supported_inputs: [...DIRECT_ID_INPUTS],
-            ...ctx.recoveryFor('inputs_not_applicable_to_id_lookup'),
           },
         );
       }
@@ -179,7 +178,6 @@ export const searchCommittees = tool('openfec_search_committees', {
     if (input.committee_id && result.results.length === 0) {
       throw ctx.fail('committee_not_found', `Committee ${input.committee_id} not found.`, {
         committee_id: input.committee_id,
-        ...ctx.recoveryFor('committee_not_found'),
       });
     }
 

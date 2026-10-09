@@ -36,6 +36,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { searchCandidates } from '@/mcp-server/tools/definitions/search-candidates.tool.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -278,30 +279,25 @@ describe('searchCandidates', () => {
     ] as const)(
       'rejects totals-only scope %o when totals are disabled',
       async (totalsScope, inapplicableInputs) => {
-        const input = searchCandidates.input.parse({
+        const err = await contractFailure(searchCandidates, {
           candidate_id: 'P00003392',
           include_totals: false,
           ...totalsScope,
         });
-        const err = (await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
-          (e: unknown) => e,
-        )) as McpError;
 
         expect(err.data).toMatchObject({
           reason: 'inputs_not_applicable_to_id_lookup',
           inapplicable_inputs: inapplicableInputs,
           supported_inputs: ['candidate_id', 'include_totals'],
         });
-        expect((err.data as { recovery: { hint: string } }).recovery.hint).toContain(
-          'include_totals',
-        );
+        expect(err.data.recovery?.hint).toContain('include_totals');
         expect(mockService.getCandidate).not.toHaveBeenCalled();
         expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
       },
     );
 
     it('rejects every explicit search-only input on the direct-ID path', async () => {
-      const input = searchCandidates.input.parse({
+      const err = await contractFailure(searchCandidates, {
         candidate_id: 'P00003392',
         query: 'Biden',
         state: 'ZZ',
@@ -314,9 +310,6 @@ describe('searchCandidates', () => {
         page: 2,
         per_page: 50,
       });
-      const err = (await Promise.resolve(searchCandidates.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
 
       expect(err.data).toMatchObject({
         reason: 'inputs_not_applicable_to_id_lookup',
@@ -334,7 +327,9 @@ describe('searchCandidates', () => {
         ],
         supported_inputs: ['candidate_id', 'include_totals', 'cycle', 'election_year'],
       });
-      expect((err.data as { recovery: { hint: string } }).recovery.hint).toBeTruthy();
+      expect(err.data.recovery?.hint).toBe(
+        declaredRecovery(searchCandidates, 'inputs_not_applicable_to_id_lookup'),
+      );
       expect(mockService.getCandidate).not.toHaveBeenCalled();
       expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
       expect(mockService.searchCandidates).not.toHaveBeenCalled();

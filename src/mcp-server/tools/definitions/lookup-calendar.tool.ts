@@ -174,7 +174,6 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
           mode: input.mode,
           inapplicable_inputs: inapplicable,
           supported_inputs: applied,
-          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
         },
       );
     }

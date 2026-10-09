@@ -344,7 +344,6 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
             mode,
             inapplicable_inputs: inapplicableInputs,
             supported_inputs: [...ITEMIZED_INPUTS],
-            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
           },
         );
       }
@@ -490,7 +489,6 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
           mode: input.mode,
           inapplicable_inputs: inapplicable,
           supported_inputs: BY_CANDIDATE_INPUTS.split(', '),
-          ...ctx.recoveryFor('itemized_only_filters_in_aggregate_mode'),
         },
       );
     }
@@ -510,7 +508,6 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     if (!input.candidate_id && !raceScoped) {
       throw ctx.fail('by_candidate_requires_scope', undefined, {
         mode: input.mode,
-        ...ctx.recoveryFor('by_candidate_requires_scope'),
       });
     }
 

@@ -166,7 +166,6 @@ export const lookupElections = tool('openfec_lookup_elections', {
     if (input.cycle % 2 !== 0) {
       throw ctx.fail('cycle_must_be_even', undefined, {
         cycle: input.cycle,
-        ...ctx.recoveryFor('cycle_must_be_even'),
       });
     }
     // ZIP resolves geography on its own — only require state/district when no zip
@@ -174,14 +173,12 @@ export const lookupElections = tool('openfec_lookup_elections', {
       if ((input.office === 'S' || input.office === 'H') && !input.state) {
         throw ctx.fail('missing_state_for_office', undefined, {
           office: input.office,
-          ...ctx.recoveryFor('missing_state_for_office'),
         });
       }
       if (input.office === 'H' && !input.district) {
         throw ctx.fail('missing_district_for_house', undefined, {
           office: input.office,
           state: input.state,
-          ...ctx.recoveryFor('missing_district_for_house'),
         });
       }
     }
@@ -194,16 +191,13 @@ export const lookupElections = tool('openfec_lookup_elections', {
           mode: input.mode,
           inapplicable_inputs: ['election_full'],
           supported_inputs: ZIP_SEARCH_INPUTS,
-          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
         },
       );
     }
 
     if (input.mode === 'summary') {
       if (input.zip) {
-        throw ctx.fail('summary_does_not_support_zip', undefined, {
-          ...ctx.recoveryFor('summary_does_not_support_zip'),
-        });
+        throw ctx.fail('summary_does_not_support_zip');
       }
       const inapplicableInputs = [
         ...(input.page !== undefined ? ['page'] : []),
@@ -217,7 +211,6 @@ export const lookupElections = tool('openfec_lookup_elections', {
             mode: input.mode,
             inapplicable_inputs: inapplicableInputs,
             supported_inputs: SUMMARY_INPUTS,
-            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
           },
         );
       }

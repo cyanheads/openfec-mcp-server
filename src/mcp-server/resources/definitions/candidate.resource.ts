@@ -46,7 +46,6 @@ export const candidateResource = resource('openfec://candidate/{candidate_id}', 
     if (!candidate) {
       throw ctx.fail('candidate_not_found', `Candidate ${params.candidate_id} not found.`, {
         candidate_id: params.candidate_id,
-        ...ctx.recoveryFor('candidate_not_found'),
       });
     }
 

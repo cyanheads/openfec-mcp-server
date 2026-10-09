@@ -299,9 +299,7 @@ export const searchContributions = tool('openfec_search_contributions', {
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
       if (!input.committee_id) {
-        throw ctx.fail('itemized_requires_committee_id', undefined, {
-          ...ctx.recoveryFor('itemized_requires_committee_id'),
-        });
+        throw ctx.fail('itemized_requires_committee_id');
       }
 
       const inapplicableInputs = [
@@ -316,7 +314,6 @@ export const searchContributions = tool('openfec_search_contributions', {
             mode,
             inapplicable_inputs: inapplicableInputs,
             supported_inputs: [...ITEMIZED_INPUTS],
-            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
           },
         );
       }
@@ -419,7 +416,7 @@ export const searchContributions = tool('openfec_search_contributions', {
         throw ctx.fail(
           'aggregate_requires_committee_id',
           `Aggregate by ${mode.replace('by_', '')} requires a committee_id.`,
-          { mode, ...ctx.recoveryFor('aggregate_requires_committee_id') },
+          { mode },
         );
       }
       if (input.candidate_id) {
@@ -430,7 +427,6 @@ export const searchContributions = tool('openfec_search_contributions', {
             mode,
             inapplicable_inputs: ['candidate_id'],
             supported_inputs: ['mode', 'committee_id', 'cycle', 'page', 'per_page'],
-            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
           },
         );
       }
@@ -447,7 +443,6 @@ export const searchContributions = tool('openfec_search_contributions', {
           mode,
           inapplicable_inputs: inapplicable,
           supported_inputs: AGGREGATE_INPUTS.split(', '),
-          ...ctx.recoveryFor('itemized_only_filters_in_aggregate_mode'),
         },
       );
     }
@@ -463,7 +458,6 @@ export const searchContributions = tool('openfec_search_contributions', {
           mode,
           inapplicable_inputs: ['committee_id'],
           supported_inputs: ['mode', 'candidate_id', 'cycle', 'page', 'per_page'],
-          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
         },
       );
     }

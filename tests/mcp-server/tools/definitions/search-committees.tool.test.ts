@@ -36,6 +36,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { searchCommittees } from '@/mcp-server/tools/definitions/search-committees.tool.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -149,7 +150,7 @@ describe('searchCommittees', () => {
     });
 
     it('rejects every explicit search-only input on the direct-ID path', async () => {
-      const input = searchCommittees.input.parse({
+      const err = await contractFailure(searchCommittees, {
         committee_id: 'C00703975',
         query: 'Biden',
         candidate_id: 'P00003392',
@@ -162,9 +163,6 @@ describe('searchCommittees', () => {
         page: 2,
         per_page: 50,
       });
-      const err = (await Promise.resolve(searchCommittees.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
 
       expect(err.data).toMatchObject({
         reason: 'inputs_not_applicable_to_id_lookup',
@@ -182,7 +180,9 @@ describe('searchCommittees', () => {
         ],
         supported_inputs: ['committee_id'],
       });
-      expect((err.data as { recovery: { hint: string } }).recovery.hint).toBeTruthy();
+      expect(err.data.recovery?.hint).toBe(
+        declaredRecovery(searchCommittees, 'inputs_not_applicable_to_id_lookup'),
+      );
       expect(mockService.getCommittee).not.toHaveBeenCalled();
       expect(mockService.searchCommittees).not.toHaveBeenCalled();
     });

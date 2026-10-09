@@ -37,6 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { searchLegal as searchLegalTool } from '@/mcp-server/tools/definitions/search-legal.tool.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 /** Narrows the first `format()` block to its text payload. */
 const formatText = (blocks: ContentBlock[]): string => {
@@ -540,19 +541,19 @@ describe('searchLegalTool', () => {
     ])(
       'rejects type=%s with %s before dispatch, naming the types that accept it',
       async (type, filter, value, acceptedBy) => {
-        const input = searchLegalTool.input.parse({ type, [filter]: value });
-        const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
-          (e: unknown) => e,
-        )) as McpError;
+        const err = await contractFailure(
+          searchLegalTool,
+          searchLegalTool.input.parse({ type, [filter]: value }),
+        );
 
         expect(err.code).toBe(JsonRpcErrorCode.ValidationError);
         expect(err.data).toMatchObject({
           reason: 'filter_not_valid_for_type',
           type,
           accepted_by: { [filter]: acceptedBy },
+          recovery: { hint: declaredRecovery(searchLegalTool, 'filter_not_valid_for_type') },
         });
         expect(err.message).toContain(filter);
-        expect((err.data as { recovery: { hint: string } }).recovery.hint).toBeTruthy();
         expect(mockService.searchLegal).not.toHaveBeenCalled();
       },
     );
@@ -656,21 +657,14 @@ describe('searchLegalTool', () => {
     ])(
       'rejects a citation on type=%s combined with %o, whose other filters the search index drops',
       async (type, args, dropped) => {
-        const input = searchLegalTool.input.parse(type ? { type, ...args } : args);
-        const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
-          (e: unknown) => e,
-        )) as McpError;
+        const err = await contractFailure(searchLegalTool, type ? { type, ...args } : args);
 
         expect(err.code).toBe(JsonRpcErrorCode.ValidationError);
         expect(err.data).toMatchObject({ reason: 'filter_not_valid_for_type' });
-        expect(
-          [...(err.data as { ignored_with_citation: string[] }).ignored_with_citation].sort(),
-        ).toEqual(dropped);
+        expect([...(err.data.ignored_with_citation as string[])].sort()).toEqual(dropped);
         expect(err.message).toContain('citation');
         for (const field of dropped) expect(err.message).toContain(field);
-        expect((err.data as { recovery: { hint: string } }).recovery.hint).toContain(
-          'citation on its own',
-        );
+        expect(err.data.recovery?.hint).toContain('citation on its own');
         expect(mockService.searchLegal).not.toHaveBeenCalled();
       },
     );
@@ -970,17 +964,14 @@ describe('searchLegalTool', () => {
       ...IGNORED_STATUTORY.map((value) => ['statutory_citation', value] as const),
       ...IGNORED_REGULATORY.map((value) => ['regulatory_citation', value] as const),
     ])('rejects %s %j before dispatch as invalid_citation', async (field, value) => {
-      const input = searchLegalTool.input.parse({ type: 'murs', [field]: value });
-      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
+      const err = await contractFailure(searchLegalTool, { type: 'murs', [field]: value });
 
       expect(err.code).toBe(JsonRpcErrorCode.ValidationError);
       expect(err.data).toMatchObject({
         reason: 'invalid_citation',
         invalid_citations: { [field]: value },
       });
-      const hint = (err.data as { recovery: { hint: string } }).recovery.hint;
+      const hint = err.data.recovery?.hint;
       expect(hint).toContain('52 U.S.C. 30104');
       expect(hint).toContain('11 CFR 110.1');
       expect(mockService.searchLegal).not.toHaveBeenCalled();
@@ -1006,10 +997,7 @@ describe('searchLegalTool', () => {
       ...MULTIPLE_STATUTORY.map((value) => ['statutory_citation', value] as const),
       ...MULTIPLE_REGULATORY.map((value) => ['regulatory_citation', value] as const),
     ])('rejects %s %j, which carries a second citation, before dispatch', async (field, value) => {
-      const input = searchLegalTool.input.parse({ type: 'murs', [field]: value });
-      const err = (await Promise.resolve(searchLegalTool.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
+      const err = await contractFailure(searchLegalTool, { type: 'murs', [field]: value });
 
       expect(err.code).toBe(JsonRpcErrorCode.ValidationError);
       expect(err.data).toMatchObject({
@@ -1017,7 +1005,7 @@ describe('searchLegalTool', () => {
         invalid_citations: { [field]: value },
       });
       expect(err.message).toContain('more than one citation');
-      const hint = (err.data as { recovery: { hint: string } }).recovery.hint;
+      const hint = err.data.recovery?.hint;
       expect(hint).toContain('one citation per field');
       expect(mockService.searchLegal).not.toHaveBeenCalled();
     });

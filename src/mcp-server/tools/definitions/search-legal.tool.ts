@@ -562,7 +562,7 @@ export const searchLegal = tool('openfec_search_legal', {
       input.max_penalty_amount !== undefined ||
       hasDateBound;
     if (!hasFilter) {
-      throw ctx.fail('missing_filter', undefined, { ...ctx.recoveryFor('missing_filter') });
+      throw ctx.fail('missing_filter');
     }
 
     /**
@@ -581,7 +581,6 @@ export const searchLegal = tool('openfec_search_legal', {
             min_date: input.min_date,
             max_date: input.max_date,
           },
-          ...ctx.recoveryFor('date_filter_incomplete'),
         },
       );
     }
@@ -601,7 +600,6 @@ export const searchLegal = tool('openfec_search_legal', {
             type: input.type,
             date_kind: input.date_kind,
             valid_date_kinds: valid,
-            ...ctx.recoveryFor('date_kind_not_valid_for_type'),
           },
         );
       }
@@ -633,7 +631,6 @@ export const searchLegal = tool('openfec_search_legal', {
           {
             type,
             accepted_by: acceptedBy(ignored),
-            ...ctx.recoveryFor('filter_not_valid_for_type'),
           },
         );
       }
@@ -650,7 +647,6 @@ export const searchLegal = tool('openfec_search_legal', {
             .join('; ')}.`,
           {
             accepted_by: acceptedBy(suppliedFilters),
-            ...ctx.recoveryFor('filter_not_valid_for_type'),
           },
         );
       }
@@ -673,7 +669,6 @@ export const searchLegal = tool('openfec_search_legal', {
           {
             ...(input.type ? { type: input.type } : {}),
             ignored_with_citation: ignored,
-            ...ctx.recoveryFor('filter_not_valid_for_type'),
           },
         );
       }
@@ -692,7 +687,6 @@ export const searchLegal = tool('openfec_search_legal', {
           invalid_citations: Object.fromEntries(
             citationProblems.map(({ field, value }) => [field, value]),
           ),
-          ...ctx.recoveryFor('invalid_citation'),
         },
       );
     }

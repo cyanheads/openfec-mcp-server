@@ -37,6 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 
 import { lookupCalendar as lookupCalendarTool } from '@/mcp-server/tools/definitions/lookup-calendar.tool.js';
 import { assertKnownParams } from '@/services/openfec/openfec-service.js';
+import { contractFailure } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -398,10 +399,7 @@ describe('lookupCalendarTool', () => {
       ['events', 'description, category'],
       ['filing_deadlines', 'report_type, report_year'],
     ] as const)('rejects district in %s mode, naming the accepted set', async (mode, owned) => {
-      const input = lookupCalendarTool.input.parse({ mode, district: '14' });
-      const err = (await Promise.resolve(lookupCalendarTool.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
+      const err = await contractFailure(lookupCalendarTool, { mode, district: '14' });
 
       expect(err.data).toMatchObject({
         reason: 'inputs_not_applicable_to_mode',
@@ -411,7 +409,7 @@ describe('lookupCalendarTool', () => {
       });
       expect(err.message).toContain('cannot apply district');
       expect(err.message).toContain(owned);
-      expect((err.data as { recovery?: { hint?: string } }).recovery?.hint).toMatch(
+      expect(err.data.recovery?.hint).toMatch(
         /state, office, district and election_year to election_dates/,
       );
       expect(mockService.getCalendarDates).not.toHaveBeenCalled();

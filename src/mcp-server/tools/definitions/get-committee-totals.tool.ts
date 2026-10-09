@@ -236,7 +236,6 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
             mode,
             inapplicable_inputs: inapplicable,
             supported_inputs: SINGLE_INPUTS.split(', '),
-            ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
           },
         );
       }
@@ -244,7 +243,6 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       if (!input.committee_id) {
         throw ctx.fail('committee_id_required_for_single_mode', undefined, {
           mode,
-          ...ctx.recoveryFor('committee_id_required_for_single_mode'),
         });
       }
 
@@ -276,7 +274,6 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
           {
             committee_id: input.committee_id,
             ...(input.cycle === undefined ? {} : { cycle: input.cycle }),
-            ...ctx.recoveryFor('committee_totals_not_found'),
           },
         );
       }
@@ -299,7 +296,6 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       throw ctx.fail('entity_type_required_for_group_mode', undefined, {
         mode,
         valid_entity_types: [...entityTypes],
-        ...ctx.recoveryFor('entity_type_required_for_group_mode'),
       });
     }
 

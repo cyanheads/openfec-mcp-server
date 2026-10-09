@@ -37,6 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { lookupElections as lookupElectionsTool } from '@/mcp-server/tools/definitions/lookup-elections.tool.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -229,22 +230,19 @@ describe('lookupElectionsTool', () => {
       ['page', 4],
       ['per_page', 50],
     ] as const)('rejects explicit %s in summary mode', async (field, value) => {
-      const input = lookupElectionsTool.input.parse({
+      const err = await contractFailure(lookupElectionsTool, {
         mode: 'summary',
         office: 'P',
         cycle: 2024,
         [field]: value,
       });
-      const err = await Promise.resolve(lookupElectionsTool.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      );
 
-      expect(err).toMatchObject({
-        data: {
-          reason: 'inputs_not_applicable_to_mode',
-          inapplicable_inputs: [field],
-          supported_inputs: ['mode', 'office', 'cycle', 'state', 'district', 'election_full'],
-          recovery: { hint: expect.any(String) },
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_mode',
+        inapplicable_inputs: [field],
+        supported_inputs: ['mode', 'office', 'cycle', 'state', 'district', 'election_full'],
+        recovery: {
+          hint: declaredRecovery(lookupElectionsTool, 'inputs_not_applicable_to_mode'),
         },
       });
       expect(mockService.getElectionSummary).not.toHaveBeenCalled();

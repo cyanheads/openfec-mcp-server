@@ -279,7 +279,6 @@ export const getLegalDocument = tool('openfec_get_legal_document', {
     if (input.offset !== undefined && input.array === undefined) {
       throw ctx.fail('offset_without_array', `offset ${input.offset} was given without array.`, {
         offset: input.offset,
-        ...ctx.recoveryFor('offset_without_array'),
       });
     }
 
@@ -295,7 +294,6 @@ export const getLegalDocument = tool('openfec_get_legal_document', {
         {
           doc_type: input.doc_type,
           no: input.no,
-          ...ctx.recoveryFor('legal_document_not_found'),
         },
       );
     }
@@ -318,7 +316,7 @@ export const getLegalDocument = tool('openfec_get_legal_document', {
         throw ctx.fail(
           'array_not_in_record',
           `The ${input.doc_type} record numbered "${input.no}" has no array field named "${array}".`,
-          { array, arrays: arrays.map(([key]) => key), ...ctx.recoveryFor('array_not_in_record') },
+          { array, arrays: arrays.map(([key]) => key) },
         );
       }
       const offset = input.offset ?? 0;

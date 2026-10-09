@@ -38,6 +38,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 
 import { searchExpenditures } from '@/mcp-server/tools/definitions/search-expenditures.tool.js';
 import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -348,16 +349,10 @@ describe('searchExpenditures', () => {
     });
 
     it('rejects by_candidate with neither a candidate_id nor a race scope', async () => {
-      const input = searchExpenditures.input.parse({ mode: 'by_candidate', cycle: 2024 });
+      const err = await contractFailure(searchExpenditures, { mode: 'by_candidate', cycle: 2024 });
 
-      const err = await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      );
-
-      expect(err).toBeInstanceOf(McpError);
-      const data = (err as McpError).data as { reason: string; recovery: { hint: string } };
-      expect(data.reason).toBe('by_candidate_requires_scope');
-      expect(data.recovery.hint).toContain('candidate_office');
+      expect(err.data.reason).toBe('by_candidate_requires_scope');
+      expect(err.data.recovery?.hint).toContain('candidate_office');
       expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
     });
 
@@ -410,7 +405,7 @@ describe('searchExpenditures', () => {
     });
 
     it('names every rejected input and what by_candidate does accept', async () => {
-      const input = searchExpenditures.input.parse({
+      const err = await contractFailure(searchExpenditures, {
         mode: 'by_candidate',
         candidate_id: 'S6FL00123',
         min_date: '2024-10-01',
@@ -418,19 +413,14 @@ describe('searchExpenditures', () => {
         payee_name: 'NOSUCHPAYEE',
       });
 
-      const err = (await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
-
       expect(err.message).toContain('payee_name');
       expect(err.message).toContain('min_date');
       expect(err.message).toContain('max_date');
       // The rejection names the mode's supported inputs, not just the bad ones.
       expect(err.message).toContain('candidate_id');
       expect(err.message).toContain('support_oppose');
-      const data = err.data as { supported_inputs: string[]; recovery: { hint: string } };
-      expect(data.supported_inputs).toContain('cycle');
-      expect(data.recovery.hint).toContain('itemized');
+      expect(err.data.supported_inputs).toContain('cycle');
+      expect(err.data.recovery?.hint).toContain('itemized');
     });
 
     it('accepts the filters by_candidate genuinely supports', async () => {
@@ -516,16 +506,12 @@ describe('searchExpenditures', () => {
     ])(
       'rejects %o in itemized mode, whose endpoint has no such parameter',
       async (extra, named) => {
-        const input = searchExpenditures.input.parse({
+        const err = await contractFailure(searchExpenditures, {
           mode: 'itemized',
           candidate_id: 'P80000722',
           ...extra,
         });
-        const err = (await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
-          (e: unknown) => e,
-        )) as McpError;
 
-        expect(err).toBeInstanceOf(McpError);
         expect(err.data).toMatchObject({
           reason: 'inputs_not_applicable_to_mode',
           inapplicable_inputs: named,
@@ -632,19 +618,18 @@ describe('searchExpenditures', () => {
     });
 
     it('rejects explicit page in itemized mode before the keyset call', async () => {
-      const input = searchExpenditures.input.parse({
+      const err = await contractFailure(searchExpenditures, {
         mode: 'itemized',
         committee_id: 'C00111111',
         page: 5,
       });
-      const err = (await Promise.resolve(searchExpenditures.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
 
       expect(err.data).toMatchObject({
         reason: 'inputs_not_applicable_to_mode',
         inapplicable_inputs: ['page'],
-        recovery: { hint: expect.any(String) },
+        recovery: {
+          hint: declaredRecovery(searchExpenditures, 'inputs_not_applicable_to_mode'),
+        },
       });
       expect((err.data as { supported_inputs: string[] }).supported_inputs).toEqual(
         expect.arrayContaining(['per_page', 'cursor']),

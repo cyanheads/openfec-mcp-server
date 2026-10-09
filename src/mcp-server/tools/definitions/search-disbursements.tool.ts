@@ -255,7 +255,6 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
           mode,
           inapplicable_inputs: ['page'],
           supported_inputs: [...ITEMIZED_INPUTS],
-          ...ctx.recoveryFor('inputs_not_applicable_to_mode'),
         });
       }
 
@@ -365,7 +364,6 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
           mode,
           inapplicable_inputs: inapplicable,
           supported_inputs: AGGREGATE_INPUTS.split(', '),
-          ...ctx.recoveryFor('itemized_only_filters_in_aggregate_mode'),
         },
       );
     }

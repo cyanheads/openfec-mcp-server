@@ -199,7 +199,6 @@ export const searchCandidates = tool('openfec_search_candidates', {
             supported_inputs: [
               ...(shouldIncludeTotals ? DIRECT_ID_INPUTS : DIRECT_ID_INPUTS_WITHOUT_TOTALS),
             ],
-            ...ctx.recoveryFor('inputs_not_applicable_to_id_lookup'),
           },
         );
       }
@@ -259,7 +258,6 @@ export const searchCandidates = tool('openfec_search_candidates', {
     if (input.candidate_id && candidates.length === 0) {
       throw ctx.fail('candidate_not_found', `Candidate ${input.candidate_id} not found.`, {
         candidate_id: input.candidate_id,
-        ...ctx.recoveryFor('candidate_not_found'),
       });
     }
 

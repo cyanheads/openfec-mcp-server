@@ -37,6 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 
 import { searchDisbursements } from '@/mcp-server/tools/definitions/search-disbursements.tool.js';
 import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -338,23 +339,24 @@ describe('searchDisbursements', () => {
     });
 
     it('names the rejected inputs and the ones the aggregate does accept', async () => {
-      const input = searchDisbursements.input.parse({
+      const err = await contractFailure(searchDisbursements, {
         mode: 'by_recipient',
         committee_id: 'C00703975',
         recipient_name: 'MEDIA',
         min_date: '2024-10-01',
       });
 
-      const err = (await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
-
       expect(err.message).toContain('recipient_name');
       expect(err.message).toContain('min_date');
       expect(err.message).toContain('committee_id, cycle');
-      const data = err.data as { supported_inputs: string[]; recovery: { hint: string } };
-      expect(data.supported_inputs).toEqual(['committee_id', 'cycle', 'mode', 'page', 'per_page']);
-      expect(data.recovery.hint).toContain('itemized');
+      expect(err.data.supported_inputs).toEqual([
+        'committee_id',
+        'cycle',
+        'mode',
+        'page',
+        'per_page',
+      ]);
+      expect(err.data.recovery?.hint).toContain('itemized');
     });
 
     it('fetches by_purpose aggregates', async () => {
@@ -401,19 +403,18 @@ describe('searchDisbursements', () => {
     });
 
     it('rejects explicit page in itemized mode before the keyset call', async () => {
-      const input = searchDisbursements.input.parse({
+      const err = await contractFailure(searchDisbursements, {
         mode: 'itemized',
         committee_id: 'C00703975',
         page: 9,
       });
-      const err = (await Promise.resolve(searchDisbursements.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      )) as McpError;
 
       expect(err.data).toMatchObject({
         reason: 'inputs_not_applicable_to_mode',
         inapplicable_inputs: ['page'],
-        recovery: { hint: expect.any(String) },
+        recovery: {
+          hint: declaredRecovery(searchDisbursements, 'inputs_not_applicable_to_mode'),
+        },
       });
       expect((err.data as { supported_inputs: string[] }).supported_inputs).toEqual(
         expect.arrayContaining(['per_page', 'cursor']),

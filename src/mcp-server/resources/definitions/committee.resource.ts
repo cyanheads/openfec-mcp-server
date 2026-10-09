@@ -49,7 +49,6 @@ export const committeeResource = resource('openfec://committee/{committee_id}', 
     if (!committee) {
       throw ctx.fail('committee_not_found', `Committee ${params.committee_id} not found.`, {
         committee_id: params.committee_id,
-        ...ctx.recoveryFor('committee_not_found'),
       });
     }
 

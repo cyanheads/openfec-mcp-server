@@ -5,7 +5,7 @@
  */
 
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -42,6 +42,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { getCommitteeTotals } from '@/mcp-server/tools/definitions/get-committee-totals.tool.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -122,19 +123,17 @@ describe('getCommitteeTotals', () => {
     it('throws committee_totals_not_found when the committee has no totals at all', async () => {
       mockService.getCommitteeTotals.mockResolvedValueOnce({ pagination: PAGE, results: [] });
 
-      const input = getCommitteeTotals.input.parse({ committee_id: 'C99999999' });
-      const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      );
+      const err = await contractFailure(getCommitteeTotals, { committee_id: 'C99999999' });
 
-      expect(err).toBeInstanceOf(McpError);
-      expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-      expect((err as McpError).data).toMatchObject({
+      expect(err.code).toBe(JsonRpcErrorCode.NotFound);
+      expect(err.data).toMatchObject({
         reason: 'committee_totals_not_found',
         committee_id: 'C99999999',
+        recovery: {
+          hint: declaredRecovery(getCommitteeTotals, 'committee_totals_not_found'),
+        },
       });
-      expect((err as McpError).message).toContain('no financial totals on file');
-      expect((err as McpError).data).toHaveProperty('recovery.hint');
+      expect(err.message).toContain('no financial totals on file');
     });
 
     it('names the cycle when the miss is cycle-scoped', async () => {

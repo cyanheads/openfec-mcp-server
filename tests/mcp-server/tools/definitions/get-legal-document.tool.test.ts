@@ -7,7 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +44,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { getLegalDocument } from '@/mcp-server/tools/definitions/get-legal-document.tool.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const advisoryOpinion = (overrides: Record<string, unknown> = {}) => ({
   ao_no: '2024-01',
@@ -155,19 +156,15 @@ describe('getLegalDocument', () => {
     it('throws legal_document_not_found with a recovery hint when no record exists', async () => {
       mockService.getLegalDocument.mockResolvedValueOnce(null);
 
-      const input = getLegalDocument.input.parse({ doc_type: 'murs', no: '99999999' });
-      const err = await Promise.resolve(getLegalDocument.handler(input, ctx)).catch(
-        (e: unknown) => e,
-      );
+      const err = await contractFailure(getLegalDocument, { doc_type: 'murs', no: '99999999' });
 
-      expect(err).toBeInstanceOf(McpError);
-      expect((err as McpError).code).toBe(JsonRpcErrorCode.NotFound);
-      expect((err as McpError).data).toMatchObject({
+      expect(err.code).toBe(JsonRpcErrorCode.NotFound);
+      expect(err.data).toMatchObject({
         reason: 'legal_document_not_found',
         doc_type: 'murs',
         no: '99999999',
+        recovery: { hint: declaredRecovery(getLegalDocument, 'legal_document_not_found') },
       });
-      expect((err as McpError).data).toHaveProperty('recovery.hint');
     });
 
     it('rejects the singular document_type form that search results carry', () => {
