@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.9.2](changelog/0.9.x/0.9.2.md) — 2026-10-25
+
+Framework error text preserves literal punctuation, with dependency and build-tool updates.
+
 ## [0.9.1](changelog/0.9.x/0.9.1.md) — 2026-10-08
 
 mcp-ts-core ^0.13.14: numeric strings and null optionals in tool arguments are repaired before validation, tool errors carry their request ID, the server.json HTTP package entry starts over HTTP, and the Docker image installs dependencies in a build-platform stage
