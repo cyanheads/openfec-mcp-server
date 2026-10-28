@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-10-09 04:25:44
+Generated on: 2026-10-28 07:34:25
 
 ```text
 openfec-mcp-server/
@@ -25,6 +25,7 @@ openfec-mcp-server/
 │   └── settings.json
 ├── changelog/
 │   ├── 0.1.x/
+│   ├── 0.10.x/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
 │   ├── 0.4.x/
@@ -46,6 +47,8 @@ openfec-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -144,6 +147,9 @@ openfec-mcp-server/
 │   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
+├── skills/
+│   └── openfec-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -228,6 +234,8 @@ openfec-mcp-server/
 │   │           ├── search-legal.tool.test.ts
 │   │           ├── search-legal.upstream.test.ts
 │   │           └── security.test.ts
+│   ├── scripts/
+│   │   └── mcpb-agent-docs.test.ts
 │   └── services/
 │       └── openfec/
 │           ├── openfec-service-extended.test.ts
@@ -249,7 +257,9 @@ openfec-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json

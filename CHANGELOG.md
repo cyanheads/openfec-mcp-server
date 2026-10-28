@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.10.0](changelog/0.10.x/0.10.0.md) — 2026-10-28
+
+Adds an MCP-served guide for campaign-finance research and updates the framework to 0.13.18.
+
 ## [0.9.2](changelog/0.9.x/0.9.2.md) — 2026-10-25
 
 Framework error text preserves literal punctuation, with dependency and build-tool updates.
