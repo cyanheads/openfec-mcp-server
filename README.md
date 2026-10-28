@@ -1,13 +1,13 @@
 <div align="center">
   <h1>@cyanheads/openfec-mcp-server</h1>
   <p><b>Access FEC campaign finance data on candidates, money trails, and election filings via MCP. STDIO or Streamable HTTP.</b>
-  <div>12 Tools • 5 Resources • 2 Prompts</div>
+  <div>12 Tools • 5 FEC Resource Templates • 2 Prompts • 1 Skill</div>
   </p>
 </div>
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.9.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.4.4-f9f1e1.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.9.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openfec-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openfec-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openfec-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-^1.4.4-f9f1e1.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -59,6 +59,8 @@ US federal campaign finance data from the FEC's OpenFEC API. Search candidates, 
 | `openfec://election/{cycle}/{office}/{state}/{district}` | House district race with candidate financial totals |
 
 The same data is reachable through `openfec_search_candidates`, `openfec_search_committees`, and `openfec_lookup_elections` for tool-only clients.
+
+The [openfec-guide](./skills/openfec-guide/SKILL.md) skill covers campaign-finance investigations, historical committee attribution, and coverage checks. MCP clients can read it at `skill://openfec-guide/SKILL.md`.
 
 ### Prompts
 
@@ -228,133 +230,32 @@ Agent-friendly output:
 
 ## Getting started
 
-### Public Hosted Instance
-
-A public instance is available at `https://openfec.caseyjhand.com/mcp` — no installation required. It serves Streamable HTTP; each client takes its own config shape.
-
-For Claude Code:
+Connect to the hosted instance, no install:
 
 ```sh
 claude mcp add --transport http openfec-mcp-server https://openfec.caseyjhand.com/mcp
 ```
 
-For Cline (`cline_mcp_settings.json`):
+Or run it locally:
 
-```json
-{
-  "mcpServers": {
-    "openfec-mcp-server": {
-      "type": "streamableHttp",
-      "url": "https://openfec.caseyjhand.com/mcp"
-    }
-  }
-}
+```sh
+claude mcp add openfec-mcp-server -- npx -y @cyanheads/openfec-mcp-server
 ```
 
-For Cursor (`mcp.json`):
+For other clients, add this to the MCP config file:
 
 ```json
 {
   "mcpServers": {
     "openfec-mcp-server": {
-      "url": "https://openfec.caseyjhand.com/mcp"
-    }
-  }
-}
-```
-
-Claude Desktop adds remote servers under Settings → Connectors.
-
-### Self-Hosted / Local
-
-Add the following to your MCP client configuration file.
-
-```json
-{
-  "mcpServers": {
-    "openfec-mcp-server": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@cyanheads/openfec-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "FEC_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
-
-Or with npx (no Bun required):
-
-```json
-{
-  "mcpServers": {
-    "openfec-mcp-server": {
-      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cyanheads/openfec-mcp-server@latest"],
-      "env": {
-        "MCP_TRANSPORT_TYPE": "stdio",
-        "FEC_API_KEY": "your-api-key"
-      }
+      "args": ["-y", "@cyanheads/openfec-mcp-server"]
     }
   }
 }
 ```
 
-Or with Docker:
-
-```json
-{
-  "mcpServers": {
-    "openfec-mcp-server": {
-      "type": "stdio",
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "MCP_TRANSPORT_TYPE=stdio", "-e", "FEC_API_KEY=your-api-key", "ghcr.io/cyanheads/openfec-mcp-server:latest"]
-    }
-  }
-}
-```
-
-For Streamable HTTP, set the transport and start the server:
-
-```sh
-MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 FEC_API_KEY=your-key bun run start:http
-# Server listens at http://localhost:3010/mcp
-```
-
-### Prerequisites
-
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
-- Optional: a free [OpenFEC API key](https://api.data.gov/signup/) raises the rate limit from 30 to 1,000 requests per hour over the default `DEMO_KEY`.
-
-### Installation
-
-1. **Clone the repository:**
-
-```sh
-git clone https://github.com/cyanheads/openfec-mcp-server.git
-```
-
-2. **Navigate into the directory:**
-
-```sh
-cd openfec-mcp-server
-```
-
-3. **Install dependencies:**
-
-```sh
-bun install
-```
-
-4. **Configure environment:**
-
-```sh
-cp .env.example .env
-# edit .env and set FEC_API_KEY (optional)
-```
+An optional [OpenFEC API key](https://api.data.gov/signup/) in `FEC_API_KEY` raises the limit from 30 to 1,000 requests per hour (`-e FEC_API_KEY=your-key`, or an `env` entry). For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
@@ -378,6 +279,16 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 ## Running the server
 
 ### Local development
+
+Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
+
+- **Clone and install:**
+
+  ```sh
+  git clone https://github.com/cyanheads/openfec-mcp-server.git
+  cd openfec-mcp-server && bun install
+  cp .env.example .env   # set FEC_API_KEY as needed
+  ```
 
 - **Build and run:**
 
@@ -415,6 +326,7 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 | `src/services/openfec` | OpenFEC API client and domain types. |
 | `tests/` | Unit and integration tests, mirroring the `src/` structure. |
 | `scripts/` | Build, clean, devcheck, tree, changelog, and lint scripts. |
+| `skills/` | Agent guide to campaign-finance workflows, identifiers, and coverage limits; also served over MCP. |
 | `docs/` | Design notes and the OpenFEC OpenAPI spec. |
 
 ## Development guide
