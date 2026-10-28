@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openfec-mcp-server",
+  "version": "0.9.2",
+  "description": "Access FEC campaign finance data on candidates, money trails, and election filings via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
+  },
+  "homepage": "https://github.com/cyanheads/openfec-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/openfec-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "openfec",
+    "fec",
+    "campaign-finance",
+    "elections",
+    "federal-elections",
+    "political-contributions",
+    "typescript",
+    "bun",
+    "stdio",
+    "streamable-http",
+    "ai-agent"
+  ]
+}
