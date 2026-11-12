@@ -8,7 +8,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { getOpenFecService } from '@/services/openfec/openfec-service.js';
+import { type CycleCoverage, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
   buildSearchCriteria,
@@ -59,6 +59,27 @@ const BY_ENTITY_TYPE_ONLY_INPUTS = [
 
 /** What the single-committee endpoint does accept — quoted in the rejection. */
 const SINGLE_INPUTS = 'committee_id, cycle, sort, mode, page, per_page';
+
+/**
+ * The caveat an omitted-cycle response carries when part of the committee's
+ * history went unread: which cycles its rows may lack, or that an unread
+ * history leaves only the current type's cycles, which OpenFEC answers when no
+ * cycle is sent.
+ */
+function describeCoverage(coverage: CycleCoverage): string | undefined {
+  switch (coverage.kind) {
+    case 'complete':
+      return;
+    case 'history_unavailable':
+      return "This committee's filing history could not be read from OpenFEC, so these totals cover only the cycles filed under its current committee type — cycles filed under an earlier type may be missing. Retry the call, or pass cycle to read one cycle directly.";
+    case 'cycles_unavailable':
+      return `Totals for cycle(s) ${coverage.cycles.join(', ')}, which this committee filed under another committee type, could not be read from OpenFEC, so these totals leave them out. Retry the call, or pass cycle to read one of those cycles directly.`;
+    default: {
+      const unhandled: never = coverage;
+      return unhandled;
+    }
+  }
+}
 
 export const getCommitteeTotals = tool('openfec_get_committee_totals', {
   description:
@@ -190,7 +211,7 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
         z
           .looseObject({})
           .describe(
-            'Committee totals row for one committee and cycle; common keys include committee_id, committee_name, cycle, receipts, disbursements, last_cash_on_hand_end_period, last_debts_owed_by_committee, individual_contributions, and coverage_end_date.',
+            "Committee totals row for one committee and cycle; common keys include committee_id, committee_name, committee_type, committee_designation, cycle, receipts, disbursements, last_cash_on_hand_end_period, last_debts_owed_by_committee, individual_contributions, and coverage_end_date. committee_name, committee_type, and committee_designation are that cycle's own, so a committee that changed type — a campaign committee converted to a PAC — shows the change across its rows.",
           ),
       )
       .describe(
@@ -211,7 +232,7 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response carries no totals: how to broaden a search that matched nothing, or which requested position ran out when totals did match.',
+        'Guidance when the response carries no totals or only some of them: how to broaden a search that matched nothing, which requested position ran out when totals did match, or which cycles filed under another committee type could not be read.',
       ),
   },
 
@@ -247,22 +268,39 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       }
 
       const params: FecParams = { page: input.page, per_page: input.per_page };
-      if (input.cycle !== undefined) params.cycle = input.cycle;
       if (input.sort) params.sort = input.sort;
 
       ctx.log.info('Fetching committee totals', {
         committee_id: input.committee_id,
         cycle: input.cycle,
       });
-      const result = await fec.getCommitteeTotals(input.committee_id, params, ctx);
+      /**
+       * A cycle selects the one totals table its history row names. Without
+       * one OpenFEC reads only the table of the committee's newest type, so
+       * the service also reads the history and merges the cycles filed under
+       * any earlier type.
+       */
+      const { totals: result, coverage } =
+        input.cycle === undefined
+          ? await fec.getCommitteeTotalsAllCycles(input.committee_id, params, ctx)
+          : {
+              totals: await fec.getCommitteeTotals(
+                input.committee_id,
+                { ...params, cycle: input.cycle },
+                ctx,
+              ),
+              coverage: { kind: 'complete' } as const,
+            };
 
       /**
-       * The endpoint answers 404 for every empty case — unknown committee_id,
-       * a cycle the committee did not file, a committee that files no
-       * financial report — and the service normalizes that to a zero-row page,
-       * which is the miss this error reports. A page requested past the last
-       * one is a 200 carrying the committee's real totals count, so it is an
-       * exhausted position rather than a committee with nothing on file.
+       * Every empty case reaches here as a zero-row page: the endpoint answers
+       * 404 for an unknown committee_id or a cycle the committee did not file,
+       * which the service normalizes to that page, and 200 with no rows for a
+       * committee that has a filing history but no totals, such as one that
+       * files no financial report. That is the miss this error reports. A page
+       * requested past the last one is a 200 carrying the committee's real
+       * totals count, so it is an exhausted position rather than a committee
+       * with nothing on file.
        */
       const exhausted = exhaustedPage(result.pagination, result.results.length);
       if (result.results.length === 0 && !exhausted) {
@@ -279,7 +317,13 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       }
 
       ctx.enrich.total(result.pagination.count);
-      if (exhausted) ctx.enrich.notice(describeExhaustedPosition(exhausted));
+      const notice = [
+        exhausted ? describeExhaustedPosition(exhausted) : undefined,
+        describeCoverage(coverage),
+      ]
+        .filter((line) => line !== undefined)
+        .join(' ');
+      if (notice) ctx.enrich.notice(notice);
 
       return {
         results: result.results,

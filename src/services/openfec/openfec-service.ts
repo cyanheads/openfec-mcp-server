@@ -6,8 +6,18 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
-import { defaultIsTransient, fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import {
+  JsonRpcErrorCode,
+  McpError,
+  serviceUnavailable,
+  validationError,
+} from '@cyanheads/mcp-ts-core/errors';
+import {
+  defaultIsTransient,
+  fetchWithTimeout,
+  type RetryAttempt,
+  withRetry,
+} from '@cyanheads/mcp-ts-core/utils';
 import { getServerConfig, type ServerConfig } from '@/config/server-config.js';
 import type {
   ElectionSummary,
@@ -275,6 +285,9 @@ const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
     candidate_id payee_name committee_id cycle form_line_number page per_page sort
     sort_hide_null sort_null_only sort_nulls_last`),
 
+  '/committee/{committee_id}/history/': paramSet(`
+    page per_page election_full designation sort sort_hide_null sort_null_only sort_nulls_last`),
+
   '/committee/{committee_id}/totals/': paramSet(`
     page per_page cycle sort sort_hide_null sort_null_only sort_nulls_last`),
 
@@ -303,6 +316,7 @@ const ENDPOINT_PARAMS: Record<string, ReadonlySet<string>> = {
  */
 const PATH_TEMPLATES: readonly (readonly [RegExp, string])[] = [
   [/^\/legal\/docs\/[^/]+\/[^/]+$/, '/legal/docs/{doc_type}/{no}'],
+  [/^\/committee\/[^/]+\/history\/$/, '/committee/{committee_id}/history/'],
   [/^\/committee\/[^/]+\/totals\/$/, '/committee/{committee_id}/totals/'],
   [
     /^\/totals\/(presidential|pac|party|pac-party|house-senate|ie-only)\/$/,
@@ -370,6 +384,205 @@ function exactness(value: boolean | undefined): { is_count_exact?: boolean } {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Committee totals across committee-type changes                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The OpenFEC table a committee type's totals live in, as OpenFEC's own
+ * `totals_schema_map` assigns it (`webservices/resources/totals.py`): P to the
+ * presidential table, H and S to house-senate, I to ie-only, and every other
+ * type — PACs and parties — to pac-party. `/committee/{committee_id}/totals/`
+ * reads only the table its newest matching history row maps to, so a committee
+ * that changed type (a campaign committee converted to a PAC) loses every
+ * cycle filed under the earlier type unless each table is asked for its own.
+ */
+type TotalsTable = 'presidential' | 'house-senate' | 'ie-only' | 'pac-party';
+
+function totalsTable(committeeType: unknown): TotalsTable {
+  switch (committeeType) {
+    case 'P':
+      return 'presidential';
+    case 'H':
+    case 'S':
+      return 'house-senate';
+    case 'I':
+      return 'ie-only';
+    default:
+      return 'pac-party';
+  }
+}
+
+/**
+ * Page size for the history read and for each per-table totals read. Both hold
+ * one row per two-year cycle, so one page of 100 covers every cycle since the
+ * FEC began publishing.
+ */
+const WHOLE_HISTORY_PER_PAGE = 100;
+
+/**
+ * Wall-clock budget shared by every request an omitted-cycle totals call makes,
+ * retries and backoffs included. MCP SDK clients abandon a request after 60 s
+ * by default; settling at 50 s leaves the answer, partial or not, time to
+ * reach them.
+ */
+const ALL_CYCLES_DEADLINE_MS = 50_000;
+
+/** How completely an omitted-cycle totals call read the committee's history. */
+export type CycleCoverage =
+  /** Every totals table the committee's history spans was read and merged. */
+  | { kind: 'complete' }
+  /**
+   * The history read failed, so the page is the one OpenFEC answers when no
+   * cycle is sent — the newest type's table alone — and cycles filed under an
+   * earlier committee type are unknown.
+   */
+  | { kind: 'history_unavailable' }
+  /**
+   * The history files these cycles under another committee type, and the page
+   * lacks them: their table could not be read, or the newest table could not
+   * be read whole for the merge, leaving the caller's page of it alone.
+   */
+  | { kind: 'cycles_unavailable'; cycles: number[] };
+
+/** Result of `OpenFecService.getCommitteeTotalsAllCycles`. */
+export interface AllCyclesTotals {
+  coverage: CycleCoverage;
+  totals: PageResult;
+}
+
+/**
+ * The cycles a committee's history files under each totals table, newest table
+ * first — the one an unfiltered totals request reads. A row without a numeric
+ * cycle cannot be attributed and is skipped.
+ */
+function cyclesByTable(history: Record<string, unknown>[]): Map<TotalsTable, number[]> {
+  const filed = history
+    .flatMap((row) =>
+      typeof row.cycle === 'number'
+        ? [{ cycle: row.cycle, table: totalsTable(row.committee_type) }]
+        : [],
+    )
+    .sort((a, b) => b.cycle - a.cycle);
+  const tables = new Map<TotalsTable, number[]>();
+  for (const { cycle, table } of filed) {
+    const cycles = tables.get(table);
+    if (cycles) cycles.push(cycle);
+    else tables.set(table, [cycle]);
+  }
+  return tables;
+}
+
+/** True when a page holds every row its query matched: none matched, or page 1 holds them all. */
+function holdsEveryRow({ pagination, results }: PageResult): boolean {
+  return pagination.count === 0 || (pagination.page === 1 && results.length >= pagination.count);
+}
+
+/**
+ * One page of merged totals rows, ordered and paged as OpenFEC orders and pages
+ * one table: `sort` defaults to `-cycle`, and a missing value sorts where
+ * PostgreSQL puts NULL — after every value ascending, before every value
+ * descending. Every column the tool sorts on is numeric.
+ */
+function pageOfTotals(rows: Record<string, unknown>[], params: FecParams): PageResult {
+  const sort = typeof params.sort === 'string' && params.sort !== '' ? params.sort : '-cycle';
+  const descending = sort.startsWith('-');
+  const field = descending ? sort.slice(1) : sort;
+  const key = (row: Record<string, unknown>) => {
+    const value = row[field];
+    return typeof value === 'number' ? value : Number.POSITIVE_INFINITY;
+  };
+  const sorted = rows.toSorted((a, b) => {
+    const diff = key(a) - key(b);
+    if (Number.isNaN(diff)) return 0;
+    return descending ? -diff : diff;
+  });
+  const page = Number(params.page) || 1;
+  const perPage = Number(params.per_page) || 20;
+  return {
+    pagination: {
+      page,
+      pages: Math.ceil(sorted.length / perPage),
+      count: sorted.length,
+      per_page: perPage,
+      is_count_exact: true,
+    },
+    results: sorted.slice((page - 1) * perPage, page * perPage),
+  };
+}
+
+/** Milliseconds left of a budget of `totalMs` that starts now, never below 0. */
+function countdown(totalMs: number): () => number {
+  const startedAt = Date.now();
+  return () => Math.max(0, totalMs - (Date.now() - startedAt));
+}
+
+/**
+ * The rate limit a shared-deadline expiry hides. When the deadline runs out
+ * during the backoff after a 429, `withRetry` reports a `Timeout` caused by
+ * that 429; the caller's next step is still the 429's — wait out the window —
+ * so the 429 is what the call reports.
+ */
+function rateLimitBehindDeadline(err: unknown): McpError | undefined {
+  if (!(err instanceof McpError) || err.data?.reason !== 'retry_deadline_exceeded') return;
+  for (let cause: unknown = err.cause; cause instanceof Error; cause = cause.cause) {
+    if (cause instanceof McpError && cause.code === JsonRpcErrorCode.RateLimited) return cause;
+  }
+  return;
+}
+
+/** Rethrow a failed omitted-cycle read, surfacing a rate limit a deadline expiry hides. */
+function throwReadFailure(err: unknown): never {
+  const rateLimit = rateLimitBehindDeadline(err);
+  if (rateLimit) rethrowSanitized(rateLimit);
+  throw err;
+}
+
+/**
+ * Whether a failed history-driven read leaves the reads that succeeded
+ * standing as a disclosed partial answer. Only a caller cancellation and a
+ * rate limit — the caller's next step is to stop or to wait, whatever the
+ * other reads found — fail the call. Any other failure (a 4xx, a 5xx, a
+ * timeout, a dropped connection, a malformed answer) leaves a gap the
+ * coverage notice names, never a rejected call the unfiltered page answered.
+ */
+function degradesToPartial(err: unknown, ctx: Context): boolean {
+  if (ctx.signal.aborted || rateLimitBehindDeadline(err)) return false;
+  return !(err instanceof McpError && err.code === JsonRpcErrorCode.RateLimited);
+}
+
+/**
+ * Throw unless `answer` can stand as a disclosed partial answer: every failed
+ * read degrades, and the answer holds totals. An empty answer would read as
+ * "no totals on file", which the failed reads leave unproven.
+ */
+function assertPartialAnswer(failures: unknown[], answer: PageResult, ctx: Context): void {
+  const fatal =
+    failures.find((err) => !degradesToPartial(err, ctx)) ??
+    (answer.pagination.count === 0 ? failures[0] : undefined);
+  if (fatal !== undefined) throwReadFailure(fatal);
+}
+
+/**
+ * What a 2xx answer that is not an OpenFEC envelope — an edge error page served
+ * with 200, an envelope without its `results` array — fails with: an upstream
+ * outage, retried like a 503 and reported as `ServiceUnavailable` once the
+ * retries run out.
+ */
+function unexpectedResponse(cause?: unknown): McpError {
+  return serviceUnavailable(
+    'FEC API returned an unexpected response (possible HTML error page)',
+    undefined,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+/** Per-request options for `fetchPage`. */
+interface FetchPageOptions {
+  /** Wall-clock budget across every attempt and backoff of this request — `withRetry`'s `deadlineMs`. */
+  deadlineMs?: number;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Service class                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -406,28 +619,55 @@ export class OpenFecService {
   }
 
   /**
+   * GET `url` under the service timeout and the caller's signal and parse the
+   * body as JSON. The body of a non-2xx answer rides the thrown error's `data`;
+   * `rethrowSanitized` decides which bodies go on to the client. A 2xx body
+   * that is not JSON — an edge maintenance or error page served with 200 —
+   * fails as `unexpectedResponse`, which is retried, rather than as the
+   * parser's `SyntaxError`, which the framework reads as a caller-input error
+   * and whose message quotes the page. Inside a retry ladder with a deadline,
+   * `attempt` carries the signal that also fires at the deadline and the time
+   * left before it, which caps this request's own timeout.
+   */
+  private async getJson(url: string, ctx: Context, attempt?: RetryAttempt): Promise<unknown> {
+    const timeoutMs = Math.min(
+      this.config.fecRequestTimeout,
+      attempt?.remainingMs ?? Number.POSITIVE_INFINITY,
+    );
+    const response = await fetchWithTimeout(url, timeoutMs, ctx, {
+      signal: attempt?.signal ?? ctx.signal,
+      exposeErrorBody: true,
+    });
+    try {
+      return await response.json();
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      throw unexpectedResponse(err);
+    }
+  }
+
+  /**
    * Fetch JSON from a page-based endpoint with retry.
    * Wraps the full pipeline (fetch + JSON parse) in the retry boundary.
+   * `options.deadlineMs` bounds the whole ladder — every attempt and backoff.
    */
   private async fetchPage<T = Record<string, unknown>>(
     path: string,
     params: FecParams,
     ctx: Context,
+    options: FetchPageOptions = {},
   ): Promise<PageResult<T>> {
     const url = this.buildUrl(path, params);
     try {
       return await withRetry(
-        async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
-            signal: ctx.signal,
-          });
-          const body = (await response.json()) as FecPageEnvelope<T>;
+        async (attempt) => {
+          const body = (await this.getJson(url, ctx, attempt)) as FecPageEnvelope<T>;
           this.validateEnvelope(body);
           return {
             pagination: {
               page: body.pagination?.page ?? 1,
               pages: body.pagination?.pages ?? 1,
-              count: body.pagination?.count ?? body.results?.length ?? 0,
+              count: body.pagination?.count ?? body.results.length,
               per_page: body.pagination?.per_page ?? 20,
               ...exactness(body.pagination?.is_count_exact),
             },
@@ -441,6 +681,7 @@ export class OpenFecService {
           context: ctx,
           signal: ctx.signal,
           isTransient: isTransientFecError,
+          ...options,
         },
       );
     } catch (err) {
@@ -466,10 +707,7 @@ export class OpenFecService {
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
-            signal: ctx.signal,
-          });
-          const body = (await response.json()) as FecSeekEnvelope<T>;
+          const body = (await this.getJson(url, ctx)) as FecSeekEnvelope<T>;
           this.validateEnvelope(body);
           const { count, is_count_exact, last_indexes: lastIndexes } = body.pagination;
           /** Optional in the upstream SeekInfo schema, and it decides whether a cursor is minted — same fallback fetchPage uses. */
@@ -517,10 +755,7 @@ export class OpenFecService {
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
-            signal: ctx.signal,
-          });
-          const body = (await response.json()) as FecLegalEnvelope;
+          const body = (await this.getJson(url, ctx)) as FecLegalEnvelope;
           const results: LegalResult['results'] = [];
           const typeTotals: LegalResult['typeTotals'] = {};
 
@@ -548,10 +783,17 @@ export class OpenFecService {
     }
   }
 
-  /** Validate that the API returned a recognizable envelope, not an HTML error page. */
+  /**
+   * Validate that the API returned a recognizable envelope — an object whose
+   * `results` is an array, as every page and keyset envelope in the spec declares.
+   */
   private validateEnvelope(body: unknown): void {
-    if (!body || typeof body !== 'object' || !('results' in (body as Record<string, unknown>))) {
-      throw new Error('FEC API returned an unexpected response (possible HTML error page)');
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      !Array.isArray((body as Record<string, unknown>).results)
+    ) {
+      throw unexpectedResponse();
     }
   }
 
@@ -592,23 +834,110 @@ export class OpenFecService {
   }
 
   /**
-   * Per-cycle financial totals for one committee. OpenFEC answers 404 for every
-   * miss here — an ID that does not exist, a cycle the committee did not file,
-   * and a committee that has never filed a Form 3/3X/3P alike — so its own
-   * not-found response is normalized to an empty page. "No totals on file" is a
-   * result the caller reports, not an API-path error.
+   * Per-cycle financial totals for one committee. OpenFEC answers 404 when the
+   * committee has no history row for the requested cycles (an ID that does not
+   * exist, or a cycle it did not file) and 200 with no rows when it has history
+   * but no totals row; its own not-found response is normalized to an empty
+   * page, so both read alike. "No totals on file" is a result the caller
+   * reports, not an API-path error.
    */
-  async getCommitteeTotals(
+  getCommitteeTotals(
     committeeId: string,
     params: FecParams,
     ctx: Context,
+    options?: FetchPageOptions,
   ): Promise<PageResult> {
-    try {
-      return await this.fetchPage(`/committee/${committeeId}/totals/`, params, ctx);
-    } catch (err) {
-      if (!isUpstreamNotFound(err)) throw err;
-      return emptyPage(params);
+    return emptyOnUpstreamNotFound(
+      this.fetchPage(`/committee/${committeeId}/totals/`, params, ctx, options),
+      params,
+    );
+  }
+
+  /**
+   * Every cycle a committee has filed totals for, across changes of committee
+   * type, paged by `params` (`page`, `per_page`, `sort` — never `cycle`).
+   *
+   * Without a cycle OpenFEC reads only the totals table of the committee's
+   * newest type (`totalsTable`), so the committee's history is read beside
+   * that unfiltered request; OpenFEC's own 404 for the history reads as an
+   * empty one, as it does for the totals. A history inside one table returns
+   * the unfiltered page as it came. Otherwise every other table is asked for
+   * the cycles the history files under it, the newest table is read whole
+   * when the caller's page did not hold all of it, and the merged rows are
+   * sorted and paged here. Those history-driven reads are best-effort: a
+   * failed one leaves the reads that succeeded standing, with `coverage`
+   * naming the cycles the answer lacks — any 404 included, since the history
+   * just named those cycles. A cancellation, a rate limit, and any failure of
+   * the unfiltered request still reject. Every request shares one deadline.
+   */
+  async getCommitteeTotalsAllCycles(
+    committeeId: string,
+    params: FecParams,
+    ctx: Context,
+  ): Promise<AllCyclesTotals> {
+    const remainingMs = countdown(ALL_CYCLES_DEADLINE_MS);
+    const historyParams: FecParams = { per_page: WHOLE_HISTORY_PER_PAGE };
+    const readTable = (tableParams: FecParams) =>
+      this.fetchPage(`/committee/${committeeId}/totals/`, tableParams, ctx, {
+        deadlineMs: remainingMs(),
+      });
+
+    const [history, unfilteredRead] = await Promise.allSettled([
+      emptyOnUpstreamNotFound(
+        this.fetchPage(`/committee/${committeeId}/history/`, historyParams, ctx, {
+          deadlineMs: remainingMs(),
+        }),
+        historyParams,
+      ),
+      this.getCommitteeTotals(committeeId, params, ctx, { deadlineMs: remainingMs() }),
+    ]);
+    if (unfilteredRead.status === 'rejected') throwReadFailure(unfilteredRead.reason);
+    const unfiltered = unfilteredRead.value;
+    if (history.status === 'rejected') {
+      assertPartialAnswer([history.reason], unfiltered, ctx);
+      return { totals: unfiltered, coverage: { kind: 'history_unavailable' } };
     }
+
+    const otherTables = [...cyclesByTable(history.value.results).values()].slice(1);
+    if (otherTables.length === 0) return { totals: unfiltered, coverage: { kind: 'complete' } };
+
+    const [newestRead, ...otherReads] = await Promise.allSettled([
+      holdsEveryRow(unfiltered) ? unfiltered : readTable({ per_page: WHOLE_HISTORY_PER_PAGE }),
+      ...otherTables.map((cycles) =>
+        readTable({ cycle: cycles.map(String), per_page: WHOLE_HISTORY_PER_PAGE }),
+      ),
+    ]);
+    const failures = [newestRead, ...otherReads].flatMap((read) =>
+      read.status === 'rejected' ? [read.reason] : [],
+    );
+
+    /** Without the whole newest table the merge cannot be paged, so the caller's page of it stands alone. */
+    if (newestRead.status === 'rejected') {
+      assertPartialAnswer(failures, unfiltered, ctx);
+      return {
+        totals: unfiltered,
+        coverage: { kind: 'cycles_unavailable', cycles: otherTables.flat() },
+      };
+    }
+
+    /**
+     * Each cycle is answered by the table its history row names, as an explicit
+     * `cycle` request is: a row the newest table also holds for such a cycle
+     * gives way to that table's.
+     */
+    const otherRows = otherReads.flatMap((read) =>
+      read.status === 'fulfilled' ? read.value.results : [],
+    );
+    const otherCycles = new Set(otherRows.map((row) => row.cycle));
+    const merged = [
+      ...newestRead.value.results.filter((row) => !otherCycles.has(row.cycle)),
+      ...otherRows,
+    ];
+    const totals = pageOfTotals(merged, params);
+    const unread = otherTables.filter((_, i) => otherReads[i]?.status === 'rejected').flat();
+    if (unread.length === 0) return { totals, coverage: { kind: 'complete' } };
+    assertPartialAnswer(failures, totals, ctx);
+    return { totals, coverage: { kind: 'cycles_unavailable', cycles: unread } };
   }
 
   /** Committee totals grouped by entity type — a page of committees, not one committee. */
@@ -726,13 +1055,8 @@ export class OpenFecService {
     try {
       return await withRetry(
         async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
-            signal: ctx.signal,
-          });
-          const body = (await response.json()) as ElectionSummary;
-          if (typeof body?.count !== 'number') {
-            throw new Error('FEC API returned an unexpected response (possible HTML error page)');
-          }
+          const body = (await this.getJson(url, ctx)) as ElectionSummary;
+          if (typeof body?.count !== 'number') throw unexpectedResponse();
           return body;
         },
         {
@@ -770,22 +1094,14 @@ export class OpenFecService {
     const path = `/legal/docs/${encodeURIComponent(docType)}/${encodeURIComponent(no)}`;
     const url = this.buildUrl(path, {});
     try {
-      return await withRetry(
-        async () => {
-          const response = await fetchWithTimeout(url, this.config.fecRequestTimeout, ctx, {
-            signal: ctx.signal,
-          });
-          return unwrapLegalDocument(await response.json());
-        },
-        {
-          maxRetries: this.config.fecMaxRetries,
-          baseDelayMs: 1_000,
-          operation: `FEC ${path}`,
-          context: ctx,
-          signal: ctx.signal,
-          isTransient: isTransientFecError,
-        },
-      );
+      return await withRetry(async () => unwrapLegalDocument(await this.getJson(url, ctx)), {
+        maxRetries: this.config.fecMaxRetries,
+        baseDelayMs: 1_000,
+        operation: `FEC ${path}`,
+        context: ctx,
+        signal: ctx.signal,
+        isTransient: isTransientFecError,
+      });
     } catch (err) {
       if (isUpstreamNotFound(err)) return null;
       rethrowSanitized(err);
@@ -848,7 +1164,7 @@ function isUpstreamNotFound(err: unknown): boolean {
  */
 function unwrapLegalDocument(body: unknown): Record<string, unknown> | null {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new Error('FEC API returned an unexpected response (possible HTML error page)');
+    throw unexpectedResponse();
   }
   const record = body as Record<string, unknown>;
   const first = Array.isArray(record.docs) ? record.docs[0] : undefined;
@@ -873,6 +1189,19 @@ function emptyPage(params: FecParams): PageResult {
   };
 }
 
+/** `read`, with OpenFEC's own "no such record" 404 resolved as an empty page echoing `params`. */
+async function emptyOnUpstreamNotFound(
+  read: Promise<PageResult>,
+  params: FecParams,
+): Promise<PageResult> {
+  try {
+    return await read;
+  } catch (err) {
+    if (!isUpstreamNotFound(err)) throw err;
+    return emptyPage(params);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Error sanitization                                                */
 /* ------------------------------------------------------------------ */
@@ -882,8 +1211,61 @@ function sanitizeErrorMessage(msg: string): string {
   return msg.replace(/api_key=[^&\s"')]+/g, 'api_key=REDACTED');
 }
 
-/** Map HTTP status codes from upstream FEC API to actionable messages. */
-function enrichStatusError(msg: string): string {
+/**
+ * The wait an upstream `Retry-After` asks for, in ms, or `undefined` when there
+ * is none to read. Reads the value the way `withRetry` does — delta-seconds (a
+ * bare integer, or a number), or an HTTP-date as the time from now clamped at
+ * 0 — so the wait a message names is the one retry honored or declined. The
+ * framework's own parser is not on the public `/utils` export. The input is one
+ * response header, so its length is bounded by the runtime's header limit.
+ */
+function retryAfterMs(retryAfter: unknown): number | undefined {
+  if (typeof retryAfter === 'number') {
+    return Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : undefined;
+  }
+  if (typeof retryAfter !== 'string') return;
+  const value = retryAfter.trim();
+  if (value === '') return;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+/** A wait in the units a reader plans by: exact seconds under a minute, then rounded minutes or hours. */
+function describeWait(ms: number): string {
+  const count = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds < 60) return count(seconds, 'second');
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `about ${count(minutes, 'minute')}`;
+  return `about ${count(Math.round(seconds / 3600), 'hour')}`;
+}
+
+/**
+ * The 429 hint. An exhausted api.data.gov key stays blocked until its window
+ * resets — hours, for `DEMO_KEY`'s daily allowance — so the hint names the wait
+ * OpenFEC sent instead of guessing one, and on `DEMO_KEY` points at the personal
+ * key that lifts the shared limit. It states no limit figure: the published
+ * `DEMO_KEY` figures disagree with each other and with what OpenFEC enforces.
+ */
+function rateLimitHint(retryAfter: unknown): string {
+  const waitMs = retryAfterMs(retryAfter);
+  const wait =
+    waitMs === undefined
+      ? 'OpenFEC gave no reset time, so the wait is unknown.'
+      : `OpenFEC asked to wait ${describeWait(waitMs)} before the next request.`;
+  const keyAdvice =
+    getServerConfig().fecApiKey === 'DEMO_KEY'
+      ? ' This server is using DEMO_KEY, whose small daily allowance is shared by every caller on this IP; setting FEC_API_KEY to a personal key (free at https://api.data.gov/signup/) lifts the shared limit.'
+      : '';
+  return `FEC API rate limit exceeded. ${wait}${keyAdvice}`;
+}
+
+/**
+ * Map HTTP status codes from upstream FEC API to actionable messages. A 429's
+ * hint reads `retryAfter`, the raw `Retry-After` the error carries.
+ */
+function enrichStatusError(msg: string, retryAfter?: unknown): string {
   const sanitized = sanitizeErrorMessage(msg);
   const statusMatch = sanitized.match(/Status:\s*(\d{3})/);
   if (!statusMatch) return sanitized;
@@ -893,25 +1275,42 @@ function enrichStatusError(msg: string): string {
     403: 'Forbidden — the API key may be invalid or expired.',
     404: 'Endpoint not found — verify the API path.',
     422: 'The FEC API rejected the request parameters. Check required fields and value formats for this endpoint.',
-    429: 'FEC API rate limit exceeded. Wait a moment and retry.',
     500: 'FEC API internal error. Retry shortly.',
     502: 'FEC API is temporarily unreachable. Retry shortly.',
     503: 'FEC API is temporarily unavailable. Retry shortly.',
     504: 'The FEC API timed out running this query. Narrow it — supply cycle, a committee_id or candidate_id, or a tighter date range — then retry.',
   };
-  const hint = hints[status];
+  const hint = status === 429 ? rateLimitHint(retryAfter) : hints[status];
   return hint ? `${sanitized} — ${hint}` : sanitized;
+}
+
+/**
+ * The captured error body a caller may see. Every request opts into
+ * `exposeErrorBody`, so a non-2xx body arrives on `data.body` (and its alias
+ * `data.responseBody`) bound for the client. It goes on only when it is the
+ * API's own JSON error object: OpenFEC's names the parameter it rejected
+ * (`{"message":{"query":{"office":…}},"status":422}`), api.data.gov's the key
+ * or quota problem. An HTML or plain-text page from the edge is markup, not
+ * guidance, and is dropped here; `fetchWithTimeout`'s failure log already
+ * recorded it.
+ */
+function withClientBody(data: McpError['data']): McpError['data'] {
+  if (typeof data?.body !== 'string' || data.body.trimStart().startsWith('{')) return data;
+  const { body: _page, responseBody: _alias, ...rest } = data;
+  return rest;
 }
 
 /**
  * Re-throw an error with its message sanitized (API key stripped)
  * and enriched with actionable context for HTTP status errors.
- * Preserves McpError code and data; wraps plain Errors as new instances.
- * Preserves the original error as `cause` for internal debugging.
+ * Preserves McpError code and data, less a non-JSON error body; wraps plain
+ * Errors as new instances. Preserves the original error as `cause` for
+ * internal debugging.
  */
 function rethrowSanitized(err: unknown): never {
   if (err instanceof McpError) {
-    throw new McpError(err.code, enrichStatusError(err.message), err.data, { cause: err });
+    const message = enrichStatusError(err.message, err.data?.retryAfter);
+    throw new McpError(err.code, message, withClientBody(err.data), { cause: err });
   }
   if (err instanceof Error) {
     const clean = new Error(enrichStatusError(err.message), { cause: err });
@@ -936,7 +1335,8 @@ function rethrowSanitized(err: unknown): never {
  * classifies `ServiceUnavailable` like every other 5xx.
  *
  * The message heuristics below only cover errors that never reached the
- * framework's classifier (raw socket failures, upstream HTML error pages).
+ * framework's classifier (raw socket failures). A 2xx answer that is not an
+ * OpenFEC envelope already arrives as `ServiceUnavailable` (`unexpectedResponse`).
  * `withRetry`'s `isTransient` replaces the default outright, so a plain `Error`
  * reaches them rather than being assumed transient.
  */
@@ -948,7 +1348,6 @@ function isTransientFecError(error: unknown): boolean {
   if (msg.includes('429') || msg.includes('OVER_RATE_LIMIT') || msg.includes('rate limit')) {
     return true;
   }
-  if (msg.includes('unexpected response') || msg.includes('HTML error page')) return true;
   if (msg.includes('ECONNRESET') || msg.includes('ETIMEDOUT') || msg.includes('fetch failed')) {
     return true;
   }

@@ -189,6 +189,21 @@ describe('committeeResource', () => {
       activeService = new OpenFecService();
     });
 
+    it('reads the newest totals row in one request, without the committee history', async () => {
+      routeTotals(() => Promise.resolve(envelope([{ cycle: 2026, receipts: 1 }])));
+
+      const ctx = createMockContext({ errors: committeeResource.errors });
+      const params = paramsSchema.parse({ committee_id: 'C00703975' });
+      await committeeResource.handler(params, ctx);
+
+      const urls = mockFetch.mock.calls.map(([url]) => String(url));
+      expect(urls).toHaveLength(2);
+      expect(urls.filter((url) => url.includes('/committee/C00703975/totals/'))).toEqual([
+        expect.stringContaining('per_page=1'),
+      ]);
+      expect(urls.some((url) => url.includes('/history/'))).toBe(false);
+    });
+
     it('resolves the base record when OpenFEC reports no totals on file', async () => {
       routeTotals(() =>
         Promise.reject(

@@ -16,7 +16,7 @@
     "FEC_API_KEY": {
       "type": "string",
       "title": "OpenFEC API key",
-      "description": "Optional. Defaults to DEMO_KEY (30 req/hour); your own key from api.data.gov/signup allows 1,000 req/hour.",
+      "description": "Optional. Defaults to DEMO_KEY, a small daily allowance shared per IP; your own key from api.data.gov/signup gets OpenFEC's published 1,000 req/hour.",
       "sensitive": true,
       "default": ""
     }

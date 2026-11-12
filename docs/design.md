@@ -52,8 +52,8 @@ Wraps the FEC's official REST API (OpenFEC v1) to give agents access to U.S. fed
 
 ## Requirements
 
-- Free API key from [api.data.gov](https://api.data.gov/signup/). `DEMO_KEY` available for testing (severely rate-limited: ~40 requests/hour)
-- Standard key: 1,000 requests/hour. Elevated key (email `APIinfo@fec.gov`): 120 requests/minute (7,200/hour)
+- Free API key from [api.data.gov](https://api.data.gov/signup/). `DEMO_KEY` works without one, for testing: a small daily allowance shared by every caller on the same IP. The hourly figures api.data.gov and OpenFEC publish for it disagree with each other and with the daily window OpenFEC enforces, so no surface of this server states a `DEMO_KEY` count.
+- Personal key: OpenFEC's published 1,000 requests/hour. Elevated key (email `APIinfo@fec.gov`): 120 requests/minute (7,200/hour)
 - All endpoints read-only, no auth scopes needed beyond API key
 - Must handle two pagination models transparently (page-based and keyset)
 - Legal search uses a third pagination model (`from_hit`/`hits_returned`) with type-keyed result arrays
@@ -151,7 +151,7 @@ Pre-aggregated committee finances. Answers "how much has this committee raised t
 | `mode` | enum | No | `single` (default) — one committee's totals, one row per cycle. `by_entity_type` — a page of committees of one entity type. |
 | `committee_id` | string | Yes in `single` | Committee ID. In `by_entity_type` mode it narrows the grouped search to that one committee. |
 | `entity_type` | enum | Yes in `by_entity_type` | `presidential`, `pac`, `party`, `pac-party`, `house-senate`, `ie-only`. |
-| `cycle` | number | No | Two-year election cycle. Omit in `single` mode for every cycle on record. |
+| `cycle` | number | No | Two-year election cycle. Omit in `single` mode for every cycle on record, across changes of committee type (decision 11a). |
 | `committee_state` | string | No | Two-letter state code. `by_entity_type` only. |
 | `committee_type` | string | No | Committee type code. `by_entity_type` only. |
 | `committee_designation` | string | No | Committee designation. `by_entity_type` only. |
@@ -170,10 +170,12 @@ Pre-aggregated committee finances. Answers "how much has this committee raised t
 - `single` mode without a `committee_id` → `ValidationError` (`committee_id_required_for_single_mode`).
 - `by_entity_type` mode without an `entity_type` → `ValidationError` (`entity_type_required_for_group_mode`), carrying `valid_entity_types`.
 - A grouped-search filter supplied alongside `single` mode → `ValidationError` (`inputs_not_applicable_to_mode`). The single-committee endpoint accepts only paging, `cycle`, and `sort`, so applying one would have returned unfiltered totals.
-- `single` mode matching no row → `NotFound` (`committee_totals_not_found`). The endpoint answers 404 for every empty case — unknown ID, a cycle the committee did not file, a committee that files no financial report — so all three land here; the message names the cycle when one was given.
+- `single` mode matching no row → `NotFound` (`committee_totals_not_found`). The endpoint answers 404 for an unknown ID or a cycle the committee did not file, and 200 with no rows for a committee that has a filing history but no totals (one that files no financial report, say), so all three land here; the message names the cycle when one was given.
+- `single` mode without `cycle` whose history read, or a read of another type's cycles, fails for any reason but a rate limit or cancellation (a 4xx, 5xx, timeout, dropped connection, or malformed answer — a 404 for cycles the history named included) → success with the rows the reads that succeeded hold and a `notice` naming what may be missing. A rate limit or cancellation fails the call; so does any such failure when the reads that succeeded hold no rows, since an empty page would read as "no totals on file". OpenFEC's own 404 for the history reads as an empty history, so an unknown ID still lands on `committee_totals_not_found`.
 
 **Upstream endpoints:**
 - `/v1/committee/{committee_id}/totals/` — one committee, one row per cycle
+- `/v1/committee/{committee_id}/history/` — the committee's type per cycle, read beside an omitted-cycle totals request (decision 11a)
 - `/v1/totals/{entity_type}/` — grouped search across committees of one entity type
 
 ---
@@ -597,6 +599,7 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | `getCandidateTotals(params)` | `/candidates/totals/` | Offset |
 | `searchCommittees(params)` | `/committees/`, `/committees/{id}/` | Offset |
 | `getCommitteeTotals(id, params)` | `/committee/{id}/totals/` | Offset |
+| `getCommitteeTotalsAllCycles(id, params)` | `/committee/{id}/history/`, `/committee/{id}/totals/` (once per totals table) | Offset, applied locally across the merged rows (decision 11a) |
 | `getCommitteeTotalsByEntityType(type, params)` | `/totals/{entity_type}/` | Offset |
 | `searchContributions(params)` | `/schedules/schedule_a/` | Seek |
 | `getContributionAggregates(mode, params)` | `/schedules/schedule_a/by_*` | Offset |
@@ -619,20 +622,21 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | Concern | Decision |
 |:--------|:---------|
 | Retry boundary | Wraps full request (fetch + JSON parse). `withRetry` from `/utils`. |
-| Backoff calibration | 1s base delay (rate-limit oriented). The API's 429 includes `Retry-After` header — honor it when present. |
+| Backoff calibration | 1s base delay (rate-limit oriented). An upstream `Retry-After` of 30 s or less (`withRetry`'s `maxDelayMs`) replaces the backoff. |
 | Max retries | 3 (configurable via `FEC_MAX_RETRIES`). |
-| HTTP status check | `fetchWithTimeout` handles non-OK → `ServiceUnavailable`. 429 specifically → retry with backoff. |
-| Parse failure | Detect HTML error pages (FEC occasionally returns these) → transient error, retry. |
-| Rate limit awareness | Track remaining calls via `X-RateLimit-Remaining` header. Log warnings at 10% remaining. |
+| HTTP status check | `fetchWithTimeout` maps each non-OK status to its own code: 429 → `RateLimited`, 504 → `Timeout`, other 5xx → `ServiceUnavailable`; these retry, 501 excepted. A 429 whose `Retry-After` exceeds 30 s (an exhausted key's runs to hours) fails at once without retrying. Its message names that wait and, on `DEMO_KEY`, points at a personal `FEC_API_KEY`. |
+| Parse failure | A 2xx body that is not JSON (an edge error page served with 200) or an envelope without a `results` array → `ServiceUnavailable`, retried like a 503. |
+| Rate limit awareness | Not tracked: the `X-RateLimit-*` headers are never read. A 429's `Retry-After` is the only limit signal, passed through as `data.retryAfter` and named in the message. |
 
 **Internal helpers:**
 
 | Helper | Purpose |
 |:-------|:--------|
 | `buildUrl(path, params)` | Construct URL with query params, inject `api_key`, strip undefined values. |
-| `fetchJson<T>(path, params)` | `fetchWithTimeout` → JSON parse → validate envelope → return `{ pagination, results }`. |
-| `fetchSeek<T>(path, params, query, ctx, delivered)` | Like `fetchJson` but returns `{ pagination, results, nextCursor }` from `last_indexes`, with the cursor bound to `query` and carrying the rows delivered through this page. |
-| `fetchLegal<T>(params)` | Special handling for legal search response shape. |
+| `request(url, ctx, attempt?)` | One `fetchWithTimeout` GET under the request timeout (or the attempt's remaining budget, when the call carries a deadline) and the caller's signal, with `exposeErrorBody` set. |
+| `fetchPage<T>(path, params, ctx, options?)` | `request` → JSON parse → validate envelope → return `{ pagination, results }`, inside `withRetry`; `options.deadlineMs` bounds every attempt and backoff. |
+| `fetchSeek<T>(path, params, query, ctx, delivered)` | Like `fetchPage` but returns `{ pagination, results, nextCursor }` from `last_indexes`, with the cursor bound to `query` and carrying the rows delivered through this page. |
+| `fetchLegalSearch(params, ctx)` | Special handling for legal search response shape. |
 | `cursorQuery(scope, input)` | Normalize a tool's arguments into the `{ scope, args }` identity its cursors are bound to (`cursor`, `page`, and `per_page` excluded). |
 | `encodeCursor(lastIndexes, query, delivered?)` | Base64-encode `last_indexes`, the issuing query, and the rows delivered so far into an opaque cursor string. |
 | `decodeCursor(cursor, expected)` | Validate the cursor and decode it back to `{ indexes, delivered }` — the `last_indexes` params and the rows delivered before it (0 for a cursor minted without the count). Throws `validationError` with `reason: 'invalid_cursor'` (malformed) or `'cursor_query_mismatch'` (issued for a different query). |
@@ -643,7 +647,7 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 
 | Env Var | Required | Default | Description |
 |:--------|:---------|:--------|:------------|
-| `FEC_API_KEY` | Yes | — | OpenFEC API key from api.data.gov. `DEMO_KEY` for testing. |
+| `FEC_API_KEY` | No | `DEMO_KEY` | OpenFEC API key from api.data.gov. `DEMO_KEY` is a small daily allowance shared per IP; a personal key gets OpenFEC's published 1,000 requests/hour. |
 | `FEC_BASE_URL` | No | `https://api.open.fec.gov/v1` | API base URL. |
 | `FEC_MAX_RETRIES` | No | `3` | Max retry attempts for failed requests. |
 | `FEC_REQUEST_TIMEOUT` | No | `30000` | Request timeout in milliseconds. |
@@ -656,7 +660,7 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 |:-----|:-----------|:-------------|
 | Candidate | search, get by ID, financial totals | `/candidates/`, `/candidates/{id}/`, `/candidates/totals/` |
 | Committee | search, get by ID | `/committees/`, `/committees/{id}/` |
-| Committee Totals | one committee's per-cycle totals, grouped search by entity type | `/committee/{id}/totals/`, `/totals/{entity_type}/` |
+| Committee Totals | one committee's per-cycle totals, grouped search by entity type | `/committee/{id}/totals/`, `/committee/{id}/history/`, `/totals/{entity_type}/` |
 | Contribution | itemized search, aggregate by size/state/employer/occupation | `/schedules/schedule_a/`, `/schedules/schedule_a/by_*` |
 | Disbursement | itemized search, aggregate by purpose/recipient | `/schedules/schedule_b/`, `/schedules/schedule_b/by_*` |
 | Independent Expenditure | itemized search, aggregate by candidate | `/schedules/schedule_e/`, `/schedules/schedule_e/by_candidate/` |
@@ -764,9 +768,17 @@ OpenFEC embeds a ~40-field committee object in every itemized Schedule A/B/E row
 
 `/committee/{committee_id}/totals/` and `/totals/{entity_type}/` answer different questions — one committee's cycles versus a ranked page of committees — and share only a row shape. They are one `mode`-dispatched tool rather than two, matching the consolidation in decision 1: the single-committee half is the common case and the default, and the grouped half costs one branch. Only the single half was reachable before, and only through a resource, so tool-only clients could not read committee totals at all.
 
-Both single-record endpoints answer 404 for a miss rather than an empty `results` array — `/committee/{id}/totals/` for an unknown ID, a cycle the committee did not file, and a committee that files no financial report alike. The service normalizes that to a zero-row page so the tool can throw its own `committee_totals_not_found` with an actionable message, instead of surfacing the framework's generic "verify the API path" hint for what is really an unknown ID. The normalization is gated on the 404 body parsing as OpenFEC's own JSON error object: the api.data.gov edge answers 404 with a plain-text routing error when the upstream host is unreachable, and reporting a whole-API outage as "this committee has no totals" would be a confidently wrong answer. Anything that is not the API's JSON error shape stays a failure and propagates. `openfec_get_legal_document` uses the same discriminator.
+Both single-record endpoints answer 404 for a miss rather than an empty `results` array — `/committee/{id}/totals/` for an unknown ID and for a cycle the committee did not file. (A committee with a filing history but no totals row gets 200 with no rows.) The service normalizes that to a zero-row page so the tool can throw its own `committee_totals_not_found` with an actionable message, instead of surfacing the framework's generic "verify the API path" hint for what is really an unknown ID. The normalization is gated on the 404 body parsing as OpenFEC's own JSON error object: the api.data.gov edge answers 404 with a plain-text routing error when the upstream host is unreachable, and reporting a whole-API outage as "this committee has no totals" would be a confidently wrong answer. Anything that is not the API's JSON error shape stays a failure and propagates. `openfec_get_legal_document` uses the same discriminator.
 
 The `openfec://committee/{committee_id}` resource relies on that normalization and adds no error handling of its own around the totals leg. "No totals on file" already arrives as an empty page, so a rejection reaching the resource is a real failure (rate limit, timeout, malformed envelope) and fails the read, as the candidate resource's totals leg does. Swallowing it would return a successful profile with the financial fields silently missing, which a caller cannot tell apart from a committee that never filed.
+
+### 11a. Omitted-cycle committee totals read the committee's history
+
+OpenFEC keeps committee totals in one table per filing form — presidential (`P`), house-senate (`H`/`S`), ie-only (`I`), and pac-party for every other type — and `/committee/{committee_id}/totals/` reads only the table its newest matching history row's type maps to. With `cycle` omitted, a committee that changed type returned only its newest type's cycles: `C00703975` (presidential 2020–2024, PAC 2026) came back as 2026 alone, looking complete. A multi-value `cycle` resolves the same way, by its newest cycle, so no single request reaches both tables.
+
+Single mode without `cycle` therefore reads `/committee/{committee_id}/history/` beside the unfiltered totals request — concurrently, so a single-type committee keeps today's latency and gets today's request and page unchanged. When the history spans more than one table, each other table is asked for its cycles with a multi-value `cycle`, the newest table is read whole when the caller's page did not hold all of it, and the merged rows are sorted (NULL placed as OpenFEC's PostgreSQL places it) and paged locally. A cycle both tables hold is answered by the table its history row names, as an explicit `cycle` request is. A committee whose newest type has no totals row yet now answers from its earlier types; the `openfec://committee/{committee_id}` resource still reads one unfiltered row and shows no financial summary in that state.
+
+Cost: one extra request for a single-type committee, plus one per additional table, plus one when the caller's page split the newest table. The history-driven reads are best-effort, because detecting the gap needs the same history read as closing it: a failed one leaves the reads that succeeded standing with a notice naming what they lack, never a silent partial and never a rejected call the unfiltered page alone would have answered. Only a rate limit and a caller cancellation fail the call, since the caller's next step is to wait or to stop either way. A 404 for cycles the history just named counts as a failed read, not an empty one; OpenFEC's own 404 for the history itself reads as an empty history, the same rule the totals read follows. Every request shares one 50 s budget across attempts and backoffs, so the call settles before an MCP SDK client's 60 s request timeout; the heaviest call (history, the unfiltered page, three other tables, a newest-table re-read) would otherwise run two sequential retry ladders of four 30 s attempts each, about 254 s, against about 127 s for the single unfiltered request it replaces.
 
 ### 12. Coordinated expenditures use page-based pagination, unlike the other schedules
 
@@ -867,8 +879,9 @@ Rejected: a count cap on `hits_returned` (one record breaks it), stop-at-first a
 
 ## Known Limitations
 
-- **Rate limits:** 1,000 requests/hour with a standard key. Complex multi-tool workflows can consume 5–10 requests per user interaction. Heavy use requires an elevated key.
-- **DEMO_KEY:** ~40 requests/hour. Barely functional for testing. Users need a real key.
+- **Rate limits:** OpenFEC publishes 1,000 requests/hour for a personal key. Complex multi-tool workflows can consume 5–10 requests per user interaction. Heavy use requires an elevated key.
+- **DEMO_KEY:** a small daily allowance shared by every caller on the same IP, observed to reset at 00:00 UTC. Once it is spent, every call fails with a 429 whose `Retry-After` runs to that reset, often many hours away. Barely functional for testing; users need a personal key.
+- **Committee resource after a type change:** `openfec://committee/{committee_id}` reads one unfiltered totals row, which OpenFEC takes from the committee's current type only. A committee that has changed type but not yet filed under the new one shows no financial summary there; `openfec_get_committee_totals` without `cycle` returns its earlier cycles (decision 11a).
 - **Approximate counts on high-volume endpoints:** Schedule A/B/E and `/filings/` return `is_count_exact: false` above roughly a million rows. The `count` field is then an estimate, not a precise total, and `pages` inherits its error. Responses carry `count_is_approximate` and render the total as `≈N total (approximate)` when that happens (decision 15), but the estimate itself cannot be improved.
 - **Schedule A date range limitation:** The API does not support date ranges spanning multiple `two_year_transaction_period`s. Queries are scoped to a single cycle.
 - **Legal search vs. entity search:** Legal search is full-text, not entity-linked. Searching for a committee name may miss cases where the committee is referenced differently.

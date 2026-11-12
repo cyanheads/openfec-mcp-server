@@ -151,6 +151,27 @@ describe('campaignAnalysisPrompt', () => {
     });
   });
 
+  /**
+   * The totals call omits cycle (#24) so its rows span the committee's whole
+   * history — including cycles filed under another committee type, which the
+   * trajectory must label rather than read as campaign fundraising.
+   */
+  it('omits cycle on the principal committee totals call and labels rows by their own type', () => {
+    const step2 = section(
+      firstMessage({ candidate_id: 'P80000722', cycle: '2024' }).content.text,
+      2,
+    );
+
+    expect(step2).toContain('omitting cycle and setting per_page to 100 on this one call');
+    expect(step2).toContain('a notice on the result names any cycles OpenFEC could not serve');
+    expect(step2).toContain(
+      "Each row carries that cycle's committee_type, committee_designation, and committee_name",
+    );
+    expect(step2).toContain(
+      'build the trajectory from the cycles the committee served this candidate',
+    );
+  });
+
   it('pins the cycle on every call when one was supplied', () => {
     expect(firstMessage({ candidate_id: 'P00003392', cycle: '2020' }).content.text).toContain(
       'Pass cycle=2020',

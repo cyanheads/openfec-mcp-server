@@ -88,7 +88,7 @@ The [openfec-guide](./skills/openfec-guide/SKILL.md) skill covers campaign-finan
 
 ### `openfec_get_committee_totals` <sub>tool</sub>
 
-- `mode: "single"` (default) takes a `committee_id` and returns one row per two-year cycle; `mode: "by_entity_type"` ranks every committee of one `entity_type` (`presidential`, `pac`, `party`, `pac-party`, `house-senate`, `ie-only`), filterable by state, type, designation, organization type, and receipts/disbursements bounds; up to 100 per page
+- `mode: "single"` (default) takes a `committee_id` and returns one row per two-year cycle — with `cycle` omitted, every cycle it filed, across changes of committee type; `mode: "by_entity_type"` ranks every committee of one `entity_type` (`presidential`, `pac`, `party`, `pac-party`, `house-senate`, `ie-only`), filterable by state, type, designation, organization type, and receipts/disbursements bounds; up to 100 per page
 - Rows carry receipts, disbursements, cash on hand, debts, and the itemized/unitemized split; the output `mode` says whether rows are cycles or committees
 - Typed errors: `committee_id_required_for_single_mode`, `entity_type_required_for_group_mode`, `committee_totals_not_found`
 
@@ -255,13 +255,13 @@ For other clients, add this to the MCP config file:
 }
 ```
 
-An optional [OpenFEC API key](https://api.data.gov/signup/) in `FEC_API_KEY` raises the limit from 30 to 1,000 requests per hour (`-e FEC_API_KEY=your-key`, or an `env` entry). For Docker or a source build, see [Running the server](#running-the-server).
+An optional [OpenFEC API key](https://api.data.gov/signup/) in `FEC_API_KEY` replaces the default `DEMO_KEY`, a small daily allowance shared by every caller on the same IP, with OpenFEC's published 1,000 requests per hour (`-e FEC_API_KEY=your-key`, or an `env` entry). For Docker or a source build, see [Running the server](#running-the-server).
 
 ## Configuration
 
 | Variable | Description | Default |
 |:---|:---|:---|
-| `FEC_API_KEY` | OpenFEC API key from [api.data.gov](https://api.data.gov/signup/). `DEMO_KEY` allows 30 req/hr; your own key allows 1,000. | `DEMO_KEY` |
+| `FEC_API_KEY` | OpenFEC API key from [api.data.gov](https://api.data.gov/signup/). `DEMO_KEY` is a small daily allowance shared per IP; OpenFEC publishes 1,000 requests/hour for your own key. | `DEMO_KEY` |
 | `FEC_BASE_URL` | OpenFEC API base URL. | `https://api.open.fec.gov/v1` |
 | `FEC_MAX_RETRIES` | Retry attempts for failed API requests. | `3` |
 | `FEC_REQUEST_TIMEOUT` | Per-request timeout, in ms. | `30000` |
@@ -280,7 +280,7 @@ See [`.env.example`](./.env.example) for the full list of optional overrides.
 
 ### Local development
 
-Requires [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
+Requires [Bun v1.4.4](https://bun.sh/) or higher (or Node.js v24+).
 
 - **Clone and install:**
 

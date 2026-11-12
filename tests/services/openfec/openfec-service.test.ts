@@ -4,18 +4,23 @@
  * @module tests/services/openfec/openfec-service.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createFetchMock,
+  createMockContext,
+  type FetchMockHarness,
+} from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock getServerConfig before importing the service
-vi.mock('@/config/server-config.js', () => ({
-  getServerConfig: () => ({
-    fecApiKey: 'DEMO_KEY',
-    fecBaseUrl: 'https://api.open.fec.gov/v1',
-    fecMaxRetries: 0,
-    fecRequestTimeout: 5000,
-  }),
+/** Mutable so the retry-ladder cases can raise the attempt count and timeout. */
+const config = vi.hoisted(() => ({
+  fecApiKey: 'DEMO_KEY',
+  fecBaseUrl: 'https://api.open.fec.gov/v1',
+  fecMaxRetries: 0,
+  fecRequestTimeout: 5000,
 }));
+
+// Mock getServerConfig before importing the service
+vi.mock('@/config/server-config.js', () => ({ getServerConfig: () => config }));
 
 // Mock fetchWithTimeout and withRetry from the framework utils. Everything else
 // stays real so the service's transient classifier runs against the framework's
@@ -29,6 +34,7 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import {
+  assertKnownParams,
   type CursorQuery,
   cursorQuery,
   decodeCursor,
@@ -37,6 +43,13 @@ import {
   initOpenFecService,
   OpenFecService,
 } from '@/services/openfec/openfec-service.js';
+import {
+  COMMITTEES,
+  type CommitteeRecord,
+  committeeRequest,
+  requestsSent,
+  routeCommitteeTotals,
+} from './committee-totals-upstream.js';
 
 const mockFetch = vi.mocked(fetchWithTimeout);
 const mockWithRetry = vi.mocked(withRetry);
@@ -880,5 +893,718 @@ describe('isTransientFecError', () => {
   it('still classifies raw socket failures by message', async () => {
     const isTransient = await classify();
     expect(isTransient(new Error('fetch failed: ECONNRESET'))).toBe(true);
+  });
+});
+
+describe('committee history parameter guard', () => {
+  it('accepts every name /committee/{committee_id}/history/ declares', () => {
+    expect(() =>
+      assertKnownParams('/committee/C00703975/history/', {
+        page: 1,
+        per_page: 100,
+        election_full: true,
+        designation: ['P'],
+        sort: '-cycle',
+        sort_hide_null: false,
+        sort_null_only: false,
+        sort_nulls_last: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects a name the history endpoint does not accept, naming its template', () => {
+    let err: McpError | undefined;
+    try {
+      assertKnownParams('/committee/C00703975/history/', { per_page: 100, cycle: 2024 });
+    } catch (e) {
+      err = e as McpError;
+    }
+    expect(err?.data).toMatchObject({
+      endpoint: '/committee/{committee_id}/history/',
+      unknown_parameters: ['cycle'],
+    });
+  });
+});
+
+/** The framework utils unstubbed, for the cases that run the real fetch path and retry ladder. */
+const realUtils = await vi.importActual<typeof import('@cyanheads/mcp-ts-core/utils')>(
+  '@cyanheads/mcp-ts-core/utils',
+);
+
+/**
+ * The omitted-cycle totals read, through the real `fetchWithTimeout` and
+ * `withRetry` against a fake of the two OpenFEC endpoints built from live
+ * captures. Only the network boundary is faked.
+ */
+describe('getCommitteeTotalsAllCycles', () => {
+  const PAGE_1 = { page: 1, per_page: 20 };
+  type Parts = NonNullable<ReturnType<typeof committeeRequest>>;
+
+  let http: FetchMockHarness;
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockImplementation(realUtils.fetchWithTimeout);
+    mockWithRetry.mockImplementation(realUtils.withRetry);
+    http = createFetchMock();
+    http.install();
+    svc = new OpenFecService();
+    ctx = createMockContext();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    http.restore();
+    mockFetch.mockReset();
+    mockWithRetry.mockReset();
+    config.fecMaxRetries = 0;
+    config.fecRequestTimeout = 5000;
+  });
+
+  const cyclesOf = (rows: Record<string, unknown>[]) => rows.map((row) => row.cycle);
+
+  const isHistory = (parts: Parts) => parts.endpoint === 'history';
+  /** A per-table read: the only totals request that carries `cycle`. */
+  const isTableRead = (parts: Parts) => parts.endpoint === 'totals' && parts.query.has('cycle');
+  /** The unfiltered request carrying the caller's paging. */
+  const isCallerPage = (parts: Parts) =>
+    parts.endpoint === 'totals' &&
+    !parts.query.has('cycle') &&
+    parts.query.get('per_page') !== '100';
+
+  /** Answer the requests `select` picks with `respond`, ahead of the fake. */
+  const intercept = (
+    select: (parts: Parts) => boolean,
+    respond: (request: Request) => Response | Promise<Response>,
+  ) =>
+    http.route({
+      match: (request) => {
+        const parts = committeeRequest(request.url);
+        return parts !== null && select(parts);
+      },
+      respond,
+    });
+
+  const status =
+    (code: number, headers: Record<string, string> = {}) =>
+    () =>
+      new Response('{"message":"upstream failure"}', {
+        status: code,
+        headers: { 'content-type': 'application/json', ...headers },
+      });
+
+  /** A status answered with an HTML page, as the api.data.gov edge answers a routing failure or a maintenance window. */
+  const htmlStatus = (code: number) => () =>
+    new Response('<!doctype html><title>Not Found</title>', {
+      status: code,
+      headers: { 'content-type': 'text/html' },
+    });
+
+  /** A 200 envelope whose `results` is present but not an array. */
+  const nullResults = () =>
+    Response.json({
+      api_version: '1.0',
+      pagination: { count: 0, page: 1, pages: 0, per_page: 100 },
+      results: null,
+    });
+
+  /** An upstream that never answers: the request settles only when its signal aborts. */
+  const hang = (request: Request) =>
+    new Promise<Response>((_, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), {
+        once: true,
+      });
+    });
+
+  /** C00703975 with one change applied to a copy of its capture. */
+  const variant = (change: (record: CommitteeRecord) => void) => {
+    const record = structuredClone(COMMITTEES.C00703975);
+    change(record);
+    return { C00703975: record };
+  };
+
+  describe('merging across committee types', () => {
+    it('returns every cycle of a committee that converted from a campaign to a PAC (C00703975)', async () => {
+      routeCommitteeTotals(http);
+
+      const { totals, coverage } = await svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx);
+
+      expect(coverage).toEqual({ kind: 'complete' });
+      expect(
+        totals.results.map((row) => [row.cycle, row.committee_type, row.committee_name]),
+      ).toEqual([
+        [2026, 'N', 'FIGHT FOR THE PEOPLE PAC'],
+        [2024, 'P', 'HARRIS FOR PRESIDENT'],
+        [2022, 'P', 'BIDEN FOR PRESIDENT'],
+        [2020, 'P', 'BIDEN FOR PRESIDENT'],
+      ]);
+      expect(totals.pagination).toEqual({
+        page: 1,
+        pages: 1,
+        count: 4,
+        per_page: 20,
+        is_count_exact: true,
+      });
+      expect(requestsSent(http).toSorted()).toEqual([
+        'C00703975/history?per_page=100',
+        'C00703975/totals?cycle=2024&cycle=2022&cycle=2020&per_page=100',
+        'C00703975/totals?page=1&per_page=20',
+      ]);
+    });
+
+    it('returns all six cycles of C00580100 (P 2016–2020, Q 2022–2026)', async () => {
+      routeCommitteeTotals(http);
+
+      const { totals } = await svc.getCommitteeTotalsAllCycles('C00580100', PAGE_1, ctx);
+
+      expect(cyclesOf(totals.results)).toEqual([2026, 2024, 2022, 2020, 2018, 2016]);
+      expect(totals.results.map((row) => row.committee_type)).toEqual([
+        'Q',
+        'Q',
+        'Q',
+        'P',
+        'P',
+        'P',
+      ]);
+      expect(totals.pagination.count).toBe(6);
+      expect(http.calls).toHaveLength(3);
+    });
+
+    it('sends a single-type committee the unfiltered request it sends today and returns its page as is (C00010603)', async () => {
+      routeCommitteeTotals(http);
+      const before = await svc.getCommitteeTotals('C00010603', PAGE_1, ctx);
+      const [requestBefore] = requestsSent(http);
+
+      const { totals, coverage } = await svc.getCommitteeTotalsAllCycles('C00010603', PAGE_1, ctx);
+
+      expect(coverage).toEqual({ kind: 'complete' });
+      expect(totals).toEqual(before);
+      expect(totals.pagination).toEqual({
+        page: 1,
+        pages: 2,
+        count: 24,
+        per_page: 20,
+        is_count_exact: true,
+      });
+      expect(requestsSent(http).slice(1).toSorted()).toEqual([
+        'C00010603/history?per_page=100',
+        requestBefore,
+      ]);
+    });
+
+    it('answers an unknown committee with the empty page its totals 404 normalizes to (C99999998)', async () => {
+      routeCommitteeTotals(http);
+
+      const { totals, coverage } = await svc.getCommitteeTotalsAllCycles('C99999998', PAGE_1, ctx);
+
+      expect(coverage).toEqual({ kind: 'complete' });
+      expect(totals).toEqual({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+      expect(http.calls).toHaveLength(2);
+    });
+
+    it('answers from the earlier type when the newest type has no totals row yet', async () => {
+      routeCommitteeTotals(
+        http,
+        variant((record) => {
+          record.totals['pac-party'] = [];
+        }),
+      );
+
+      const { totals, coverage } = await svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx);
+
+      expect(coverage).toEqual({ kind: 'complete' });
+      expect(cyclesOf(totals.results)).toEqual([2024, 2022, 2020]);
+      expect(totals.pagination.count).toBe(3);
+    });
+
+    it('lets the table the history names answer a cycle the newest table also holds', async () => {
+      routeCommitteeTotals(
+        http,
+        variant((record) => {
+          record.totals['pac-party']!.push({
+            committee_id: 'C00703975',
+            committee_name: 'FIGHT FOR THE PEOPLE PAC',
+            committee_type: 'N',
+            cycle: 2024,
+            receipts: 1,
+          });
+        }),
+      );
+
+      const { totals } = await svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx);
+
+      expect(cyclesOf(totals.results)).toEqual([2026, 2024, 2022, 2020]);
+      expect(totals.results[1]).toMatchObject({ cycle: 2024, committee_type: 'P' });
+    });
+
+    /** OpenFEC files H and S totals in house-senate and I totals in ie-only. */
+    it.each([
+      ['H', 'house-senate'],
+      ['S', 'house-senate'],
+      ['I', 'ie-only'],
+    ] as const)(
+      'reads the cycles a committee filed as %s from %s after it became a PAC',
+      async (type, table) => {
+        const row = (cycle: number, committee_type: string) => ({
+          committee_id: 'C00000001',
+          committee_type,
+          cycle,
+        });
+        routeCommitteeTotals(http, {
+          C00000001: {
+            history: [row(2022, 'N'), row(2020, type)],
+            totals: { 'pac-party': [row(2022, 'N')], [table]: [row(2020, type)] },
+          },
+        });
+
+        const { totals, coverage } = await svc.getCommitteeTotalsAllCycles(
+          'C00000001',
+          PAGE_1,
+          ctx,
+        );
+
+        expect(coverage).toEqual({ kind: 'complete' });
+        expect(totals.results.map((r) => [r.cycle, r.committee_type])).toEqual([
+          [2022, 'N'],
+          [2020, type],
+        ]);
+        expect(requestsSent(http).toSorted()).toEqual([
+          'C00000001/history?per_page=100',
+          'C00000001/totals?cycle=2020&per_page=100',
+          'C00000001/totals?page=1&per_page=20',
+        ]);
+      },
+    );
+  });
+
+  describe('sorting and paging the merged rows', () => {
+    it.each([
+      ['receipts', [2022, 2026, 2020, 2024]],
+      ['-receipts', [2024, 2020, 2026, 2022]],
+      ['cycle', [2020, 2022, 2024, 2026]],
+      ['-cycle', [2026, 2024, 2022, 2020]],
+      ['disbursements', [2022, 2026, 2020, 2024]],
+      ['-last_cash_on_hand_end_period', [2022, 2024, 2026, 2020]],
+    ])('orders by %s', async (sort, expected) => {
+      routeCommitteeTotals(http);
+
+      const { totals } = await svc.getCommitteeTotalsAllCycles(
+        'C00703975',
+        { ...PAGE_1, sort },
+        ctx,
+      );
+
+      expect(cyclesOf(totals.results)).toEqual(expected);
+    });
+
+    /**
+     * OpenFEC sorts NULL as PostgreSQL does: last ascending, first descending
+     * (checked live on C00010603's null `last_cash_on_hand_end_period` rows).
+     */
+    it.each([
+      ['receipts', [2026, 2020, 2024, 2022]],
+      ['-receipts', [2022, 2024, 2020, 2026]],
+    ])(
+      'places a row missing receipts where OpenFEC places NULL (sort %s)',
+      async (sort, expected) => {
+        routeCommitteeTotals(
+          http,
+          variant((record) => {
+            delete record.totals.presidential!.find((row) => row.cycle === 2022)!.receipts;
+          }),
+        );
+
+        const { totals } = await svc.getCommitteeTotalsAllCycles(
+          'C00703975',
+          { ...PAGE_1, sort },
+          ctx,
+        );
+
+        expect(cyclesOf(totals.results)).toEqual(expected);
+      },
+    );
+
+    it('pages the merged set, reading the newest table whole when the caller page skipped it', async () => {
+      routeCommitteeTotals(http);
+
+      const { totals } = await svc.getCommitteeTotalsAllCycles(
+        'C00703975',
+        { page: 2, per_page: 2 },
+        ctx,
+      );
+
+      expect(cyclesOf(totals.results)).toEqual([2022, 2020]);
+      expect(totals.pagination).toEqual({
+        page: 2,
+        pages: 2,
+        count: 4,
+        per_page: 2,
+        is_count_exact: true,
+      });
+      expect(requestsSent(http)).toContain('C00703975/totals?per_page=100');
+      expect(http.calls).toHaveLength(4);
+    });
+
+    it('walks every page of C00580100 at two per page, then reports the next one exhausted', async () => {
+      routeCommitteeTotals(http);
+
+      const walked: unknown[] = [];
+      for (const page of [1, 2, 3]) {
+        const { totals } = await svc.getCommitteeTotalsAllCycles(
+          'C00580100',
+          { page, per_page: 2, sort: 'cycle' },
+          ctx,
+        );
+        expect(totals.pagination).toMatchObject({ page, pages: 3, count: 6 });
+        walked.push(...cyclesOf(totals.results));
+      }
+      expect(walked).toEqual([2016, 2018, 2020, 2022, 2024, 2026]);
+
+      const past = await svc.getCommitteeTotalsAllCycles(
+        'C00580100',
+        { page: 4, per_page: 2 },
+        ctx,
+      );
+      expect(past.totals).toEqual({
+        pagination: { page: 4, pages: 3, count: 6, per_page: 2, is_count_exact: true },
+        results: [],
+      });
+    });
+
+    it('reuses the caller page when it already holds the newest table', async () => {
+      routeCommitteeTotals(http);
+
+      await svc.getCommitteeTotalsAllCycles('C00580100', { page: 1, per_page: 3 }, ctx);
+
+      expect(requestsSent(http)).not.toContain('C00580100/totals?per_page=100');
+      expect(http.calls).toHaveLength(3);
+    });
+  });
+
+  describe('best-effort history', () => {
+    it.each([
+      ['a 503', status(503)],
+      ['a 403', status(403)],
+      ['a 422', status(422)],
+      ['an HTML 404', htmlStatus(404)],
+      ['a dropped connection', () => Promise.reject(new TypeError('fetch failed'))],
+      ['an HTML page in a 200', htmlStatus(200)],
+      ['a 200 whose results is not an array', nullResults],
+    ])(
+      'keeps the unfiltered page, flagged partial, when the history read meets %s',
+      async (_, respond) => {
+        intercept(isHistory, respond);
+        routeCommitteeTotals(http);
+
+        const { totals, coverage } = await svc.getCommitteeTotalsAllCycles(
+          'C00703975',
+          PAGE_1,
+          ctx,
+        );
+
+        expect(coverage).toEqual({ kind: 'history_unavailable' });
+        expect(cyclesOf(totals.results)).toEqual([2026]);
+        expect(totals.pagination.count).toBe(1);
+      },
+    );
+
+    /**
+     * OpenFEC answers its own 404 when the committee has no history row; the
+     * service reads that as an empty history, the same rule its totals read follows.
+     */
+    it.each([
+      ['C00703975', [2026]],
+      ['C99999998', []],
+    ])("reads OpenFEC's own 404 for %s's history as an empty history", async (id, cycles) => {
+      intercept(isHistory, status(404));
+      routeCommitteeTotals(http);
+
+      const { totals, coverage } = await svc.getCommitteeTotalsAllCycles(id, PAGE_1, ctx);
+
+      expect(coverage).toEqual({ kind: 'complete' });
+      expect(cyclesOf(totals.results)).toEqual(cycles);
+    });
+
+    it('rejects with the rate limit when the history read is rate limited', async () => {
+      intercept(isHistory, status(429, { 'retry-after': '3600' }));
+      routeCommitteeTotals(http);
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { code: JsonRpcErrorCode.RateLimited },
+      );
+    });
+
+    it('rejects with the cancellation when the caller aborts during the history read', async () => {
+      const controller = new AbortController();
+      ctx = createMockContext({ signal: controller.signal });
+      intercept(isHistory, (request) => {
+        queueMicrotask(() => controller.abort());
+        return hang(request);
+      });
+      routeCommitteeTotals(http);
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { code: JsonRpcErrorCode.RequestCancelled },
+      );
+    });
+
+    /**
+     * An abort that lands in the backoff after a transient failure leaves
+     * `withRetry` with the signal's raw reason, not a classified cancellation.
+     */
+    it('rejects with the cancellation when the caller aborts during a history retry backoff', async () => {
+      config.fecMaxRetries = 1;
+      const controller = new AbortController();
+      ctx = createMockContext({ signal: controller.signal });
+      intercept(isHistory, () => {
+        setTimeout(() => controller.abort(), 50);
+        return status(503)();
+      });
+      routeCommitteeTotals(http);
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { name: 'AbortError' },
+      );
+    });
+
+    it('rejects rather than report no totals when the history fails and the newest table is empty', async () => {
+      intercept(isHistory, status(503));
+      routeCommitteeTotals(
+        http,
+        variant((record) => {
+          record.totals['pac-party'] = [];
+        }),
+      );
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { code: JsonRpcErrorCode.ServiceUnavailable },
+      );
+    });
+
+    it('rejects when the unfiltered request itself fails, as today', async () => {
+      intercept(isCallerPage, status(503));
+      routeCommitteeTotals(http);
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { code: JsonRpcErrorCode.ServiceUnavailable },
+      );
+    });
+
+    it('rejects an unfiltered answer whose results is not an array as a malformed envelope', async () => {
+      intercept(isCallerPage, nullResults);
+      routeCommitteeTotals(http);
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toThrow(
+        'FEC API returned an unexpected response',
+      );
+    });
+  });
+
+  describe('best-effort per-table reads', () => {
+    /**
+     * The history names these cycles, so a 404 for them contradicts it: the
+     * read failed, it did not find the cycles empty.
+     */
+    const SECONDARY_FAILURES = [
+      ['a 502', status(502)],
+      ["OpenFEC's own 404", status(404)],
+      ['an HTML 404', htmlStatus(404)],
+      ['a 403', status(403)],
+      ['a 422', status(422)],
+      ['a 200 whose results is not an array', nullResults],
+    ] as const;
+
+    it.each(SECONDARY_FAILURES)(
+      'keeps the unfiltered page and names the cycles it lacks when another table read meets %s',
+      async (_, respond) => {
+        intercept(isTableRead, respond);
+        routeCommitteeTotals(http);
+
+        const { totals, coverage } = await svc.getCommitteeTotalsAllCycles(
+          'C00703975',
+          PAGE_1,
+          ctx,
+        );
+
+        expect(coverage).toEqual({ kind: 'cycles_unavailable', cycles: [2024, 2022, 2020] });
+        expect(cyclesOf(totals.results)).toEqual([2026]);
+      },
+    );
+
+    it.each(SECONDARY_FAILURES)(
+      'keeps the caller page when the whole-table re-read of the newest table meets %s',
+      async (_, respond) => {
+        intercept(
+          (parts) =>
+            parts.endpoint === 'totals' &&
+            parts.query.get('per_page') === '100' &&
+            !parts.query.has('cycle'),
+          respond,
+        );
+        routeCommitteeTotals(http);
+
+        const { totals, coverage } = await svc.getCommitteeTotalsAllCycles(
+          'C00580100',
+          { page: 1, per_page: 2 },
+          ctx,
+        );
+
+        expect(coverage).toEqual({ kind: 'cycles_unavailable', cycles: [2020, 2018, 2016] });
+        expect(cyclesOf(totals.results)).toEqual([2026, 2024]);
+        expect(totals.pagination).toMatchObject({ count: 3, pages: 2 });
+      },
+    );
+
+    it('merges the tables that answered and names only the cycles of the one that failed', async () => {
+      intercept(
+        (parts) => isTableRead(parts) && parts.query.getAll('cycle').includes('2024'),
+        status(503),
+      );
+      routeCommitteeTotals(
+        http,
+        variant((record) => {
+          const house = { committee_id: 'C00703975', committee_type: 'H', cycle: 2018 };
+          record.history.push(house);
+          record.totals['house-senate'] = [{ ...house, receipts: 5 }];
+        }),
+      );
+
+      const { totals, coverage } = await svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx);
+
+      expect(coverage).toEqual({ kind: 'cycles_unavailable', cycles: [2024, 2022, 2020] });
+      expect(cyclesOf(totals.results)).toEqual([2026, 2018]);
+      expect(totals.pagination).toMatchObject({ page: 1, pages: 1, count: 2 });
+    });
+
+    it('rejects with the rate limit when another table read is rate limited', async () => {
+      intercept(isTableRead, status(429, { 'retry-after': '3600' }));
+      routeCommitteeTotals(http);
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { code: JsonRpcErrorCode.RateLimited },
+      );
+    });
+
+    it('rejects rather than report no totals when another table read fails and the newest table is empty', async () => {
+      intercept(isTableRead, status(503));
+      routeCommitteeTotals(
+        http,
+        variant((record) => {
+          record.totals['pac-party'] = [];
+        }),
+      );
+
+      await expect(svc.getCommitteeTotalsAllCycles('C00703975', PAGE_1, ctx)).rejects.toMatchObject(
+        { code: JsonRpcErrorCode.ServiceUnavailable },
+      );
+    });
+  });
+
+  /**
+   * One 50 s budget spans every request, attempt, and backoff, so the call
+   * settles before an MCP SDK client's 60 s request timeout. These run the
+   * production ladder: four attempts of 30 s each.
+   */
+  describe('shared deadline', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      config.fecMaxRetries = 3;
+      config.fecRequestTimeout = 30_000;
+    });
+
+    /** Start the call and record, in fake time, when it settles. */
+    const timed = (committeeId: string, params: Record<string, number | string>) => {
+      const startedAt = Date.now();
+      const settled: { afterMs?: number } = {};
+      const call = svc.getCommitteeTotalsAllCycles(committeeId, params, ctx).finally(() => {
+        settled.afterMs = Date.now() - startedAt;
+      });
+      call.catch(() => undefined);
+      return { call, settled };
+    };
+
+    it('settles at 50 s with the unfiltered page when the history read never answers', async () => {
+      intercept(isHistory, hang);
+      routeCommitteeTotals(http);
+
+      const { call, settled } = timed('C00703975', PAGE_1);
+      await vi.advanceTimersByTimeAsync(49_000);
+      expect(settled.afterMs).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(settled.afterMs).toBe(50_000);
+      const { totals, coverage } = await call;
+      expect(coverage).toEqual({ kind: 'history_unavailable' });
+      expect(cyclesOf(totals.results)).toEqual([2026]);
+    });
+
+    it('gives the per-table reads only what the first requests left of the budget', async () => {
+      intercept(
+        isCallerPage,
+        () =>
+          new Promise<Response>((resolve) => {
+            setTimeout(
+              () =>
+                resolve(
+                  Response.json({
+                    api_version: '1.0',
+                    pagination: { count: 1, page: 1, pages: 1, per_page: 20 },
+                    results: COMMITTEES.C00703975.totals['pac-party'],
+                  }),
+                ),
+              25_000,
+            );
+          }),
+      );
+      intercept(isTableRead, hang);
+      routeCommitteeTotals(http);
+
+      const { call, settled } = timed('C00703975', PAGE_1);
+      await vi.advanceTimersByTimeAsync(49_000);
+      expect(settled.afterMs).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(settled.afterMs).toBe(50_000);
+      expect((await call).coverage).toEqual({
+        kind: 'cycles_unavailable',
+        cycles: [2024, 2022, 2020],
+      });
+    });
+
+    /**
+     * The first attempt times out at 30 s; the second, started about 31 s in,
+     * meets a 429 with no Retry-After about 49.5 s in. Its 1.5–2.5 s backoff
+     * outlasts the budget, which `withRetry` reports as a deadline `Timeout`
+     * caused by the 429.
+     */
+    it.each([
+      ['the unfiltered request', isCallerPage],
+      ['the history read', isHistory],
+      ['another table read', isTableRead],
+    ])(
+      'reports a rate limit the deadline cut short on %s as the rate limit, not a timeout',
+      async (_, select) => {
+        let attempts = 0;
+        intercept(select, (request) => {
+          attempts++;
+          if (attempts === 1) return hang(request);
+          return new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(status(429)()), 18_500);
+          });
+        });
+        routeCommitteeTotals(http);
+
+        const { call } = timed('C00703975', PAGE_1);
+        await vi.advanceTimersByTimeAsync(50_000);
+
+        await expect(call).rejects.toMatchObject({ code: JsonRpcErrorCode.RateLimited });
+        expect(attempts).toBe(2);
+      },
+    );
   });
 });

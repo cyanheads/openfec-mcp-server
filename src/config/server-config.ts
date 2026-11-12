@@ -12,7 +12,7 @@ const ServerConfigSchema = z.object({
     .string()
     .default('DEMO_KEY')
     .describe(
-      'OpenFEC API key from api.data.gov — optional (DEMO_KEY: 30 req/hr, own key: 1000 req/hr)',
+      'OpenFEC API key from api.data.gov — optional (DEMO_KEY: a small daily allowance shared per IP; own key: OpenFEC publishes 1,000 req/hr)',
     ),
   fecBaseUrl: z.string().default('https://api.open.fec.gov/v1').describe('OpenFEC API base URL'),
   fecMaxRetries: z.coerce.number().int().min(0).default(3).describe('Max retry attempts'),

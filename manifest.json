@@ -38,7 +38,7 @@
   "user_config": {
     "FEC_API_KEY": {
       "title": "OpenFEC API Key",
-      "description": "Optional. Falls back to DEMO_KEY (30 req/hr). Own key: 1000 req/hr. Free signup at api.data.gov.",
+      "description": "Optional. Falls back to DEMO_KEY, a small daily allowance shared per IP. Own key: OpenFEC publishes 1,000 req/hr. Free signup at api.data.gov.",
       "type": "string",
       "required": false,
       "default": ""

@@ -1,0 +1,660 @@
+{
+  "C00703975": {
+    "history": [
+      {
+        "committee_id": "C00703975",
+        "cycle": 2026,
+        "committee_type": "N",
+        "designation": "U",
+        "name": "FIGHT FOR THE PEOPLE PAC"
+      },
+      {
+        "committee_id": "C00703975",
+        "cycle": 2024,
+        "committee_type": "P",
+        "designation": "P",
+        "name": "HARRIS FOR PRESIDENT"
+      },
+      {
+        "committee_id": "C00703975",
+        "cycle": 2022,
+        "committee_type": "P",
+        "designation": "P",
+        "name": "BIDEN FOR PRESIDENT"
+      },
+      {
+        "committee_id": "C00703975",
+        "cycle": 2020,
+        "committee_type": "P",
+        "designation": "P",
+        "name": "BIDEN FOR PRESIDENT"
+      }
+    ],
+    "totals": {
+      "pac-party": [
+        {
+          "committee_id": "C00703975",
+          "committee_name": "FIGHT FOR THE PEOPLE PAC",
+          "committee_type": "N",
+          "committee_designation": "U",
+          "cycle": 2026,
+          "receipts": 17845359.85,
+          "disbursements": 18740133.73,
+          "last_cash_on_hand_end_period": 867282.75,
+          "coverage_end_date": "2026-09-30T00:00:00"
+        }
+      ],
+      "presidential": [
+        {
+          "committee_id": "C00703975",
+          "committee_name": "HARRIS FOR PRESIDENT",
+          "committee_type": "P",
+          "committee_designation": "P",
+          "cycle": 2024,
+          "receipts": 1175189365.41,
+          "disbursements": 1175214805.8,
+          "last_cash_on_hand_end_period": 1762056.63,
+          "coverage_end_date": "2024-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00703975",
+          "committee_name": "BIDEN FOR PRESIDENT",
+          "committee_type": "P",
+          "committee_designation": "P",
+          "cycle": 2022,
+          "receipts": 12107733.17,
+          "disbursements": 10580711.52,
+          "last_cash_on_hand_end_period": 1787497.02,
+          "coverage_end_date": "2022-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00703975",
+          "committee_name": "BIDEN FOR PRESIDENT",
+          "committee_type": "P",
+          "committee_designation": "P",
+          "cycle": 2020,
+          "receipts": 1074179976.03,
+          "disbursements": 1073919500.66,
+          "last_cash_on_hand_end_period": 260475.37,
+          "coverage_end_date": "2020-12-31T00:00:00"
+        }
+      ]
+    }
+  },
+  "C00580100": {
+    "history": [
+      {
+        "committee_id": "C00580100",
+        "cycle": 2026,
+        "committee_type": "Q",
+        "designation": "U",
+        "name": "MAKE AMERICA GREAT AGAIN PAC"
+      },
+      {
+        "committee_id": "C00580100",
+        "cycle": 2024,
+        "committee_type": "Q",
+        "designation": "U",
+        "name": "MAKE AMERICA GREAT AGAIN PAC"
+      },
+      {
+        "committee_id": "C00580100",
+        "cycle": 2022,
+        "committee_type": "Q",
+        "designation": "U",
+        "name": "MAKE AMERICA GREAT AGAIN PAC"
+      },
+      {
+        "committee_id": "C00580100",
+        "cycle": 2020,
+        "committee_type": "P",
+        "designation": "P",
+        "name": "DONALD J. TRUMP FOR PRESIDENT, INC."
+      },
+      {
+        "committee_id": "C00580100",
+        "cycle": 2018,
+        "committee_type": "P",
+        "designation": "P",
+        "name": "DONALD J. TRUMP FOR PRESIDENT, INC."
+      },
+      {
+        "committee_id": "C00580100",
+        "cycle": 2016,
+        "committee_type": "P",
+        "designation": "P",
+        "name": "DONALD J. TRUMP FOR PRESIDENT, INC."
+      }
+    ],
+    "totals": {
+      "pac-party": [
+        {
+          "committee_id": "C00580100",
+          "committee_name": "MAKE AMERICA GREAT AGAIN PAC",
+          "committee_type": "Q",
+          "committee_designation": "U",
+          "cycle": 2026,
+          "receipts": 10344101.5,
+          "disbursements": 10332740.33,
+          "last_cash_on_hand_end_period": 31704.6,
+          "coverage_end_date": "2026-09-30T00:00:00"
+        },
+        {
+          "committee_id": "C00580100",
+          "committee_name": "MAKE AMERICA GREAT AGAIN PAC",
+          "committee_type": "Q",
+          "committee_designation": "U",
+          "cycle": 2024,
+          "receipts": 17425013.58,
+          "disbursements": 17616420.3,
+          "last_cash_on_hand_end_period": 20343.43,
+          "coverage_end_date": "2024-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00580100",
+          "committee_name": "MAKE AMERICA GREAT AGAIN PAC",
+          "committee_type": "Q",
+          "committee_designation": "U",
+          "cycle": 2022,
+          "receipts": 18240153.7,
+          "disbursements": 28777805.39,
+          "last_cash_on_hand_end_period": 211750.15,
+          "coverage_end_date": "2022-12-31T00:00:00"
+        }
+      ],
+      "presidential": [
+        {
+          "committee_id": "C00580100",
+          "committee_name": "DONALD J. TRUMP FOR PRESIDENT, INC.",
+          "committee_type": "P",
+          "committee_designation": "P",
+          "cycle": 2020,
+          "receipts": 744350229.26,
+          "disbursements": 752889328.62,
+          "last_cash_on_hand_end_period": 10749401.84,
+          "coverage_end_date": "2020-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00580100",
+          "committee_name": "DONALD J. TRUMP FOR PRESIDENT, INC.",
+          "committee_type": "P",
+          "committee_designation": "P",
+          "cycle": 2018,
+          "receipts": 67548285.1,
+          "disbursements": 55867086.82,
+          "last_cash_on_hand_end_period": 19292901.2,
+          "coverage_end_date": "2018-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00580100",
+          "committee_name": "DONALD J. TRUMP FOR PRESIDENT, INC.",
+          "committee_type": "P",
+          "committee_designation": "P",
+          "cycle": 2016,
+          "receipts": 350668435.7,
+          "disbursements": 343056732.78,
+          "last_cash_on_hand_end_period": 7611702.92,
+          "coverage_end_date": "2016-12-31T00:00:00"
+        }
+      ]
+    }
+  },
+  "C00010603": {
+    "history": [
+      {
+        "committee_id": "C00010603",
+        "cycle": 2026,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2024,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2022,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2020,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2018,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORP./DEM. NAT'L COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2016,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORP./DEM. NAT'L COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2014,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2012,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2010,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2008,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2006,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2004,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2002,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 2000,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1998,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1996,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1994,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1992,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1990,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1988,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1986,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1984,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1982,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1980,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1978,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE"
+      },
+      {
+        "committee_id": "C00010603",
+        "cycle": 1976,
+        "committee_type": "Y",
+        "designation": "U",
+        "name": "DNC SERVICES CORPORATION"
+      }
+    ],
+    "totals": {
+      "pac-party": [
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2026,
+          "receipts": 252277367.47,
+          "disbursements": 252802705.69,
+          "last_cash_on_hand_end_period": 21597151.56,
+          "coverage_end_date": "2026-10-14T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2024,
+          "receipts": 683665789.81,
+          "disbursements": 692095414.04,
+          "last_cash_on_hand_end_period": 22122489.78,
+          "coverage_end_date": "2024-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2022,
+          "receipts": 306790180.07,
+          "disbursements": 315027836.15,
+          "last_cash_on_hand_end_period": 30552114.01,
+          "coverage_end_date": "2022-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORP / DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2020,
+          "receipts": 491727344.43,
+          "disbursements": 461488365.11,
+          "last_cash_on_hand_end_period": 38789770.09,
+          "coverage_end_date": "2020-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORP./DEM. NAT'L COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2018,
+          "receipts": 175769640.31,
+          "disbursements": 177726635.56,
+          "last_cash_on_hand_end_period": 8550790.77,
+          "coverage_end_date": "2018-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORP./DEM. NAT'L COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2016,
+          "receipts": 354610725.76,
+          "disbursements": 351005434.05,
+          "last_cash_on_hand_end_period": 10507786.02,
+          "coverage_end_date": "2016-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2014,
+          "receipts": 163319916.75,
+          "disbursements": 160709560.77,
+          "last_cash_on_hand_end_period": 6902494.31,
+          "coverage_end_date": "2014-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2012,
+          "receipts": 290440506.02,
+          "disbursements": 292264802.38,
+          "last_cash_on_hand_end_period": 4292138.33,
+          "coverage_end_date": "2012-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2010,
+          "receipts": 224457439.14,
+          "disbursements": 223910984.15,
+          "last_cash_on_hand_end_period": 6116434.69,
+          "coverage_end_date": "2010-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2008,
+          "receipts": 260111669.79,
+          "disbursements": 258251989.77,
+          "last_cash_on_hand_end_period": 5569979.7,
+          "coverage_end_date": "2008-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2006,
+          "receipts": 130821244.6,
+          "disbursements": 133162347.98,
+          "last_cash_on_hand_end_period": 3710299.68,
+          "coverage_end_date": "2006-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2004,
+          "receipts": 404352290.56,
+          "disbursements": 399860959.29,
+          "last_cash_on_hand_end_period": 6051811.4,
+          "coverage_end_date": "2004-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2002,
+          "receipts": 93420076.45,
+          "disbursements": 96592113.64,
+          "last_cash_on_hand_end_period": 1560480.13,
+          "coverage_end_date": "2002-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 2000,
+          "receipts": 158080289.0,
+          "disbursements": 155321891.0,
+          "last_cash_on_hand_end_period": 4732517.0,
+          "coverage_end_date": "2000-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1998,
+          "receipts": 98285155.0,
+          "disbursements": 98688690.0,
+          "last_cash_on_hand_end_period": 1974119.0,
+          "coverage_end_date": "1998-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1996,
+          "receipts": 136009892.0,
+          "disbursements": 134461116.0,
+          "last_cash_on_hand_end_period": 2377654.0,
+          "coverage_end_date": "1996-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1994,
+          "receipts": 63035177.0,
+          "disbursements": 65491975.0,
+          "last_cash_on_hand_end_period": 828878.0,
+          "coverage_end_date": "1994-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1992,
+          "receipts": 83950541.0,
+          "disbursements": 82018503.0,
+          "last_cash_on_hand_end_period": 3285675.0,
+          "coverage_end_date": "1992-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1990,
+          "receipts": 14483089.0,
+          "disbursements": 18544110.0,
+          "last_cash_on_hand_end_period": 1353638.0,
+          "coverage_end_date": "1990-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1988,
+          "receipts": 52295783.0,
+          "disbursements": 47036799.0,
+          "last_cash_on_hand_end_period": 5414658.0,
+          "coverage_end_date": "1988-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1986,
+          "receipts": 17235406.0,
+          "disbursements": 17372276.0,
+          "last_cash_on_hand_end_period": 155671.0,
+          "coverage_end_date": "1986-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1984,
+          "receipts": 46626873.0,
+          "disbursements": 46610348.0,
+          "last_cash_on_hand_end_period": 292543.0,
+          "coverage_end_date": "1984-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1982,
+          "receipts": 9970133.0,
+          "disbursements": 10346593.0,
+          "last_cash_on_hand_end_period": null,
+          "coverage_end_date": "1982-12-31T00:00:00"
+        },
+        {
+          "committee_id": "C00010603",
+          "committee_name": "DNC SERVICES CORPORATION/DEMOCRATIC NATIONAL COMMITTEE",
+          "committee_type": "Y",
+          "committee_designation": "U",
+          "cycle": 1980,
+          "receipts": 14669220.0,
+          "disbursements": 14489688.0,
+          "last_cash_on_hand_end_period": null,
+          "coverage_end_date": "1980-12-31T00:00:00"
+        }
+      ]
+    }
+  },
+  "C99999998": {
+    "history": [],
+    "totals": {}
+  }
+}

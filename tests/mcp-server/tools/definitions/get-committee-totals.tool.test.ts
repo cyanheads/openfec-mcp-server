@@ -6,8 +6,14 @@
 
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createFetchMock,
+  createMockContext,
+  type FetchMockHarness,
+  getEnrichment,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
   searchCandidates: vi.fn(),
@@ -17,6 +23,7 @@ const mockService = {
   searchCommittees: vi.fn(),
   getCommittee: vi.fn(),
   getCommitteeTotals: vi.fn(),
+  getCommitteeTotalsAllCycles: vi.fn(),
   getCommitteeTotalsByEntityType: vi.fn(),
   searchContributions: vi.fn(),
   getContributionAggregates: vi.fn(),
@@ -36,12 +43,34 @@ const mockService = {
   getElectionDates: vi.fn(),
 };
 
+/**
+ * The service the tool resolves. Most cases stub it; the real-service cases
+ * swap in a live `OpenFecService` so the merge runs against a fake upstream.
+ */
+let activeService: unknown = mockService;
+
 vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/openfec/openfec-service.js')>()),
-  getOpenFecService: () => mockService,
+  getOpenFecService: () => activeService,
+}));
+
+vi.mock('@/config/server-config.js', () => ({
+  getServerConfig: () => ({
+    fecApiKey: 'DEMO_KEY',
+    fecBaseUrl: 'https://api.open.fec.gov/v1',
+    fecMaxRetries: 0,
+    fecRequestTimeout: 5000,
+  }),
 }));
 
 import { getCommitteeTotals } from '@/mcp-server/tools/definitions/get-committee-totals.tool.js';
+import { OpenFecService } from '@/services/openfec/openfec-service.js';
+import {
+  committeeRequest,
+  FEC_404,
+  requestsSent,
+  routeCommitteeTotals,
+} from '../../../services/openfec/committee-totals-upstream.js';
 import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
@@ -69,33 +98,44 @@ const formatText = (blocks: ContentBlock[]): string => {
 
 const makeCtx = () => createMockContext({ errors: getCommitteeTotals.errors });
 
+/** An omitted-cycle service result that read every table the committee spans. */
+const allCycles = (pagination: typeof PAGE, results: Record<string, unknown>[]) => ({
+  totals: { pagination, results },
+  coverage: { kind: 'complete' },
+});
+
 describe('getCommitteeTotals', () => {
   let ctx: ReturnType<typeof makeCtx>;
 
   beforeEach(() => {
     ctx = makeCtx();
     vi.clearAllMocks();
+    activeService = mockService;
   });
 
   describe('single mode', () => {
-    it('is the default mode and fetches one committee per-cycle totals', async () => {
-      mockService.getCommitteeTotals.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 2 },
-        results: [totalsRow(), totalsRow({ cycle: 2024, receipts: 9_000_000 })],
-      });
+    it('is the default mode and reads every cycle of one committee when cycle is omitted', async () => {
+      mockService.getCommitteeTotalsAllCycles.mockResolvedValueOnce(
+        allCycles({ ...PAGE, count: 2 }, [
+          totalsRow(),
+          totalsRow({ cycle: 2024, receipts: 9_000_000 }),
+        ]),
+      );
 
       const input = getCommitteeTotals.input.parse({ committee_id: 'C00703975' });
       const result = await getCommitteeTotals.handler(input, ctx);
 
       expect(result.mode).toBe('single');
-      expect(mockService.getCommitteeTotals).toHaveBeenCalledWith(
+      expect(mockService.getCommitteeTotalsAllCycles).toHaveBeenCalledWith(
         'C00703975',
         { page: 1, per_page: 20 },
         ctx,
       );
+      expect(mockService.getCommitteeTotals).not.toHaveBeenCalled();
       expect(mockService.getCommitteeTotalsByEntityType).not.toHaveBeenCalled();
       expect(result.results).toHaveLength(2);
       expect(getEnrichment(ctx).totalCount).toBe(2);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
       expect(result.search_criteria).toEqual({ committee_id: 'C00703975', mode: 'single' });
     });
 
@@ -118,10 +158,35 @@ describe('getCommitteeTotals', () => {
         cycle: 2024,
         sort: '-cycle',
       });
+      expect(mockService.getCommitteeTotalsAllCycles).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'history_unavailable',
+        { kind: 'history_unavailable' },
+        "This committee's filing history could not be read from OpenFEC, so these totals cover only the cycles filed under its current committee type — cycles filed under an earlier type may be missing. Retry the call, or pass cycle to read one cycle directly.",
+      ],
+      [
+        'cycles_unavailable',
+        { kind: 'cycles_unavailable', cycles: [2024, 2022, 2020] },
+        'Totals for cycle(s) 2024, 2022, 2020, which this committee filed under another committee type, could not be read from OpenFEC, so these totals leave them out. Retry the call, or pass cycle to read one of those cycles directly.',
+      ],
+    ])('states a %s partial read as a notice', async (_kind, coverage, notice) => {
+      mockService.getCommitteeTotalsAllCycles.mockResolvedValueOnce({
+        totals: { pagination: { ...PAGE, count: 1 }, results: [totalsRow()] },
+        coverage,
+      });
+
+      const input = getCommitteeTotals.input.parse({ committee_id: 'C00703975' });
+      const result = await getCommitteeTotals.handler(input, ctx);
+
+      expect(result.results).toHaveLength(1);
+      expect(getEnrichment(ctx).notice).toBe(notice);
     });
 
     it('throws committee_totals_not_found when the committee has no totals at all', async () => {
-      mockService.getCommitteeTotals.mockResolvedValueOnce({ pagination: PAGE, results: [] });
+      mockService.getCommitteeTotalsAllCycles.mockResolvedValueOnce(allCycles(PAGE, []));
 
       const err = await contractFailure(getCommitteeTotals, { committee_id: 'C99999999' });
 
@@ -359,10 +424,9 @@ describe('getCommitteeTotals', () => {
 
   describe('exhausted position', () => {
     it('returns a past-the-end single-mode page as a result, not a not-found error', async () => {
-      mockService.getCommitteeTotals.mockResolvedValueOnce({
-        pagination: { page: 99, pages: 1, count: 1, per_page: 20 },
-        results: [],
-      });
+      mockService.getCommitteeTotalsAllCycles.mockResolvedValueOnce(
+        allCycles({ page: 99, pages: 1, count: 1, per_page: 20 }, []),
+      );
 
       const input = getCommitteeTotals.input.parse({ committee_id: 'C00703975', page: 99 });
       const result = await getCommitteeTotals.handler(input, ctx);
@@ -378,10 +442,9 @@ describe('getCommitteeTotals', () => {
     });
 
     it('still throws committee_totals_not_found for a genuine miss', async () => {
-      mockService.getCommitteeTotals.mockResolvedValueOnce({
-        pagination: { page: 99, pages: 0, count: 0, per_page: 20 },
-        results: [],
-      });
+      mockService.getCommitteeTotalsAllCycles.mockResolvedValueOnce(
+        allCycles({ page: 99, pages: 0, count: 0, per_page: 20 }, []),
+      );
 
       const input = getCommitteeTotals.input.parse({ committee_id: 'C99999999', page: 99 });
       const err = await Promise.resolve(getCommitteeTotals.handler(input, ctx)).catch(
@@ -431,5 +494,161 @@ describe('getCommitteeTotals', () => {
       expect(text).toContain('No results found.');
       expect(text).not.toContain('No results at this position');
     });
+  });
+});
+
+/**
+ * The omitted-cycle path end to end — tool, real service, real fetch path —
+ * against a fake of OpenFEC's history and totals endpoints built from live
+ * captures, asserted on both client surfaces.
+ */
+describe('getCommitteeTotals through the real service', () => {
+  let http: FetchMockHarness;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    activeService = new OpenFecService();
+    http = createFetchMock();
+    http.install();
+    routeCommitteeTotals(http);
+  });
+
+  afterEach(() => {
+    http.restore();
+    activeService = mockService;
+  });
+
+  /** Both success surfaces of one call. */
+  const call = async (input: Record<string, unknown>) => {
+    const result = await runToolContract(getCommitteeTotals, input);
+    expect(result.isError).toBeFalsy();
+    const structured = result.structuredContent as {
+      results: Record<string, unknown>[];
+      pagination: Record<string, unknown>;
+      notice?: string;
+    };
+    const text = (result.content as ContentBlock[])
+      .map((block) => (block.type === 'text' ? block.text : ''))
+      .join('\n');
+    return { structured, text, cycles: structured.results.map((row) => row.cycle) };
+  };
+
+  it('returns every cycle of a committee that changed type (C00703975)', async () => {
+    const { structured, text, cycles } = await call({ committee_id: 'C00703975' });
+
+    expect(cycles).toEqual([2026, 2024, 2022, 2020]);
+    expect(structured.results.map((row) => row.committee_type)).toEqual(['N', 'P', 'P', 'P']);
+    expect(structured.pagination).toMatchObject({ page: 1, pages: 1, count: 4 });
+    for (const header of [
+      '**FIGHT FOR THE PEOPLE PAC** (C00703975) · cycle 2026 — $17,845,359.85 raised',
+      '**HARRIS FOR PRESIDENT** (C00703975) · cycle 2024 — $1,175,189,365.41 raised',
+      '**BIDEN FOR PRESIDENT** (C00703975) · cycle 2022 — $12,107,733.17 raised',
+      '**BIDEN FOR PRESIDENT** (C00703975) · cycle 2020 — $1,074,179,976.03 raised',
+    ]) {
+      expect(text).toContain(header);
+    }
+    expect(text).toContain('Page 1 of 1 · 4 total · 20 per page');
+  });
+
+  it('sorts and pages the merged rows', async () => {
+    expect((await call({ committee_id: 'C00703975', sort: 'receipts' })).cycles).toEqual([
+      2022, 2026, 2020, 2024,
+    ]);
+
+    const paged = await call({ committee_id: 'C00703975', per_page: 2, page: 2 });
+    expect(paged.cycles).toEqual([2022, 2020]);
+    expect(paged.structured.pagination).toMatchObject({ page: 2, pages: 2, count: 4 });
+    expect(paged.text).toContain('Page 2 of 2 · 4 total · 2 per page');
+  });
+
+  it('reports a page past the merged set as exhausted, not as committee_totals_not_found', async () => {
+    const { structured, text } = await call({ committee_id: 'C00703975', per_page: 2, page: 3 });
+
+    const notice =
+      'Page 3 is past the last page of this result set — 4 total across 2 page(s). Request page 2 or lower to read them.';
+    expect(structured.notice).toBe(notice);
+    expect(text).toContain('No results at this position.');
+    expect(text).toContain(notice);
+  });
+
+  /** Answer the requests `select` picks with a JSON error, ahead of the fake. */
+  const failFor = (
+    select: (parts: NonNullable<ReturnType<typeof committeeRequest>>) => boolean,
+    status: number,
+    body: string,
+  ) => {
+    http.reset();
+    http.route({
+      match: (request) => {
+        const parts = committeeRequest(request.url);
+        return parts !== null && select(parts);
+      },
+      respond: () =>
+        new Response(body, { status, headers: { 'content-type': 'application/json' } }),
+    });
+    routeCommitteeTotals(http);
+  };
+
+  it.each([
+    ['answers 200 with no rows', false],
+    ['answers 404', true],
+  ])(
+    'fails with committee_totals_not_found for an ID with no totals whose history %s (C99999998)',
+    async (_, historyNotFound) => {
+      if (historyNotFound) failFor((parts) => parts.endpoint === 'history', 404, FEC_404);
+
+      const err = await contractFailure(getCommitteeTotals, { committee_id: 'C99999998' });
+
+      expect(err.data).toMatchObject({ reason: 'committee_totals_not_found' });
+    },
+  );
+
+  it('names the cycles a secondary 404 left unread instead of reporting the committee missing', async () => {
+    failFor(
+      (parts) => parts.endpoint === 'totals' && parts.query.get('per_page') === '100',
+      404,
+      FEC_404,
+    );
+
+    const { structured, text } = await call({ committee_id: 'C00703975', per_page: 2, page: 2 });
+
+    expect(structured.results).toEqual([]);
+    expect(structured.pagination).toMatchObject({ page: 2, count: 1 });
+    expect(structured.notice).toContain('Page 2 is past the last page');
+    expect(structured.notice).toContain('cycle(s) 2024, 2022, 2020');
+    expect(text).toContain('cycle(s) 2024, 2022, 2020');
+  });
+
+  it('states a partial read on both surfaces when the history read fails', async () => {
+    failFor((parts) => parts.endpoint === 'history', 503, '{"message":"upstream failure"}');
+
+    const { structured, text, cycles } = await call({ committee_id: 'C00703975' });
+
+    expect(cycles).toEqual([2026]);
+    expect(structured.notice).toContain('cycles filed under an earlier type may be missing');
+    expect(text).toContain('cycles filed under an earlier type may be missing');
+  });
+
+  it('reads an explicit cycle in one request, without the history', async () => {
+    const { cycles } = await call({ committee_id: 'C00703975', cycle: 2020 });
+
+    expect(cycles).toEqual([2020]);
+    expect(requestsSent(http)).toEqual(['C00703975/totals?page=1&per_page=20&cycle=2020']);
+  });
+
+  it('reads mode by_entity_type in one request, without the history', async () => {
+    http.route({
+      match: (request) => new URL(request.url).pathname === '/v1/totals/presidential/',
+      respond: Response.json({
+        api_version: '1.0',
+        pagination: { count: 0, page: 1, pages: 0, per_page: 20 },
+        results: [],
+      }),
+    });
+
+    await call({ mode: 'by_entity_type', entity_type: 'presidential', committee_id: 'C00703975' });
+
+    expect(http.calls).toHaveLength(1);
+    expect(new URL(http.calls[0]!.request.url).pathname).toBe('/v1/totals/presidential/');
   });
 });

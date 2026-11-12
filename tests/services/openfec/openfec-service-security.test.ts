@@ -9,14 +9,14 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/config/server-config.js', () => ({
-  getServerConfig: () => ({
-    fecApiKey: 'SUPER_SECRET_API_KEY_XYZ',
-    fecBaseUrl: 'https://api.open.fec.gov/v1',
-    fecMaxRetries: 0,
-    fecRequestTimeout: 5000,
-  }),
+const config = vi.hoisted(() => ({
+  fecApiKey: 'SUPER_SECRET_API_KEY_XYZ',
+  fecBaseUrl: 'https://api.open.fec.gov/v1',
+  fecMaxRetries: 0,
+  fecRequestTimeout: 5000,
 }));
+
+vi.mock('@/config/server-config.js', () => ({ getServerConfig: () => config }));
 
 vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
@@ -165,6 +165,167 @@ describe('HTTP status error hints', () => {
 
     expect(caught).toBeDefined();
     expect(caught!.message).toContain('fetch failed');
+  });
+});
+
+describe('429 hint: the wait OpenFEC named, and key advice on DEMO_KEY', () => {
+  const PERSONAL_KEY = config.fecApiKey;
+  const DEMO_KEY_ADVICE =
+    ' This server is using DEMO_KEY, whose small daily allowance is shared by every caller on this IP; setting FEC_API_KEY to a personal key (free at https://api.data.gov/signup/) lifts the shared limit.';
+  const NO_RESET =
+    'FEC API rate limit exceeded. OpenFEC gave no reset time, so the wait is unknown.';
+  const waited = (wait: string) =>
+    `FEC API rate limit exceeded. OpenFEC asked to wait ${wait} before the next request.`;
+
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    config.fecApiKey = PERSONAL_KEY;
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    vi.clearAllMocks();
+    mockFetch.mockRejectedValue(new Error('unmocked fetch'));
+  });
+
+  afterEach(() => {
+    config.fecApiKey = PERSONAL_KEY;
+    mockFetch.mockReset();
+    vi.useRealTimers();
+  });
+
+  /** A 429 as `fetchWithTimeout` builds it, carrying the raw `Retry-After` when given. */
+  const rateLimited = (data: Record<string, unknown> = {}, status = 'Status: 429') =>
+    new McpError(
+      JsonRpcErrorCode.RateLimited,
+      `Fetch failed for https://api.open.fec.gov/…?…. ${status}`,
+      { status: 429, statusCode: 429, ...data },
+    );
+
+  /** What `searchCandidates` rejects with when the fetch throws `err`. */
+  async function rejection(err: Error): Promise<McpError> {
+    mockFetch.mockRejectedValueOnce(err);
+    try {
+      await svc.searchCandidates({}, ctx);
+    } catch (e) {
+      return e as McpError;
+    }
+    throw new Error('expected the call to reject');
+  }
+
+  const waits: [label: string, retryAfter: unknown, wait: string][] = [
+    ['46840 s (an exhausted daily key)', '46840', 'about 13 hours'],
+    ['0 s', '0', '0 seconds'],
+    ['1 s', '1', '1 second'],
+    ['59 s', '59', '59 seconds'],
+    ['60 s', '60', 'about 1 minute'],
+    ['89 s', '89', 'about 1 minute'],
+    ['90 s', '90', 'about 2 minutes'],
+    ['3569 s', '3569', 'about 59 minutes'],
+    ['3570 s, which rounds to the hour', '3570', 'about 1 hour'],
+    ['5400 s', '5400', 'about 2 hours'],
+    ['a padded value', ' 120 ', 'about 2 minutes'],
+    ['a numeric value, read as seconds', 60, 'about 1 minute'],
+  ];
+
+  it.each(waits)('names the wait for Retry-After %s', async (_label, retryAfter, wait) => {
+    const err = await rejection(rateLimited({ retryAfter }));
+
+    expect(err.code).toBe(JsonRpcErrorCode.RateLimited);
+    expect(err.message.endsWith(`Status: 429 — ${waited(wait)}`)).toBe(true);
+    expect(err.message).not.toContain('a moment');
+  });
+
+  it('reads an HTTP-date Retry-After as the time from now', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-12T10:59:20Z'));
+
+    const err = await rejection(rateLimited({ retryAfter: 'Fri, 13 Nov 2026 00:00:00 GMT' }));
+
+    expect(err.message.endsWith(` — ${waited('about 13 hours')}`)).toBe(true);
+  });
+
+  it('reads an HTTP-date already past as no wait', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-12T10:59:20Z'));
+
+    const err = await rejection(rateLimited({ retryAfter: 'Thu, 12 Nov 2026 10:00:00 GMT' }));
+
+    expect(err.message.endsWith(` — ${waited('0 seconds')}`)).toBe(true);
+  });
+
+  it.each([
+    ['absent', {}],
+    ['unparseable', { retryAfter: 'soon' }],
+    ['empty', { retryAfter: '' }],
+    ['negative', { retryAfter: -5 }],
+  ])('says OpenFEC gave no reset time when Retry-After is %s', async (_label, data) => {
+    const err = await rejection(rateLimited(data));
+
+    expect(err.message.endsWith(`Status: 429 — ${NO_RESET}`)).toBe(true);
+    expect(err.message).not.toContain('a moment');
+  });
+
+  it('keeps the exhausted-retries suffix ahead of the hint', async () => {
+    const err = await rejection(
+      rateLimited({ retryAfter: '2', retryAttempts: 4 }, 'Status: 429 (failed after 4 attempts)'),
+    );
+
+    expect(
+      err.message.endsWith(`Status: 429 (failed after 4 attempts) — ${waited('2 seconds')}`),
+    ).toBe(true);
+  });
+
+  it('passes data.retryAfter through unchanged', async () => {
+    const err = await rejection(rateLimited({ retryAfter: '46840' }));
+
+    expect(err.data?.retryAfter).toBe('46840');
+  });
+
+  it('gives no key advice on a personal key', async () => {
+    const err = await rejection(rateLimited({ retryAfter: '46840' }));
+
+    expect(err.message).not.toContain('FEC_API_KEY');
+    expect(err.message).not.toContain('DEMO_KEY');
+  });
+
+  it('points DEMO_KEY at a personal FEC_API_KEY after the wait', async () => {
+    config.fecApiKey = 'DEMO_KEY';
+
+    const err = await rejection(rateLimited({ retryAfter: '46840' }));
+
+    expect(err.message.endsWith(` — ${waited('about 13 hours')}${DEMO_KEY_ADVICE}`)).toBe(true);
+    expect(err.message).not.toContain('api_key=');
+  });
+
+  it('points DEMO_KEY at a personal FEC_API_KEY when no reset time came back', async () => {
+    config.fecApiKey = 'DEMO_KEY';
+
+    const err = await rejection(rateLimited());
+
+    expect(err.message.endsWith(` — ${NO_RESET}${DEMO_KEY_ADVICE}`)).toBe(true);
+  });
+
+  it('advises a plain Error 429 the same way, with no wait to name', async () => {
+    config.fecApiKey = 'DEMO_KEY';
+
+    const err = await rejection(new Error('Request failed: Status: 429'));
+
+    expect(err).not.toBeInstanceOf(McpError);
+    expect(err.message.endsWith(` — ${NO_RESET}${DEMO_KEY_ADVICE}`)).toBe(true);
+  });
+
+  it.each([
+    ['fetchPage', (s: OpenFecService) => s.searchCandidates({}, ctx)],
+    ['fetchSeek', (s: OpenFecService) => s.searchContributions({}, QUERY, ctx)],
+    ['fetchLegalSearch', (s: OpenFecService) => s.searchLegal({}, ctx)],
+    ['getElectionSummary', (s: OpenFecService) => s.getElectionSummary({}, ctx)],
+    ['getLegalDocument', (s: OpenFecService) => s.getLegalDocument('murs', '1', ctx)],
+  ])('%s rethrows a 429 with the wait and the key advice', async (_site, call) => {
+    config.fecApiKey = 'DEMO_KEY';
+    mockFetch.mockRejectedValueOnce(rateLimited({ retryAfter: '46840' }));
+
+    await expect(call(svc)).rejects.toThrow(`— ${waited('about 13 hours')}${DEMO_KEY_ADVICE}`);
   });
 });
 

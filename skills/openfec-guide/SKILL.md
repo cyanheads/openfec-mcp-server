@@ -4,7 +4,7 @@ description: Investigate federal campaign funding, outside spending, and FEC leg
 license: Apache-2.0
 metadata:
   author: "cyanheads"
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Scope
@@ -38,7 +38,7 @@ For a PAC investigation, resolve the committee directly, read its totals, then e
 
 ### Compare campaigns
 
-Reuse the race search to identify opponents. Compare totals and coverage dates first; use contribution-size, geography, employer, and spending breakdowns to explain the differences. For a committee's trajectory, retrieve each comparison cycle explicitly with `openfec_get_committee_totals`; omitting `cycle` can miss historical periods when the committee has changed type. Compare the returned period rows rather than inferring a trend from one cycle.
+Reuse the race search to identify opponents. Compare totals and coverage dates first; use contribution-size, geography, employer, and spending breakdowns to explain the differences. For a committee's trajectory, omit `cycle` and set `per_page` to 100 on `openfec_get_committee_totals` to get every cycle the committee filed on one page; a `notice` on the result names any cycles OpenFEC could not serve. Each row carries that cycle's committee type, designation, and name: a committee that changed type, such as a campaign committee converted to a PAC, returns rows from both sides of the change, so label each period by its own type before reading a trend. Compare the returned period rows rather than inferring a trend from one cycle.
 
 ### Account for outside and party spending
 
