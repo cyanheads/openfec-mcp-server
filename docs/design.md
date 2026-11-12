@@ -171,7 +171,7 @@ Pre-aggregated committee finances. Answers "how much has this committee raised t
 - `by_entity_type` mode without an `entity_type` → `ValidationError` (`entity_type_required_for_group_mode`), carrying `valid_entity_types`.
 - A grouped-search filter supplied alongside `single` mode → `ValidationError` (`inputs_not_applicable_to_mode`). The single-committee endpoint accepts only paging, `cycle`, and `sort`, so applying one would have returned unfiltered totals.
 - `single` mode matching no row → `NotFound` (`committee_totals_not_found`). The endpoint answers 404 for an unknown ID or a cycle the committee did not file, and 200 with no rows for a committee that has a filing history but no totals (one that files no financial report, say), so all three land here; the message names the cycle when one was given.
-- `single` mode without `cycle` whose history read, or a read of another type's cycles, fails for any reason but a rate limit or cancellation (a 4xx, 5xx, timeout, dropped connection, or malformed answer — a 404 for cycles the history named included) → success with the rows the reads that succeeded hold and a `notice` naming what may be missing. A rate limit or cancellation fails the call; so does any such failure when the reads that succeeded hold no rows, since an empty page would read as "no totals on file". OpenFEC's own 404 for the history reads as an empty history, so an unknown ID still lands on `committee_totals_not_found`.
+- `single` mode without `cycle` whose history read, a read of another type's cycles, or the whole-table re-read of the current type fails for any reason but a rate limit or cancellation (a 4xx, 5xx, timeout, dropped connection, or malformed answer — a 404 for cycles the history named included) → success with the rows the reads that succeeded hold and a `notice` naming what may be missing. A rate limit or cancellation fails the call; so does any such failure when the reads that succeeded hold no rows, since an empty page would read as "no totals on file". OpenFEC's own 404 for the history reads as an empty history, so an unknown ID still lands on `committee_totals_not_found`.
 
 **Upstream endpoints:**
 - `/v1/committee/{committee_id}/totals/` — one committee, one row per cycle
@@ -633,8 +633,8 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | Helper | Purpose |
 |:-------|:--------|
 | `buildUrl(path, params)` | Construct URL with query params, inject `api_key`, strip undefined values. |
-| `request(url, ctx, attempt?)` | One `fetchWithTimeout` GET under the request timeout (or the attempt's remaining budget, when the call carries a deadline) and the caller's signal, with `exposeErrorBody` set. |
-| `fetchPage<T>(path, params, ctx, options?)` | `request` → JSON parse → validate envelope → return `{ pagination, results }`, inside `withRetry`; `options.deadlineMs` bounds every attempt and backoff. |
+| `getJson(url, ctx, attempt?)` | One `fetchWithTimeout` GET under the request timeout (or the attempt's remaining budget, when the call carries a deadline) and the caller's signal, with `exposeErrorBody` set, parsed as JSON; a 2xx body that is not JSON fails as `ServiceUnavailable`. |
+| `fetchPage<T>(path, params, ctx, options?)` | `getJson` → validate envelope → return `{ pagination, results }`, inside `withRetry`; `options.deadlineMs` bounds every attempt and backoff. |
 | `fetchSeek<T>(path, params, query, ctx, delivered)` | Like `fetchPage` but returns `{ pagination, results, nextCursor }` from `last_indexes`, with the cursor bound to `query` and carrying the rows delivered through this page. |
 | `fetchLegalSearch(params, ctx)` | Special handling for legal search response shape. |
 | `cursorQuery(scope, input)` | Normalize a tool's arguments into the `{ scope, args }` identity its cursors are bound to (`cursor`, `page`, and `per_page` excluded). |
