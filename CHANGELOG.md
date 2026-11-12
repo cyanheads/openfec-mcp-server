@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.10.1](changelog/0.10.x/0.10.1.md) — 2026-11-12
+
+openfec_get_committee_totals returns every filed cycle for a committee that changed type, 429 errors name OpenFEC's reported wait, and non-OpenFEC 200 answers are retried as ServiceUnavailable.
+
 ## [0.10.0](changelog/0.10.x/0.10.0.md) — 2026-10-28
 
 Adds an MCP-served guide for campaign-finance research and updates the framework to 0.13.18.

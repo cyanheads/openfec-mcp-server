@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 07:34:25
+Generated on: 2026-11-12 11:38:19
 
 ```text
 openfec-mcp-server/
@@ -196,6 +196,7 @@ openfec-mcp-server/
 │   ├── config/
 │   │   └── server-config.test.ts
 │   ├── fixtures/
+│   │   ├── committee-totals.json
 │   │   ├── heaviest-legal-records.json
 │   │   ├── heaviest-rows.json
 │   │   └── legal-records.json
@@ -238,7 +239,9 @@ openfec-mcp-server/
 │   │   └── mcpb-agent-docs.test.ts
 │   └── services/
 │       └── openfec/
+│           ├── committee-totals-upstream.ts
 │           ├── openfec-service-extended.test.ts
+│           ├── openfec-service-http-errors.test.ts
 │           ├── openfec-service-security.test.ts
 │           └── openfec-service.test.ts
 ├── .dockerignore
