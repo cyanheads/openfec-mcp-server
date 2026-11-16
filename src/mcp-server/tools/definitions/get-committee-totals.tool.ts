@@ -11,6 +11,11 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { type CycleCoverage, getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 import {
+  normalizeCommitteeDesignation,
+  normalizeCommitteeType,
+  validateStateCode,
+} from './utils/code-validators.js';
+import {
   buildSearchCriteria,
   describeExhaustedPosition,
   exhaustedPage,
@@ -149,13 +154,13 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       .string()
       .optional()
       .describe(
-        'Committee type code — H (House), S (Senate), P (Presidential), O (Super PAC), N/Q (PAC), X/Y (party). by_entity_type mode only.',
+        'Committee type code, in any case — H (House), S (Senate), P (Presidential), O (Super PAC), N/Q (PAC), X/Y (party). by_entity_type mode only.',
       ),
     committee_designation: z
       .string()
       .optional()
       .describe(
-        'Committee designation — A (authorized), B (lobbyist PAC), D (leadership PAC), J (joint fundraiser), P (principal campaign), U (unauthorized). by_entity_type mode only.',
+        'Committee designation code, in any case — A (authorized), B (lobbyist PAC), D (leadership PAC), J (joint fundraiser), P (principal campaign), U (unauthorized). by_entity_type mode only.',
       ),
     organization_type: z
       .string()
@@ -357,13 +362,24 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       maxValue: input.max_disbursements,
       valueType: 'number',
     });
+    /** `/totals/{entity_type}/` reads a leading `-` as exclude, and `other` as foreign, invalid, or missing states. */
+    if (input.committee_state) {
+      validateStateCode('committee_state', input.committee_state, { exclusion: true, other: true });
+    }
+    /** `/totals/{entity_type}/` matches these codes case-sensitively and accepts any value. */
+    const committeeType = input.committee_type
+      ? normalizeCommitteeType('committee_type', input.committee_type)
+      : undefined;
+    const committeeDesignation = input.committee_designation
+      ? normalizeCommitteeDesignation('committee_designation', input.committee_designation)
+      : undefined;
 
     const params: FecParams = { page: input.page, per_page: input.per_page };
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.cycle !== undefined) params.cycle = input.cycle;
     if (input.committee_state) params.committee_state = input.committee_state;
-    if (input.committee_type) params.committee_type = input.committee_type;
-    if (input.committee_designation) params.committee_designation = input.committee_designation;
+    if (committeeType) params.committee_type = committeeType;
+    if (committeeDesignation) params.committee_designation = committeeDesignation;
     if (input.organization_type) params.organization_type = input.organization_type;
     if (input.min_receipts !== undefined) params.min_receipts = input.min_receipts;
     if (input.max_receipts !== undefined) params.max_receipts = input.max_receipts;
@@ -391,7 +407,11 @@ export const getCommitteeTotals = tool('openfec_get_committee_totals', {
       results: result.results,
       mode,
       pagination: toPagination(result.pagination),
-      search_criteria: buildSearchCriteria(input),
+      search_criteria: buildSearchCriteria({
+        ...input,
+        committee_type: committeeType,
+        committee_designation: committeeDesignation,
+      }),
     };
   },
 

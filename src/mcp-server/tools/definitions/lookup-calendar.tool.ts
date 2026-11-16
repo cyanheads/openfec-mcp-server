@@ -8,6 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams, PageResult } from '@/services/openfec/types.js';
+import { validateStateCode } from './utils/code-validators.js';
 import {
   buildSearchCriteria,
   describeExhaustedPosition,
@@ -38,10 +39,12 @@ const MODE_INPUTS = {
 /**
  * `/election-dates/` matches `election_district` only in its zero-padded form —
  * `1` returns nothing where `01` returns the district's rows — so a lone digit
- * is padded. Anything else goes upstream as given.
+ * is padded, after the leading `-` that excludes a district too (`-1` → `-01`).
+ * Other digit strings and a whitespace-only district go upstream as given; any
+ * other value is rejected before the request.
  */
 const padDistrict = (district: string | undefined): string | undefined =>
-  district && /^\d$/.test(district) ? `0${district}` : district;
+  district?.replace(/^(-?)(\d)$/, (_, sign: string, digit: string) => `${sign}0${digit}`);
 
 export const lookupCalendar = tool('openfec_lookup_calendar', {
   description:
@@ -56,6 +59,13 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       recovery:
         'Switch to the mode that owns the named inputs, or drop them: description and category belong to events, report_type and report_year to filing_deadlines, state, office, district and election_year to election_dates. min_date and max_date work in every mode.',
     },
+    {
+      reason: 'invalid_district',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'district is neither digits (after an optional leading - that excludes the district) nor spaces, so no election date carries it',
+      recovery:
+        'Pass the House district as digits (e.g., "14", or "1", which is sent as "01"). At-large races carry a blank district upstream that no number matches; omit district to include them.',
+    },
   ],
 
   input: z.object({
@@ -68,7 +78,7 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
     state: z
       .string()
       .optional()
-      .describe('Two-letter state code (e.g., AZ, CA). Primarily for election_dates mode.'),
+      .describe('Two-letter state code (e.g., AZ, CA), in any case. Election dates mode.'),
     office: z
       .enum(['H', 'S', 'P'])
       .optional()
@@ -77,7 +87,7 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       .string()
       .optional()
       .describe(
-        'Two-digit House district (e.g., "14", "07"); a single digit is zero-padded. Pair it with state — alone it matches that district number in every state. At-large races carry no district upstream, so a district filter never matches them. Election dates mode.',
+        'Two-digit House district (e.g., "14", "07"); a single digit is zero-padded. Pair it with state — alone it matches that district number in every state. At-large races carry a blank district upstream, so a numbered district never matches them. Election dates mode.',
       ),
     report_type: z
       .string()
@@ -164,7 +174,9 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
 
     const applied: readonly string[] = MODE_INPUTS[input.mode];
     const district = padDistrict(input.district);
-    const criteria = buildSearchCriteria({ ...input, district });
+    /** `/election-dates/` matches `election_state` case-sensitively, and files codes upper-case. */
+    const state = input.state?.toUpperCase();
+    const criteria = buildSearchCriteria({ ...input, state, district });
     const inapplicable = Object.keys(criteria).filter((key) => !applied.includes(key));
     if (inapplicable.length > 0) {
       throw ctx.fail(
@@ -185,6 +197,15 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       maxValue: input.max_date,
       valueType: 'date',
     });
+    /** `/election-dates/` filters both through `filter_multi`, where a leading `-` excludes the value. */
+    if (input.state) validateStateCode('state', input.state, { exclusion: true });
+    // Upstream files a blank district as a space, so a whitespace-only district selects those rows.
+    if (input.district && !/^(?:-?\d+| +)$/.test(input.district)) {
+      throw ctx.fail('invalid_district', `district must be a number — got "${input.district}".`, {
+        field: 'district',
+        value: input.district,
+      });
+    }
 
     /**
      * Shape one mode's response: the total, then either the exhausted-position
@@ -230,13 +251,13 @@ export const lookupCalendar = tool('openfec_lookup_calendar', {
       // /election-dates/ uses min_election_date / max_election_date
       if (input.min_date) params.min_election_date = input.min_date;
       if (input.max_date) params.max_election_date = input.max_date;
-      if (input.state) params.election_state = input.state;
+      if (state) params.election_state = state;
       if (input.office) params.office_sought = input.office;
       if (district) params.election_district = district;
       if (input.election_year) params.election_year = input.election_year;
 
       ctx.log.info('Fetching election dates', {
-        state: input.state,
+        state,
         district,
         election_year: input.election_year,
       });

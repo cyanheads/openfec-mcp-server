@@ -151,6 +151,62 @@ describe('electionResource', () => {
     expect(result.district).toBe('12');
   });
 
+  /** OpenFEC files an at-large House seat as district 00 and 422s a House search without one. */
+  it.each(['WY', 'AK', 'DE', 'ND', 'SD', 'VT', 'DC', 'VI', 'GU', 'AS'])(
+    'reads the at-large House race of %s on the state template as district 00',
+    async (state) => {
+      mockService.searchElections.mockResolvedValueOnce(
+        pageResult([{ candidate_id: 'H6WY00001' }]),
+      );
+
+      const ctx = createMockContext({ uri: new URL(`openfec:///election/2026/H/${state}`) });
+      const params = electionStateParams.parse({ cycle: '2026', office: 'H', state });
+      const result = (await electionStateResource.handler(params, ctx)) as ElectionResult;
+
+      expect(mockService.searchElections).toHaveBeenCalledWith(
+        { cycle: '2026', office: 'house', state, district: '00', election_full: true },
+        ctx,
+      );
+      expect(result).toMatchObject({ office: 'H', state, district: '00' });
+    },
+  );
+
+  it.each([
+    ['state', electionStateResource, { cycle: '2026', office: 'S', state: 'Georgia' }],
+    [
+      'district',
+      electionDistrictResource,
+      { cycle: '2026', office: 'H', state: 'Georgia', district: '05' },
+    ],
+  ] as const)(
+    'rejects a spelled-out state on the %s template before any request',
+    async (_, def, raw) => {
+      const ctx = createMockContext();
+      const params = def.params!.parse(raw);
+
+      await expect(def.handler(params as never, ctx)).rejects.toMatchObject({
+        data: { reason: 'invalid_state_code', field: 'state', value: 'Georgia' },
+      });
+      expect(mockService.searchElections).not.toHaveBeenCalled();
+    },
+  );
+
+  /** `/elections/` matches the state exactly: neither exclusion nor `other` selects a race. */
+  it.each(['-GA', 'other'])('rejects state %s on the state template, unsent', async (state) => {
+    const ctx = createMockContext();
+    const params = electionStateResource.params!.parse({ cycle: '2026', office: 'S', state });
+
+    await expect(electionStateResource.handler(params, ctx)).rejects.toMatchObject({
+      data: { reason: 'invalid_state_code', field: 'state', value: state },
+    });
+    expect(mockService.searchElections).not.toHaveBeenCalled();
+  });
+
+  it('describes district 00 as the at-large seat on the state and district templates', () => {
+    expect(electionStateResource.description).toContain('00');
+    expect(electionDistrictParams.shape.district.description).toMatch(/00.*at-large/);
+  });
+
   it('validates cycle and office params', () => {
     expect(() => electionParams.parse({})).toThrow();
     expect(() => electionParams.parse({ cycle: '2024' })).toThrow();

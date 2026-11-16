@@ -5,6 +5,7 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
+import { validateStateCode } from '@/mcp-server/tools/definitions/utils/code-validators.js';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
 
@@ -20,6 +21,7 @@ async function fetchElection(
   params: { cycle: string; office: OfficeCode; state?: string; district?: string },
   ctx: Parameters<Parameters<typeof resource>[1]['handler']>[1],
 ) {
+  if (params.state) validateStateCode('state', params.state);
   const fec = getOpenFecService();
   const apiParams: FecParams = {
     cycle: params.cycle,
@@ -88,7 +90,7 @@ export const electionResource = resource('openfec://election/{cycle}/{office}', 
 export const electionStateResource = resource('openfec://election/{cycle}/{office}/{state}', {
   name: 'FEC Election Race (State)',
   description:
-    'Fetch a senate race, or a house at-large race in a single-district state, with candidate financial totals.',
+    'Fetch a senate race, or the at-large house race of a state or territory with one seat (e.g., WY, AK, DC), with candidate financial totals. A house race here is read as district 00, the district OpenFEC files at-large seats under.',
   mimeType: 'application/json',
   params: z.object({
     cycle: z.string().describe('Election cycle year (e.g., 2024)'),
@@ -100,7 +102,9 @@ export const electionStateResource = resource('openfec://election/{cycle}/{offic
       .describe('Office code: S=Senate, H=House (at-large).'),
     state: z.string().describe('Two-letter US state code (e.g., AZ)'),
   }),
-  handler: (params, ctx) => fetchElection(params, ctx),
+  /** OpenFEC requires a district for a house search and files at-large seats as 00. */
+  handler: (params, ctx) =>
+    fetchElection(params.office === 'H' ? { ...params, district: '00' } : params, ctx),
 });
 
 /** House district races: openfec://election/2024/H/CA/12 */
@@ -119,7 +123,9 @@ export const electionDistrictResource = resource(
         })
         .describe('Office code: H=House.'),
       state: z.string().describe('Two-letter US state code (e.g., CA)'),
-      district: z.string().describe('Two-digit district number (e.g., 12)'),
+      district: z
+        .string()
+        .describe('Two-digit district number (e.g., 12); 00 for an at-large seat'),
     }),
     handler: (params, ctx) => fetchElection(params, ctx),
   },

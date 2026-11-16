@@ -80,6 +80,81 @@ describe('searchCommittees', () => {
       expect(description).toContain('openfec_lookup_elections');
       expect(description).toContain('candidate_pcc_id');
     });
+
+    it('describes party as the code OpenFEC files, up to three characters', () => {
+      expect(searchCommittees.input.shape.party.description).toBe(
+        'Party code as OpenFEC files it, up to three characters (e.g., DEM, REP, LIB, W).',
+      );
+    });
+  });
+
+  describe('state and party codes', () => {
+    it.each([
+      ['state', 'Georgia', 'invalid_state_code'],
+      ['party', 'Democratic', 'invalid_party_code'],
+    ] as const)('rejects %s %s before any request', async (field, value, reason) => {
+      const err = await contractFailure(searchCommittees, { [field]: value });
+
+      expect(err.data).toMatchObject({ reason, field, value });
+      expect(mockService.searchCommittees).not.toHaveBeenCalled();
+    });
+
+    it('sends state and party codes as given', async () => {
+      mockService.searchCommittees.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 3 },
+        results: [committeeRecord({ party: 'D/C' })],
+      });
+
+      const input = searchCommittees.input.parse({ state: 'ga', party: 'D/C' });
+      await searchCommittees.handler(input, ctx);
+
+      expect(mockService.searchCommittees).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'ga', party: 'D/C' }),
+        ctx,
+      );
+    });
+
+    /** `/committees/` reads `other` as foreign, invalid, or missing states and `-` as exclude. */
+    it.each([
+      [{ state: 'other' }, { state: 'other' }],
+      [{ state: 'OTHER' }, { state: 'OTHER' }],
+      [
+        { state: '-GA', party: '-DEM' },
+        { state: '-GA', party: '-DEM' },
+      ],
+    ])('sends the OpenFEC filter value %j as given', async (raw, sent) => {
+      mockService.searchCommittees.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [committeeRecord({ state: 'ZZ' })],
+      });
+
+      await searchCommittees.handler(searchCommittees.input.parse(raw), ctx);
+
+      expect(mockService.searchCommittees).toHaveBeenCalledWith(expect.objectContaining(sent), ctx);
+    });
+
+    it.each([
+      ['state', '-other', 'invalid_state_code'],
+      ['state', '--GA', 'invalid_state_code'],
+      ['party', '-DEMO', 'invalid_party_code'],
+    ] as const)('still rejects %s %s before any request', async (field, value, reason) => {
+      const err = await contractFailure(searchCommittees, { [field]: value });
+
+      expect(err.data).toMatchObject({ reason, field, value });
+      expect(mockService.searchCommittees).not.toHaveBeenCalled();
+    });
+
+    it('leaves a state on the direct-ID path to the ID-lookup rejection', async () => {
+      const err = await contractFailure(searchCommittees, {
+        committee_id: 'C00703975',
+        state: 'Georgia',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_id_lookup',
+        inapplicable_inputs: ['state'],
+      });
+    });
   });
 
   describe('handler', () => {

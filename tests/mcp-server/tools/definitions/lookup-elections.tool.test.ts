@@ -6,7 +6,7 @@
 
 import type { ContentBlock } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -461,6 +461,428 @@ describe('lookupElectionsTool', () => {
       const text = formatText(lookupElectionsTool.format!(result));
       expect(text).toContain('No results found.');
       expect(text).not.toContain('No results at this position');
+    });
+  });
+
+  /**
+   * OpenFEC files presidential races under state US and presidential and Senate
+   * races under district 00, so any other value matches nothing without a ZIP
+   * and is ignored by the ZIP search.
+   */
+  describe('inputs a presidential or Senate race is never filed under', () => {
+    const noRequestSent = () => {
+      expect(mockService.searchElections).not.toHaveBeenCalled();
+      expect(mockService.searchElectionsByZip).not.toHaveBeenCalled();
+      expect(mockService.getElectionSummary).not.toHaveBeenCalled();
+    };
+
+    it.each([
+      ['a presidential search with a state', { office: 'P', cycle: 2024, state: 'CA' }, ['state']],
+      [
+        'a presidential summary with a state',
+        { mode: 'summary', office: 'P', cycle: 2024, state: 'CA' },
+        ['state'],
+      ],
+      [
+        'a presidential ZIP search with a state',
+        { office: 'P', cycle: 2024, zip: '30303', state: 'CA' },
+        ['state'],
+      ],
+      [
+        'a presidential search with a district',
+        { office: 'P', cycle: 2024, district: '05' },
+        ['district'],
+      ],
+      [
+        'a presidential search with both',
+        { office: 'P', cycle: 2024, state: 'ca', district: '05' },
+        ['state', 'district'],
+      ],
+      [
+        'a Senate search with a district',
+        { office: 'S', cycle: 2026, state: 'GA', district: '05' },
+        ['district'],
+      ],
+      [
+        'a Senate summary with a district',
+        { mode: 'summary', office: 'S', cycle: 2026, state: 'GA', district: '05' },
+        ['district'],
+      ],
+      [
+        'a Senate ZIP search with a district',
+        { office: 'S', cycle: 2026, zip: '30303', district: '05' },
+        ['district'],
+      ],
+      [
+        'a Senate search with district 000, which OpenFEC does not pad to 00',
+        { office: 'S', cycle: 2026, state: 'GA', district: '000' },
+        ['district'],
+      ],
+      [
+        'a presidential search with district 000',
+        { office: 'P', cycle: 2024, district: '000' },
+        ['district'],
+      ],
+    ] as const)('rejects %s before any request', async (_case, raw, fields) => {
+      const err = await contractFailure(lookupElectionsTool, raw);
+
+      expect(err.code).toBe(JsonRpcErrorCode.ValidationError);
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_office',
+        office: raw.office,
+        inapplicable_inputs: [...fields],
+        recovery: {
+          hint: declaredRecovery(lookupElectionsTool, 'inputs_not_applicable_to_office'),
+        },
+      });
+      if (fields.includes('state' as never)) expect(err.message).toContain('state US');
+      if (fields.includes('district' as never)) expect(err.message).toContain('district 00');
+      noRequestSent();
+    });
+
+    it.each([
+      [
+        'a presidential search with a state',
+        { office: 'P', cycle: 2024, state: 'CA' },
+        { state: 'US' },
+      ],
+      [
+        'a Senate search with a district',
+        { office: 'S', cycle: 2026, state: 'GA', district: '05' },
+        { district: '00' },
+      ],
+      [
+        'a presidential search with both',
+        { office: 'P', cycle: 2024, state: 'ca', district: '05' },
+        { state: 'US', district: '00' },
+      ],
+    ] as const)(
+      'names the value each rejected input is filed under for %s',
+      async (_case, raw, filed) => {
+        const err = await contractFailure(lookupElectionsTool, raw);
+
+        expect(err.data.reason).toBe('inputs_not_applicable_to_office');
+        expect(err.data.filed_values).toEqual(filed);
+        noRequestSent();
+      },
+    );
+
+    it('names the values those races carry in the declared recovery', () => {
+      const recovery = declaredRecovery(lookupElectionsTool, 'inputs_not_applicable_to_office');
+      expect(recovery).toContain('US');
+      expect(recovery).toContain('00');
+    });
+
+    it.each([
+      ['state US', { office: 'P', cycle: 2024, state: 'US' }, { state: 'US' }],
+      ['lowercase us, sent as given', { office: 'P', cycle: 2024, state: 'us' }, { state: 'us' }],
+      ['district 00', { office: 'P', cycle: 2024, district: '00' }, { district: '00' }],
+      [
+        'a Senate race under district 00',
+        { office: 'S', cycle: 2026, state: 'GA', district: '00' },
+        { state: 'GA', district: '00' },
+      ],
+      /** OpenFEC's `District` arg zero-pads a lone digit, so `0` selects the race filed under 00. */
+      ['district 0, sent as given', { office: 'P', cycle: 2024, district: '0' }, { district: '0' }],
+      [
+        'a Senate race under district 0',
+        { office: 'S', cycle: 2026, state: 'GA', district: '0' },
+        { state: 'GA', district: '0' },
+      ],
+    ] as const)('passes a presidential or Senate search with %s', async (_case, raw, sent) => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ candidate_name: 'SMITH, JANE', candidate_id: 'P00001234' }],
+      });
+
+      const result = await lookupElectionsTool.handler(lookupElectionsTool.input.parse(raw), ctx);
+
+      expect(mockService.searchElections.mock.calls[0]![0]).toMatchObject(sent);
+      expect(result.search_criteria).toMatchObject(sent);
+    });
+
+    it('passes a Senate summary under district 0, sent as given', async () => {
+      mockService.getElectionSummary.mockResolvedValueOnce({
+        count: 12,
+        receipts: 1,
+        disbursements: 1,
+        independent_expenditures: 1,
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        mode: 'summary',
+        office: 'S',
+        cycle: 2026,
+        state: 'GA',
+        district: '0',
+      });
+      await lookupElectionsTool.handler(input, ctx);
+
+      expect(mockService.getElectionSummary.mock.calls[0]![0]).toMatchObject({
+        office: 'senate',
+        state: 'GA',
+        district: '0',
+      });
+    });
+
+    it('passes a presidential summary under state US and district 00', async () => {
+      mockService.getElectionSummary.mockResolvedValueOnce({
+        count: 874,
+        receipts: 1,
+        disbursements: 1,
+        independent_expenditures: 1,
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        mode: 'summary',
+        office: 'P',
+        cycle: 2024,
+        state: 'US',
+        district: '00',
+      });
+      await lookupElectionsTool.handler(input, ctx);
+
+      expect(mockService.getElectionSummary.mock.calls[0]![0]).toMatchObject({
+        office: 'president',
+        state: 'US',
+        district: '00',
+      });
+    });
+
+    it('passes a ZIP locator handed back as state and district', async () => {
+      mockService.searchElectionsByZip.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ cycle: 2024, district: '00', office: 'P', state: 'US' }],
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        office: 'P',
+        cycle: 2024,
+        zip: '30303',
+        state: 'US',
+        district: '00',
+      });
+      await lookupElectionsTool.handler(input, ctx);
+
+      expect(mockService.searchElectionsByZip.mock.calls[0]![0]).toMatchObject({
+        state: 'US',
+        district: '00',
+      });
+    });
+  });
+
+  describe('state code width', () => {
+    it('rejects a spelled-out state before any request', async () => {
+      const err = await contractFailure(lookupElectionsTool, {
+        office: 'S',
+        cycle: 2026,
+        state: 'Georgia',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'state',
+        value: 'Georgia',
+      });
+      expect(err.data.recovery?.hint).toContain('GA');
+      expect(mockService.searchElections).not.toHaveBeenCalled();
+    });
+
+    /** `/elections/` matches the state exactly: neither exclusion nor `other` selects a race. */
+    it.each(['-GA', 'other'])('rejects state %s before any request', async (state) => {
+      const err = await contractFailure(lookupElectionsTool, { office: 'S', cycle: 2026, state });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'state',
+        value: state,
+      });
+      expect(mockService.searchElections).not.toHaveBeenCalled();
+    });
+
+    it('sends a state code in any case as given', async () => {
+      mockService.searchElections.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [{ candidate_name: 'SMITH, JANE', candidate_id: 'S6GA00119' }],
+      });
+
+      const input = lookupElectionsTool.input.parse({ office: 'S', cycle: 2026, state: 'ga' });
+      await lookupElectionsTool.handler(input, ctx);
+
+      expect(mockService.searchElections.mock.calls[0]![0]).toMatchObject({ state: 'ga' });
+    });
+  });
+
+  describe('at-large House seats', () => {
+    it('names district 00 in the missing-district recovery on the wire', async () => {
+      const err = await contractFailure(lookupElectionsTool, {
+        office: 'H',
+        cycle: 2026,
+        state: 'WY',
+      });
+
+      expect(err.data.reason).toBe('missing_district_for_house');
+      expect(err.data.recovery?.hint).toBe(
+        declaredRecovery(lookupElectionsTool, 'missing_district_for_house'),
+      );
+      expect(err.data.recovery?.hint).toMatch(/00.*at-large/);
+    });
+
+    it('describes 00 as the at-large district', () => {
+      expect(lookupElectionsTool.input.shape.district.description).toMatch(/00.*at-large/);
+    });
+  });
+
+  describe('ZIP race locators', () => {
+    const ZIP_CRITERIA = { mode: 'search', office: 'H', cycle: 2026, zip: '30303' };
+    const locators = [
+      { cycle: 2026, district: '05', office: 'H', state: 'GA' },
+      { cycle: 2026, district: '00', office: 'H', state: 'WY' },
+      { cycle: 2026, district: '00', office: 'S', state: 'GA' },
+      { cycle: 2024, district: '00', office: 'P', state: 'US' },
+    ];
+
+    it('describes a ZIP search as returning race locators to pass back', () => {
+      const { shape } = lookupElectionsTool.input;
+      expect(shape.zip.description).toContain('locator');
+      expect(shape.zip.description).toMatch(/state.*district/);
+      expect(shape.mode.description).toContain('locator');
+      expect(lookupElectionsTool.output.shape.results.description).toContain('locator');
+    });
+
+    it('heads each locator with its race', () => {
+      const text = formatText(
+        lookupElectionsTool.format!({
+          results: locators,
+          mode: 'search',
+          pagination: { ...PAGE, count: 4 },
+          search_criteria: ZIP_CRITERIA,
+        }),
+      );
+
+      expect(text).toContain('**GA-05 House 2026**');
+      expect(text).toContain('**WY-00 House 2026**');
+      expect(text).toContain('**GA Senate 2026**');
+      expect(text).toContain('**President 2024**');
+      expect(text).not.toContain('Unknown');
+    });
+
+    it('keeps the values a locator is passed back with that its heading does not carry', () => {
+      const [senate, president] = [locators[2]!, locators[3]!];
+      const text = formatText(
+        lookupElectionsTool.format!({
+          results: [senate, president],
+          mode: 'search',
+          pagination: { ...PAGE, count: 2 },
+          search_criteria: { ...ZIP_CRITERIA, office: 'S' },
+        }),
+      );
+
+      expect(text).toContain('**GA Senate 2026**\n  district: 00');
+      expect(text).toContain('**President 2024**\n  district: 00\n  state: US');
+    });
+
+    it('drops a part the locator lacks rather than inventing it', () => {
+      const text = formatText(
+        lookupElectionsTool.format!({
+          results: [{ cycle: 2026, office: 'H', state: 'GA' }],
+          mode: 'search',
+          pagination: { ...PAGE, count: 1 },
+          search_criteria: ZIP_CRITERIA,
+        }),
+      );
+
+      expect(text).toContain('**GA House 2026**');
+      expect(text).not.toContain('undefined');
+    });
+
+    it('heads a locator naming no office, state, or cycle as a race locator, never an empty heading', () => {
+      const text = formatText(
+        lookupElectionsTool.format!({
+          results: [{ district: '05' }, {}],
+          mode: 'search',
+          pagination: { ...PAGE, count: 2 },
+          search_criteria: ZIP_CRITERIA,
+        }),
+      );
+
+      expect(text).toContain('**Race locator**\n  district: 05');
+      expect(text.match(/\*\*Race locator\*\*/g)).toHaveLength(2);
+      expect(text).not.toContain('****');
+    });
+
+    it('returns the upstream rows unchanged and heads them on content[]', async () => {
+      const row = { ...locators[0]! };
+      mockService.searchElectionsByZip.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [row],
+      });
+
+      const result = await runToolContract(lookupElectionsTool, {
+        office: 'H',
+        cycle: 2026,
+        zip: '30303',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect((result.structuredContent as { results: unknown[] }).results).toEqual([
+        { cycle: 2026, district: '05', office: 'H', state: 'GA' },
+      ]);
+      const text = (result.content as ContentBlock[])
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('**GA-05 House 2026**');
+      expect(text).not.toContain('Unknown');
+    });
+
+    it('keeps the ZIP zero-match guidance when no race covers the ZIP', async () => {
+      mockService.searchElectionsByZip.mockResolvedValueOnce({
+        pagination: { page: 1, pages: 0, count: 0, per_page: 20 },
+        results: [],
+      });
+
+      const result = await runToolContract(lookupElectionsTool, {
+        office: 'H',
+        cycle: 2026,
+        zip: '00000',
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect((result.structuredContent as { notice?: string }).notice).toContain(
+        'No election races found for this ZIP',
+      );
+      const text = (result.content as ContentBlock[])
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('\n');
+      expect(text).toContain('No results found');
+    });
+  });
+
+  describe('independent expenditures note', () => {
+    it('says by_candidate leaves out current-cycle spending reported only on notices', async () => {
+      mockService.getElectionSummary.mockResolvedValueOnce({
+        count: 12,
+        receipts: 1,
+        disbursements: 1,
+        independent_expenditures: 1,
+      });
+
+      const input = lookupElectionsTool.input.parse({
+        mode: 'summary',
+        office: 'S',
+        cycle: 2026,
+        state: 'GA',
+      });
+      const result = await lookupElectionsTool.handler(input, ctx);
+      const note = String(result.results[0]!._independent_expenditures_note);
+
+      expect(note).toContain('Unreconciled');
+      expect(note).toContain('periodic reports');
+      expect(note).toContain('current cycle');
+      expect(note).toContain('24/48-hour notices');
+      expect(note).toContain('is_notice: true');
+      expect(note).not.toContain('verified');
+      expect(formatText(lookupElectionsTool.format!(result))).toContain(note);
     });
   });
 });

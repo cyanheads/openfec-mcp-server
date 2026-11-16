@@ -37,7 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 
 import { lookupCalendar as lookupCalendarTool } from '@/mcp-server/tools/definitions/lookup-calendar.tool.js';
 import { assertKnownParams } from '@/services/openfec/openfec-service.js';
-import { contractFailure } from './contract-failure.js';
+import { contractFailure, declaredRecovery } from './contract-failure.js';
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -358,11 +358,92 @@ describe('lookupCalendarTool', () => {
       expect(result.search_criteria).toMatchObject({ district: '01' });
     });
 
-    it.each(['01', '00', '99', '123', 'AL'])('passes %s through unchanged', async (district) => {
+    it.each(['01', '00', '99', '123'])('passes %s through unchanged', async (district) => {
       const { result, params } = await run({ mode: 'election_dates', district });
 
       expect(params.election_district).toBe(district);
       expect(result.search_criteria).toMatchObject({ district });
+    });
+
+    /** `/election-dates/` answers a non-numeric district with an empty 200, never a 422. */
+    it('rejects a district that is not a number before any request', async () => {
+      const err = await contractFailure(lookupCalendarTool, {
+        mode: 'election_dates',
+        state: 'AK',
+        district: 'AL',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_district',
+        field: 'district',
+        value: 'AL',
+      });
+      expect(err.data.recovery?.hint).toBe(
+        declaredRecovery(lookupCalendarTool, 'invalid_district'),
+      );
+      expect(err.data.recovery?.hint).toMatch(/at-large/i);
+      expect(mockService.getElectionDates).not.toHaveBeenCalled();
+    });
+
+    it.each(['1A', '07-A', ' 7', '7 '])(
+      'rejects %j, digits or spaces mixed with anything else, before any request',
+      async (district) => {
+        const err = await contractFailure(lookupCalendarTool, {
+          mode: 'election_dates',
+          state: 'NY',
+          district,
+        });
+
+        expect(err.data).toMatchObject({
+          reason: 'invalid_district',
+          field: 'district',
+          value: district,
+        });
+        expect(mockService.getElectionDates).not.toHaveBeenCalled();
+      },
+    );
+
+    /**
+     * `/election-dates/` filters `election_district` through filter_multi, where a
+     * leading `-` excludes the district — matched, like a plain district, only in
+     * its zero-padded form.
+     */
+    it('zero-pads the digit after a leading - in the request and the echo', async () => {
+      const { result, params } = await run({ mode: 'election_dates', state: 'CA', district: '-1' });
+
+      expect(params.election_district).toBe('-01');
+      expect(result.search_criteria).toMatchObject({ district: '-01' });
+    });
+
+    it.each(['-01', '-14', '-123'])('passes the exclusion %s unchanged', async (district) => {
+      const { result, params } = await run({ mode: 'election_dates', district });
+
+      expect(params.election_district).toBe(district);
+      expect(result.search_criteria).toMatchObject({ district });
+    });
+
+    it.each(['-AL', '-', '--01', '- 1', '-1A'])(
+      'still rejects the excluded value %j before any request',
+      async (district) => {
+        const err = await contractFailure(lookupCalendarTool, { mode: 'election_dates', district });
+
+        expect(err.data).toMatchObject({ reason: 'invalid_district', value: district });
+        expect(mockService.getElectionDates).not.toHaveBeenCalled();
+      },
+    );
+
+    /** `/election-dates/` files a blank district as a space, so a space selects those rows. */
+    it('passes a whitespace-only district through as given', async () => {
+      const { result, params } = await run({ mode: 'election_dates', state: 'GA', district: ' ' });
+
+      expect(params.election_district).toBe(' ');
+      expect(result.search_criteria).toMatchObject({ district: ' ' });
+    });
+
+    it('does not describe at-large races as unreachable by a district filter', () => {
+      expect(lookupCalendarTool.input.shape.district.description).not.toContain(
+        'a district filter never matches them',
+      );
     });
 
     it('omits election_district when district is an empty form value', async () => {
@@ -414,6 +495,74 @@ describe('lookupCalendarTool', () => {
       );
       expect(mockService.getCalendarDates).not.toHaveBeenCalled();
       expect(mockService.getReportingDates).not.toHaveBeenCalled();
+    });
+  });
+
+  /** `/election-dates/` matches `election_state` case-sensitively. */
+  describe('state code (election_dates)', () => {
+    it('upper-cases the state in the request and the echo', async () => {
+      mockService.getElectionDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 12 },
+        results: [{ election_date: '2026-05-19', election_state: 'GA' }],
+      });
+
+      const input = lookupCalendarTool.input.parse({
+        mode: 'election_dates',
+        state: 'ga',
+        election_year: 2026,
+      });
+      const result = await lookupCalendarTool.handler(input, ctx);
+
+      expect(mockService.getElectionDates.mock.calls[0]![0]).toMatchObject({
+        election_state: 'GA',
+      });
+      expect(result.search_criteria).toMatchObject({ state: 'GA' });
+    });
+
+    it('rejects a spelled-out state before any request', async () => {
+      const err = await contractFailure(lookupCalendarTool, {
+        mode: 'election_dates',
+        state: 'Georgia',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'state',
+        value: 'Georgia',
+      });
+      expect(mockService.getElectionDates).not.toHaveBeenCalled();
+    });
+
+    /** `election_state` goes through filter_multi, where a leading `-` excludes the state. */
+    it('upper-cases an excluded state in the request and the echo', async () => {
+      mockService.getElectionDates.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 231 },
+        results: [{ election_date: '2026-05-19', election_state: 'AL' }],
+      });
+
+      const input = lookupCalendarTool.input.parse({
+        mode: 'election_dates',
+        state: '-ga',
+        election_year: 2026,
+      });
+      const result = await lookupCalendarTool.handler(input, ctx);
+
+      expect(mockService.getElectionDates.mock.calls[0]![0]).toMatchObject({
+        election_state: '-GA',
+      });
+      expect(result.search_criteria).toMatchObject({ state: '-GA' });
+    });
+
+    /** `/election-dates/` is not a STATE_OTHER endpoint, so `other` selects nothing there. */
+    it.each(['other', '-GAA', '--GA'])('still rejects state %j, unsent', async (state) => {
+      const err = await contractFailure(lookupCalendarTool, { mode: 'election_dates', state });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'state',
+        value: state,
+      });
+      expect(mockService.getElectionDates).not.toHaveBeenCalled();
     });
   });
 

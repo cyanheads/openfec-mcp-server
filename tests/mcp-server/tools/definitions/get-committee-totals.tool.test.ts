@@ -376,6 +376,105 @@ describe('getCommitteeTotals', () => {
     });
   });
 
+  /**
+   * `/totals/{entity_type}/` matches committee_type and committee_designation
+   * case-sensitively and answers any other code with an empty 200.
+   */
+  describe('by_entity_type code inputs', () => {
+    it('upper-cases committee_type and committee_designation in the request and the echo', async () => {
+      mockService.getCommitteeTotalsByEntityType.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 2062 },
+        results: [totalsRow()],
+      });
+
+      const input = getCommitteeTotals.input.parse({
+        mode: 'by_entity_type',
+        entity_type: 'pac-party',
+        cycle: 2024,
+        committee_type: 'o',
+        committee_designation: 'b',
+      });
+      const result = await getCommitteeTotals.handler(input, ctx);
+
+      expect(mockService.getCommitteeTotalsByEntityType.mock.calls[0]![1]).toMatchObject({
+        committee_type: 'O',
+        committee_designation: 'B',
+      });
+      expect(result.search_criteria).toMatchObject({
+        committee_type: 'O',
+        committee_designation: 'B',
+      });
+    });
+
+    /** `/totals/{entity_type}/` reads `other` as foreign, invalid, or missing states and `-` as exclude. */
+    it.each([
+      [{ committee_state: 'other' }, { committee_state: 'other' }],
+      [{ committee_state: '-pa' }, { committee_state: '-pa' }],
+      [
+        { committee_type: '-o', committee_designation: '-u' },
+        { committee_type: '-O', committee_designation: '-U' },
+      ],
+    ])(
+      'sends %j as %j in the request and the echo, committee codes upper-cased',
+      async (raw, sent) => {
+        mockService.getCommitteeTotalsByEntityType.mockResolvedValueOnce({
+          pagination: { ...PAGE, count: 1 },
+          results: [totalsRow()],
+        });
+
+        const input = getCommitteeTotals.input.parse({
+          mode: 'by_entity_type',
+          entity_type: 'pac-party',
+          ...raw,
+        });
+        const result = await getCommitteeTotals.handler(input, ctx);
+
+        expect(mockService.getCommitteeTotalsByEntityType.mock.calls[0]![1]).toMatchObject(sent);
+        expect(result.search_criteria).toMatchObject(sent);
+      },
+    );
+
+    it.each([
+      ['committee_type', 'ZZ', 'invalid_committee_type'],
+      ['committee_designation', 'Q', 'invalid_committee_designation'],
+      ['committee_state', 'Washington', 'invalid_state_code'],
+      ['committee_type', '-ZZ', 'invalid_committee_type'],
+      ['committee_type', '-A', 'invalid_committee_type'],
+      ['committee_type', '-', 'invalid_committee_type'],
+      ['committee_type', '--O', 'invalid_committee_type'],
+      ['committee_designation', '-C', 'invalid_committee_designation'],
+      ['committee_state', '-other', 'invalid_state_code'],
+      ['committee_state', '--PA', 'invalid_state_code'],
+    ] as const)('rejects %s %s before any request', async (field, value, reason) => {
+      const err = await contractFailure(getCommitteeTotals, {
+        mode: 'by_entity_type',
+        entity_type: 'pac-party',
+        [field]: value,
+      });
+
+      expect(err.data).toMatchObject({ reason, field, value });
+      expect(mockService.getCommitteeTotalsByEntityType).not.toHaveBeenCalled();
+    });
+
+    it('sends committee_state as given', async () => {
+      mockService.getCommitteeTotalsByEntityType.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [totalsRow()],
+      });
+
+      const input = getCommitteeTotals.input.parse({
+        mode: 'by_entity_type',
+        entity_type: 'pac',
+        committee_state: 'pa',
+      });
+      await getCommitteeTotals.handler(input, ctx);
+
+      expect(mockService.getCommitteeTotalsByEntityType.mock.calls[0]![1]).toMatchObject({
+        committee_state: 'pa',
+      });
+    });
+  });
+
   describe('format', () => {
     it('renders the mode, per-row header, remaining fields, and pagination', () => {
       const blocks = getCommitteeTotals.format!({

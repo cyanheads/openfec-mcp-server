@@ -9,6 +9,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { validatePartyCode, validateStateCode } from './utils/code-validators.js';
 import {
   buildSearchCriteria,
   describeExhaustedPosition,
@@ -76,7 +77,10 @@ export const searchCommittees = tool('openfec_search_committees', {
         'Find committees linked to this candidate (authorized, leadership, joint fundraising). Get IDs from openfec_search_candidates results.',
       ),
     state: z.string().optional().describe('Two-letter state code.'),
-    party: z.string().optional().describe('Three-letter party code (e.g., DEM, REP).'),
+    party: z
+      .string()
+      .optional()
+      .describe('Party code as OpenFEC files it, up to three characters (e.g., DEM, REP, LIB, W).'),
     committee_type: z
       .string()
       .optional()
@@ -156,6 +160,9 @@ export const searchCommittees = tool('openfec_search_committees', {
       result = await fec.getCommittee(input.committee_id, ctx);
       effectiveCriteria = buildSearchCriteria({ committee_id: input.committee_id });
     } else {
+      /** `/committees/` reads a leading `-` as exclude, and `other` as foreign, invalid, or missing states. */
+      if (input.state) validateStateCode('state', input.state, { exclusion: true, other: true });
+      if (input.party) validatePartyCode('party', input.party, { exclusion: true });
       const page = input.page ?? 1;
       const perPage = input.per_page ?? 20;
       const params: FecParams = {

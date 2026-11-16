@@ -8,6 +8,7 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenFecService } from '@/services/openfec/openfec-service.js';
 import type { FecParams, PageResult } from '@/services/openfec/types.js';
+import { validateStateCode } from './utils/code-validators.js';
 import {
   buildSearchCriteria,
   describeExhaustedPosition,
@@ -23,6 +24,57 @@ import {
 } from './utils/format-helpers.js';
 
 const OFFICE_API_FORM = { H: 'house', S: 'senate', P: 'president' } as const;
+
+/**
+ * The geography OpenFEC files presidential and Senate races under: a
+ * presidential race under state US, both under district 00. Any other value
+ * matches nothing on /elections/ and /elections/summary/, and the ZIP search
+ * ignores it for these races, so it is rejected rather than sent.
+ */
+const FILED_GEOGRAPHY: Partial<
+  Record<keyof typeof OFFICE_API_FORM, Partial<Record<'state' | 'district', string>>>
+> = {
+  P: { state: 'US', district: '00' },
+  S: { district: '00' },
+};
+
+/**
+ * A geography value as OpenFEC reads it: its `District` arg zero-pads a lone
+ * digit (`0` selects district 00) and its state arg upper-cases.
+ */
+const asFiled = (field: 'state' | 'district', value: string): string =>
+  field === 'district' && /^\d$/.test(value) ? `0${value}` : value.toUpperCase();
+
+const OFFICE_LABEL: Record<string, string> = { H: 'House', S: 'Senate', P: 'President' };
+
+/**
+ * Head a ZIP-search race locator with the race it names — `GA-05 House 2026`,
+ * `GA Senate 2026`, `President 2024` — and return the fields that heading
+ * carries verbatim. A presidential race's state and district and a Senate
+ * race's district stay as fields: they are the values to pass back.
+ */
+function raceLocatorHeading(row: Record<string, unknown>): {
+  heading: string;
+  carried: Set<string>;
+} {
+  const carried = new Set<string>();
+  const take = (key: string): string | undefined => {
+    const value = row[key];
+    if (value === undefined || value === null || value === '') return;
+    carried.add(key);
+    return String(value);
+  };
+  const office = take('office');
+  const place =
+    office === 'P'
+      ? undefined
+      : office === 'H'
+        ? [take('state'), take('district')].filter(Boolean).join('-')
+        : take('state');
+  const label = office === undefined ? undefined : (OFFICE_LABEL[office] ?? office);
+  const heading = [place, label, take('cycle')].filter(Boolean).join(' ');
+  return { heading: heading || 'Race locator', carried };
+}
 
 /** Applied when the caller leaves `election_full` unset on a non-ZIP query. */
 const ELECTION_FULL_DEFAULT = true;
@@ -65,7 +117,14 @@ export const lookupElections = tool('openfec_lookup_elections', {
       code: JsonRpcErrorCode.ValidationError,
       when: 'House office without a district number and without a zip',
       recovery:
-        'Provide a two-digit district number (e.g., "07") or a zip code to identify the House race.',
+        'Provide a two-digit district number (e.g., "07"), 00 for an at-large seat, or a zip code to identify the House race.',
+    },
+    {
+      reason: 'inputs_not_applicable_to_office',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'A presidential race given a state other than US, or a presidential or Senate race given a district other than 00 (or 0, which OpenFEC pads to 00) — values OpenFEC never files those races under',
+      recovery:
+        'Omit state for a presidential race and district for a presidential or Senate race, or pass the values those races carry: state US for President, district 00 for President and Senate.',
     },
     {
       reason: 'summary_does_not_support_zip',
@@ -88,7 +147,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .enum(['search', 'summary'])
       .default('search')
       .describe(
-        'search = candidates in a race with financial totals. summary = aggregate race financial summary.',
+        'search = candidates in a race with financial totals; with zip, locators for the races covering that ZIP instead. summary = aggregate race financial summary.',
       ),
     office: z.enum(['H', 'S', 'P']).describe('Office sought: H=House, S=Senate, P=President.'),
     cycle: z.number().int().describe('Election cycle year (even years only, e.g. 2024).'),
@@ -96,18 +155,20 @@ export const lookupElections = tool('openfec_lookup_elections', {
       .string()
       .optional()
       .describe(
-        'Two-letter US state code (e.g., AZ, CA). Required for senate/house unless zip is provided.',
+        'Two-letter US state code (e.g., AZ, CA). Required for senate/house unless zip is provided. Presidential races are filed under US: omit it or pass US.',
       ),
     district: z
       .string()
       .optional()
       .describe(
-        'Two-digit district number (e.g. "07"). Required for house unless zip is provided.',
+        'Two-digit district number (e.g. "07"); 00 for an at-large House seat (e.g., WY, AK). Required for house unless zip is provided. Presidential and Senate races are filed under 00: omit it or pass 00.',
       ),
     zip: z
       .string()
       .optional()
-      .describe('ZIP code — finds races covering this ZIP. Search mode only.'),
+      .describe(
+        'ZIP code — returns a locator (office, state, district, cycle) for each race covering this ZIP, not candidates; pass a locator back as state and district for that race. Search mode only.',
+      ),
     election_full: z
       .boolean()
       .optional()
@@ -137,11 +198,11 @@ export const lookupElections = tool('openfec_lookup_elections', {
         z
           .looseObject({})
           .describe(
-            'Candidate financial row (search mode) or aggregate race summary (summary mode).',
+            'Candidate financial row (search mode), race locator (search with zip), or aggregate race summary (summary mode).',
           ),
       )
       .describe(
-        'Election race result set; candidate financial rows in search mode, a single aggregate summary row in summary mode.',
+        'Election race result set; candidate financial rows in search mode, race locators (office, state, district, cycle) in a search with zip, a single aggregate summary row in summary mode.',
       ),
     mode: z
       .enum(['search', 'summary'])
@@ -153,7 +214,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
   }),
 
   enrichment: {
-    totalCount: z.number().describe('Total matching candidates or race summaries.'),
+    totalCount: z.number().describe('Total matching candidates, race locators, or race summaries.'),
     notice: z
       .string()
       .optional()
@@ -182,6 +243,28 @@ export const lookupElections = tool('openfec_lookup_elections', {
         });
       }
     }
+
+    const filed = FILED_GEOGRAPHY[input.office];
+    if (filed) {
+      const misplaced = (['state', 'district'] as const).filter((field) => {
+        const value = input[field];
+        const expected = filed[field];
+        return expected !== undefined && !!value && asFiled(field, value) !== expected;
+      });
+      if (misplaced.length > 0) {
+        const race = input.office === 'P' ? 'presidential' : 'Senate';
+        throw ctx.fail(
+          'inputs_not_applicable_to_office',
+          `OpenFEC files every ${race} race under ${misplaced.map((f) => `${f} ${filed[f]}`).join(' and ')}, so ${misplaced.map((f) => `${f} "${input[f]}"`).join(' and ')} cannot select one.`,
+          {
+            office: input.office,
+            inapplicable_inputs: misplaced,
+            filed_values: Object.fromEntries(misplaced.map((f) => [f, filed[f]])),
+          },
+        );
+      }
+    }
+    if (input.state) validateStateCode('state', input.state);
 
     if (input.zip && input.election_full !== undefined) {
       throw ctx.fail(
@@ -237,7 +320,7 @@ export const lookupElections = tool('openfec_lookup_elections', {
       const summaryRecord: Record<string, unknown> = {
         ...(summary as unknown as Record<string, unknown>),
         _independent_expenditures_note:
-          'Unreconciled upstream aggregate — may be inflated due to double-counting across reporting periods. Use openfec_search_expenditures mode by_candidate for verified per-committee totals.',
+          'Unreconciled upstream aggregate — may be inflated due to double-counting across reporting periods. openfec_search_expenditures mode by_candidate gives per-committee totals from periodic reports; for the current cycle those leave out spending reported so far only on 24/48-hour notices, which mode itemized with is_notice: true returns.',
       };
       return {
         results: [summaryRecord],
@@ -342,10 +425,17 @@ export const lookupElections = tool('openfec_lookup_elections', {
     }
 
     const headerKeys = new Set(['candidate_name', 'candidate_id']);
+    /** A ZIP search returns race locators, not candidates. */
+    const zipSearch = result.search_criteria.zip !== undefined;
 
     const lines = [
       `**Mode:** ${result.mode}`,
       ...result.results.map((r) => {
+        if (zipSearch) {
+          const { heading, carried } = raceLocatorHeading(r);
+          const fields = renderRecord(r, carried);
+          return fields ? `**${heading}**\n${fields}` : `**${heading}**`;
+        }
         const name = String(r.candidate_name ?? 'Unknown');
         const id = r.candidate_id ? String(r.candidate_id) : '';
         const header = id ? `**${name}** (${id})` : `**${name}**`;
