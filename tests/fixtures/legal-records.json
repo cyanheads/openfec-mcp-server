@@ -512,6 +512,101 @@
     "type": "admin_fines",
     "url": "/legal/administrative-fine/4229/"
   },
+  "mur_8309": {
+    "case_serial": 8309,
+    "close_date": "2025-06-02T00:00:00",
+    "commission_votes": [
+      {
+        "action": "The Commission decided by a vote of 4-0 to take the following actions in MUR 8309:\n\n1. Accept the signed Conciliation Agreement, as recommended in the Memorandum to the Commission dated April 3, 2025.\n\n2. Approve the appropriate letter.\n\n3. Close the file effective 30 days from the date the certification of this vote is signed (or on the next business day after the 30th day, if the 30th day falls on a weekend or holiday).\n\n",
+        "vote_date": "2025-04-29T00:00:00"
+      },
+      {
+        "action": "The Commission failed by a vote of 3-3 to:\n\na. Open a MUR.\n\nb. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b)(1), (2), (3), (4), (5), and 11 C.F.R. \n§ 104.3(a), (b) by failing to accurately report both receipts and disbursements.\n\nc. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b) and 11 C.F.R. § 104.1(a) by understating its receipts and disbursements.\n\nd. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 11 C.F.R. § 103.3(b) by accepting contributions from unregistered political organizations.\n\ne. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b)(8) and 11 C.F.R.10 §§ 104.3(d) and 104.11(a) for failing to report outstanding debts and obligations.\n\nf.  Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30102(d) and 11 C.F.R.§104.14(b)(1) by failing to maintain records of communications.\n\ng. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30102(d) and 11 C.F.R.§106.7(d)(1) by failing to maintain records of monthly payroll logs.\n\nh. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b)(4)(H)(iii), 30104(g)(1), (2) and 11 C.F.R. \n§ 104.4(a), (b) by failing to report independent expenditures.\n\ni. Approve the Factual and Legal Analysis, as recommended in the First General Counsel’s Report dated August 2, 2024.\n\nj. Enter into conciliation with Oklahoma Leadership Council and John Elliott in his official capacity as treasurer prior to a finding of probable cause to believe.\n\nk. Approve the Conciliation Agreement, as recommended in the First General Counsel’s Report dated August 2, 2024. \n\nl. Approve the appropriate letter.\n",
+        "vote_date": "2024-08-27T00:00:00"
+      },
+      {
+        "action": "The Commission decided by a vote of 6-0 to:\n\na. Open a MUR.\n\nb. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b)(1), (2), (3), (4), (5), and 11 C.F.R.                      § 104.3(a), (b) by failing to accurately report both receipts and disbursements.\n\nc. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b) and 11 C.F.R. § 104.1(a) by understating its receipts and disbursements.\n\nd. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 11 C.F.R. § 103.3(b) by accepting contributions from unregistered political organizations.\n\ne. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b)(8) and 11 C.F.R.10 §§ 104.3(d) and 104.11(a) for failing to report outstanding debts and obligations.\n\nf.  Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30102(d) and 11 C.F.R.§104.14(b)(1) by failing to maintain records of communications.\n\ng. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30102(d) and 11 C.F.R.§106.7(d)(1) by failing to maintain records of monthly payroll logs.\n\nh. Find reason to believe that Oklahoma Leadership Council and John Elliott in his official capacity as treasurer violated 52 U.S.C. § 30104(b)(4)(H)(iii), 30104(g)(1), (2) and 11 C.F.R.     § 104.4(a), (b) by failing to report independent expenditures.\n\ni. Approve the Factual and Legal Analysis, as recommended in the First General Counsel’s Report dated August 2, 2024.\n\nj. Enter into conciliation with Oklahoma Leadership Council and John Elliott in his official capacity as treasurer prior to a finding of probable cause to believe.\n\nk. Approve the Conciliation Agreement, as recommended in the First General Counsel’s Report dated August 2, 2024, ...REDACTED...\n\nl. Approve the appropriate letter.\n",
+        "vote_date": "2024-08-27T00:00:00"
+      }
+    ],
+    "dispositions": [
+      {
+        "citations": [
+          {
+            "text": "30102(d)",
+            "title": "52",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30102"
+          },
+          {
+            "text": "30104(b)",
+            "title": "52",
+            "type": "statute",
+            "url": "https://www.govinfo.gov/link/uscode/52/30104"
+          }
+        ],
+        "disposition": "Conciliation: Pre Probable Cause",
+        "mur_disposition_category_id": 1,
+        "penalty": 174000,
+        "respondent": "Oklahoma Leadership Council"
+      }
+    ],
+    "doc_id": "mur_8309",
+    "documents": [
+      {
+        "category": "Conciliation and Settlement Agreements",
+        "description": "Oklahoma Leadership Council",
+        "doc_order_id": 1,
+        "document_date": "2025-06-02T00:00:00",
+        "document_id": 100515248,
+        "filename": "8309_12",
+        "length": 1496352,
+        "url": "/files/legal/murs/8309/8309_12.pdf"
+      },
+      {
+        "category": "Complaint, Responses, Designation of Counsel and Extensions of Time",
+        "description": "Second Consent to Extend the Time to Commence a Civil Law Enforcement Action, Suit, or Proceeding",
+        "doc_order_id": 2,
+        "document_date": "2025-03-04T00:00:00",
+        "document_id": 100515247,
+        "filename": "8309_09",
+        "length": 644003,
+        "url": "/files/legal/murs/8309/8309_09.pdf"
+      }
+    ],
+    "election_cycles": [2020],
+    "mur_type": "current",
+    "name": "Oklahoma Leadership Council",
+    "no": "8309",
+    "open_date": "2023-12-21T00:00:00",
+    "participants": [
+      {
+        "name": "Oklahoma Leadership Council",
+        "role": "Primary Respondent"
+      },
+      {
+        "name": "Elliott, John",
+        "role": "Previous Respondent"
+      }
+    ],
+    "published_flg": true,
+    "respondents": ["Oklahoma Leadership Council", "Elliott, John"],
+    "sort1": -8309,
+    "sort2": null,
+    "subjects": [
+      {
+        "primary_subject_id": "2",
+        "secondary_subject_id": "6",
+        "subject": "Committees-Political"
+      },
+      {
+        "primary_subject_id": "18",
+        "subject": "Reporting"
+      }
+    ],
+    "type": "murs",
+    "url": "/legal/matter-under-review/8309/"
+  },
   "mur_highlight_search": {
     "no": "8363",
     "name": "Calspan Corporation",

@@ -1,8 +1,10 @@
 /**
- * @fileoverview End-to-end response-budget tests for the two legal tools: each
+ * @fileoverview End-to-end response-size tests for the two legal tools: each
  * runs through its public contract (handler, format, enrichment) against the
- * real OpenFEC service, with only the upstream HTTP boundary faked. Sizes are
- * measured the way the budget is defined — UTF-8 bytes of the assembled
+ * real OpenFEC service, with only the upstream HTTP boundary faked.
+ * `openfec_search_legal` returns every result upstream sent, whatever the
+ * page weighs; `openfec_get_legal_document` holds one record to the response
+ * budget, measured the way it is defined — UTF-8 bytes of the assembled
  * `structuredContent` and of the joined `content[]` text, enrichment trailer
  * included. The heavy records are the three heaviest MURs measured live.
  * @module tests/mcp-server/tools/definitions/legal-response-bounds.test
@@ -26,9 +28,11 @@ vi.mock('@/config/server-config.js', () => ({
   }),
 }));
 
-import { getLegalDocument } from '@/mcp-server/tools/definitions/get-legal-document.tool.js';
+import {
+  getLegalDocument,
+  RESPONSE_BUDGET_BYTES,
+} from '@/mcp-server/tools/definitions/get-legal-document.tool.js';
 import { searchLegal } from '@/mcp-server/tools/definitions/search-legal.tool.js';
-import { RESPONSE_BUDGET_BYTES } from '@/mcp-server/tools/definitions/utils/trim-schedule-row.js';
 import { initOpenFecService } from '@/services/openfec/openfec-service.js';
 
 type Row = Record<string, unknown>;
@@ -60,8 +64,13 @@ type ArraySpec =
  * The three heaviest MURs measured live (`/legal/docs/murs/{6916,7594,8123}`).
  * Scalars are masked to X runs of equal JSON byte length; each array of
  * records keeps one masked entry as a template plus the JSON byte size of every
- * live entry, and expands to that many entries of exactly those sizes. The
- * expanded record weighs exactly what the live one did (`bytes`).
+ * live entry, and expands to that many entries of exactly those sizes, the
+ * template's `pad` field extended with X runs. Links keep their live shape at
+ * their live length — the record page under `/legal/`, document files under
+ * `/files/`, regulation citations under `/regulations/`, statute citations on
+ * govinfo.gov — so the tool resolves them as it does live before it measures
+ * the record. The expanded record weighs exactly what the live one did
+ * (`bytes`), before resolution.
  */
 const HEAVY_SPEC = JSON.parse(
   readFileSync(new URL('../../../fixtures/heaviest-legal-records.json', import.meta.url), 'utf8'),
@@ -74,10 +83,23 @@ const expandArray = (value: unknown): unknown => {
   if ('$entries' in spec) {
     const { template, pad, sizes } = spec.$entries;
     const base = bytes(JSON.stringify(template));
-    return sizes.map((size) => ({ ...template, [pad]: 'X'.repeat(size - base) }));
+    return sizes.map((size) => ({
+      ...template,
+      [pad]: `${String(template[pad])}${'X'.repeat(size - base)}`,
+    }));
   }
   return value;
 };
+
+/**
+ * `value` as JSON with every site-relative link in the absolute form the tool
+ * returns: a record page under `https://www.fec.gov/data`, anything else under
+ * `https://www.fec.gov`.
+ */
+const withAbsoluteLinks = (value: unknown): string =>
+  JSON.stringify(value)
+    .replaceAll('"url":"/legal/', '"url":"https://www.fec.gov/data/legal/')
+    .replaceAll('"url":"/', '"url":"https://www.fec.gov/');
 
 const heavy = (key: keyof typeof HEAVY_SPEC): Row =>
   Object.fromEntries(
@@ -177,13 +199,52 @@ const searchCalls = () =>
 /*  openfec_search_legal                                              */
 /* ------------------------------------------------------------------ */
 
-describe('openfec_search_legal response budget', () => {
+/** No response field or `content[]` line discloses a page bound. */
+const expectNoBound = (result: CallToolResult) => {
+  const out = sc(result);
+  for (const field of ['truncated', 'shown', 'nextFromHit', 'cap']) {
+    expect(out).not.toHaveProperty(field);
+  }
+  const content = text(result);
+  for (const phrase of [
+    'Bounded by the response budget',
+    'Results in this response',
+    'Next from_hit per type',
+    '100,000-byte',
+  ]) {
+    expect(content).not.toContain(phrase);
+  }
+};
+
+describe('openfec_search_legal page size', () => {
   it('fails loudly on a request the fake upstream does not route', async () => {
     const result = await runToolContract(searchLegal, { query: 'contribution' });
     expect(result.isError).toBe(true);
   });
 
-  it('carries every record of a page within the budget, in upstream order, disclosing no bound', async () => {
+  it('advertises no bound field: its enrichment is the total, the notice, and the retrieval hint', () => {
+    expect(Object.keys(searchLegal.enrichment ?? {}).sort()).toEqual([
+      'notice',
+      'retrievalHint',
+      'totalCount',
+    ]);
+    expect(Object.keys(searchLegal.enrichmentTrailer ?? {})).toEqual(['retrievalHint']);
+    const shape = searchLegal.input.shape;
+    const output = searchLegal.output.shape;
+    const prose = [
+      searchLegal.description,
+      shape.from_hit.description,
+      shape.hits_returned.description,
+      output.results.description,
+      searchLegal.enrichment?.notice.description,
+    ].join('\n');
+    for (const stale of ['100,000', 'nextFromHit', 'truncated', 'held back']) {
+      expect(prose).not.toContain(stale);
+    }
+    expect(prose).toContain('from_hit + hits_returned');
+  });
+
+  it('carries every record of a page, in upstream order, disclosing no bound', async () => {
     http.route({
       match: /\/legal\/search\/\?/,
       respond: searchUpstream(
@@ -204,28 +265,27 @@ describe('openfec_search_legal response budget', () => {
     expect(out.totalCount).toBe(15);
   });
 
-  it('bounds a 200-record MUR page to the budget on both surfaces, continuing at nextFromHit', async () => {
+  it('returns all 200 records of a heavy 200-record MUR page on both surfaces, each trimmed', async () => {
     const murs = heavyMurs(200);
     http.route({ match: /\/legal\/search\/\?/, respond: searchUpstream({ murs }) });
 
     const result = await runToolContract(searchLegal, { type: 'murs', hits_returned: 200 });
 
     expect(result.isError).toBeFalsy();
-    expectWithinBudget(result);
+    expectNoBound(result);
     const out = sc(result);
-    const shown = (out.results as Row[]).length;
-    expect(shown).toBeGreaterThan(0);
-    expect(shown).toBeLessThan(200);
-    expect(out.truncated).toBe(true);
-    expect(out.shown).toBe(shown);
-    expect(out.nextFromHit).toEqual({ murs: shown });
+    const results = out.results as Row[];
+    expect(results.map((r) => r.no)).toEqual(murs.map((r) => r.no));
     expect(out.totalCount).toBe(200);
     expect(out.total_count).toBe(200);
-    expect((out.results as Row[]).map((r) => r.no)).toEqual(murs.slice(0, shown).map((r) => r.no));
-    expect(out.notice).toContain('100,000-byte');
+    expect(out).not.toHaveProperty('notice');
+    for (const r of results) {
+      expect(r).not.toHaveProperty('documents');
+      expect(r).not.toHaveProperty('dispositions');
+    }
     const content = text(result);
-    expect(content).toContain(`**Results in this response:** ${shown}`);
-    expect(content).toContain(`murs from_hit ${shown}`);
+    for (const r of murs) expect(content).toContain(`**${r.no}**`);
+    expect(content).toContain('_200 total matching document(s)_');
   });
 
   it('fits MUR 6916 as a single search result, its dispositions summarized', async () => {
@@ -239,7 +299,6 @@ describe('openfec_search_legal response budget', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    expectWithinBudget(result);
     const [doc] = sc(result).results as Row[];
     expect(doc).not.toHaveProperty('dispositions');
     expect(doc!.disposition_count).toBe(763);
@@ -249,7 +308,7 @@ describe('openfec_search_legal response budget', () => {
     expect(text(result)).toContain('disposition_count: 763');
   });
 
-  it('bounds an untyped 200-per-type page and carries every document type that matched', async () => {
+  it('returns every result of an untyped 200-per-type page, each type in full and in order', async () => {
     const lists: Record<LegalType, Row[]> = {
       advisory_opinions: range(200).map((i) => padded('ao', i, 3_000)),
       murs: heavyMurs(200),
@@ -265,24 +324,17 @@ describe('openfec_search_legal response budget', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    expectWithinBudget(result);
-    const out = sc(result);
-    const types = new Set((out.results as Row[]).map((r) => r.document_type));
-    expect(types).toEqual(new Set(['advisory_opinion', 'mur', 'adr', 'admin_fine', 'statute']));
-    expect(out.truncated).toBe(true);
-    const next = out.nextFromHit as Record<string, number>;
-    for (const type of TYPES) {
-      const shownOfType = (out.results as Row[]).filter(
-        (r) => r.document_type === DISCRIMINATOR[type],
-      ).length;
-      if (shownOfType < Math.min(200, lists[type].length)) expect(next[type]).toBe(shownOfType);
-      else expect(next).not.toHaveProperty(type);
-    }
+    expectNoBound(result);
+    expect(numbers(result)).toEqual(
+      TYPES.flatMap((t) => lists[t].map((r) => [DISCRIMINATOR[t], r.no])),
+    );
+    expect(sc(result).results).toHaveLength(857);
+    expect(sc(result).totalCount).toBe(857);
   });
 
-  it('walks two types from an untyped page to their ends by nextFromHit, each record exactly once', async () => {
+  it('continues each type at from_hit + hits_returned, every record exactly once', async () => {
     const lists: Record<LegalType, Row[]> = {
-      advisory_opinions: range(120).map((i) => padded('ao', i, 2_500)),
+      advisory_opinions: range(130).map((i) => padded('ao', i, 2_500)),
       murs: heavyMurs(45),
       adrs: range(10).map((i) => padded('adr', i, 500)),
       admin_fines: [],
@@ -291,34 +343,41 @@ describe('openfec_search_legal response budget', () => {
     http.route({ match: /\/legal\/search\/\?/, respond: searchUpstream(lists) });
 
     const first = await runToolContract(searchLegal, { query: 'contribution', hits_returned: 60 });
-    expectWithinBudget(first);
-    const seen: Record<string, unknown[]> = { advisory_opinions: [], murs: [] };
-    for (const r of sc(first).results as Row[]) {
-      if (r.document_type === 'advisory_opinion') seen.advisory_opinions!.push(r.no);
-      if (r.document_type === 'mur') seen.murs!.push(r.no);
-    }
-    const firstNext = sc(first).nextFromHit as Record<string, number>;
-    expect(Object.keys(firstNext).sort()).toEqual(['advisory_opinions', 'murs']);
+    expectNoBound(first);
+    const counts = Object.fromEntries(
+      TYPES.map((t) => [
+        t,
+        (sc(first).results as Row[]).filter((r) => r.document_type === DISCRIMINATOR[t]).length,
+      ]),
+    );
+    expect(counts).toEqual({
+      advisory_opinions: 60,
+      murs: 45,
+      adrs: 10,
+      admin_fines: 0,
+      statutes: 0,
+    });
 
-    for (const type of ['advisory_opinions', 'murs'] as const) {
-      let fromHit = firstNext[type]!;
-      for (let call = 0; call < 50 && fromHit < lists[type].length; call++) {
-        const page = await runToolContract(searchLegal, {
-          query: 'contribution',
-          type,
-          from_hit: fromHit,
-          hits_returned: 60,
-        });
-        expectWithinBudget(page);
-        const rows = sc(page).results as Row[];
-        expect(rows.length).toBeGreaterThan(0);
-        seen[type]!.push(...rows.map((r) => r.no));
-        fromHit =
-          (sc(page).nextFromHit as Record<string, number> | undefined)?.[type] ??
-          fromHit + rows.length;
-      }
-      expect(seen[type]).toEqual(lists[type].map((r) => r.no));
+    const seen: unknown[] = (sc(first).results as Row[])
+      .filter((r) => r.document_type === 'advisory_opinion')
+      .map((r) => r.no);
+    const fromHits: number[] = [];
+    for (let fromHit = 60; fromHits.length < 10; fromHit += 60) {
+      fromHits.push(fromHit);
+      const page = await runToolContract(searchLegal, {
+        query: 'contribution',
+        type: 'advisory_opinions',
+        from_hit: fromHit,
+        hits_returned: 60,
+      });
+      expectNoBound(page);
+      const rows = sc(page).results as Row[];
+      seen.push(...rows.map((r) => r.no));
+      if (rows.length < 60) break;
     }
+    expect(fromHits).toEqual([60, 120]);
+    expect(seen).toEqual(lists.advisory_opinions.map((r) => r.no));
+    expect(searchCalls().map((u) => u.searchParams.get('from_hit'))).toEqual(['0', '60', '120']);
   });
 
   it('never reports truncated on a naturally short page', async () => {
@@ -349,36 +408,22 @@ describe('openfec_search_legal response budget', () => {
     expect(out).not.toHaveProperty('truncated');
   });
 
-  it('admits a record whose charge lands exactly on the budget and withholds it one byte later', async () => {
-    const at = async (size: number) => {
-      http.reset();
-      http.route({
-        match: /\/legal\/search\/\?/,
-        respond: searchUpstream({
-          murs: [padded('mur', 0, 40_000), padded('mur', 1, size)],
-        }),
-      });
-      return runToolContract(searchLegal, { type: 'murs', hits_returned: 2 });
-    };
-    let lo = 1_000;
-    let hi = 90_000;
-    while (hi - lo > 1) {
-      const mid = Math.floor((lo + hi) / 2);
-      if ((sc(await at(mid)).results as Row[]).length === 2) lo = mid;
-      else hi = mid;
-    }
+  it('returns a page whose results together pass 100,000 bytes whole, on both surfaces', async () => {
+    const murs = [padded('mur', 0, 60_000), padded('mur', 1, 60_000)];
+    http.route({ match: /\/legal\/search\/\?/, respond: searchUpstream({ murs }) });
 
-    const fits = await at(lo);
-    expect(sc(fits).results).toHaveLength(2);
-    expect(sc(fits)).not.toHaveProperty('truncated');
-    expectWithinBudget(fits);
-    expect(Math.max(...Object.values(surfaces(fits)))).toBeGreaterThan(
-      RESPONSE_BUDGET_BYTES - 2_000,
-    );
+    const result = await runToolContract(searchLegal, { type: 'murs', hits_returned: 2 });
 
-    const over = await at(hi);
-    expect(sc(over).results).toHaveLength(1);
-    expect(sc(over).nextFromHit).toEqual({ murs: 1 });
+    expect(result.isError).toBeFalsy();
+    expectNoBound(result);
+    expect(numbers(result)).toEqual([
+      ['mur', 'mur-0'],
+      ['mur', 'mur-1'],
+    ]);
+    const size = surfaces(result);
+    expect(size.structured).toBeGreaterThan(120_000);
+    expect(size.content).toBeGreaterThan(120_000);
+    expect(text(result)).toContain('**mur-1**');
   });
 
   it('sends the caller hits_returned upstream unchanged', async () => {
@@ -401,7 +446,11 @@ type Slice = { array: string; offset: number; total: number; next_offset?: numbe
 
 describe('openfec_get_legal_document response budget', () => {
   it('returns a record within the budget whole, byte-identical, with no withheld list or slice', async () => {
-    const record = { no: '4229', name: 'SMALL FINE', documents: [{ category: 'A', url: '/x' }] };
+    const record = {
+      no: '4229',
+      name: 'SMALL FINE',
+      documents: [{ category: 'A', url: 'https://www.fec.gov/files/x.pdf' }],
+    };
     docRoute(record);
 
     const result = await runToolContract(getLegalDocument, { doc_type: 'admin_fines', no: '4229' });
@@ -439,11 +488,13 @@ describe('openfec_get_legal_document response budget', () => {
       for (const { array, count, bytes: size } of withheld) {
         expect(document).not.toHaveProperty(array);
         expect(count).toBe((record[array] as unknown[]).length);
-        expect(size).toBe(bytes(JSON.stringify(record[array])));
+        expect(size).toBe(bytes(withAbsoluteLinks(record[array])));
       }
       for (const [field, value] of Object.entries(record)) {
         if (withheld.some((w) => w.array === field)) continue;
-        expect(JSON.stringify(document[field])).toBe(JSON.stringify(value));
+        expect(JSON.stringify({ [field]: document[field] })).toBe(
+          withAbsoluteLinks({ [field]: value }),
+        );
       }
       expect(out.attachedDocumentCount).toBe((record.documents as unknown[]).length);
       const content = text(result);
@@ -497,7 +548,38 @@ describe('openfec_get_legal_document response budget', () => {
 
     expect(calls + 1).toBeGreaterThanOrEqual(3);
     expect(seen).toHaveLength(all.length);
-    expect(JSON.stringify(seen)).toBe(JSON.stringify(all));
+    expect(JSON.stringify(seen)).toBe(withAbsoluteLinks(all));
+  });
+
+  /**
+   * Links are made absolute before the record is measured, so the budget
+   * counts what is sent: here each document link gains 19 bytes, enough that
+   * a documents array measured as upstream sent it would fit when the one
+   * returned does not. Swept across record sizes from well inside the budget
+   * to well past it.
+   */
+  it('holds a record of relative document links to the budget measured after resolving them', async () => {
+    for (let n = 1_000; n <= 2_400; n += 100) {
+      http.reset();
+      docRoute({
+        no: '1',
+        name: 'LINKS',
+        url: '/legal/matter-under-review/1/',
+        documents: range(n).map((i) => ({ category: 'C', url: `/files/legal/murs/1/${i}.pdf` })),
+      });
+
+      const result = await runToolContract(getLegalDocument, { doc_type: 'murs', no: '1' });
+
+      expect(result.isError).toBeFalsy();
+      expectWithinBudget(result);
+      const document = sc(result).document as Row;
+      expect(document.url).toBe('https://www.fec.gov/data/legal/matter-under-review/1/');
+      if (Array.isArray(document.documents)) {
+        expect((document.documents as Row[])[0]?.url).toBe(
+          'https://www.fec.gov/files/legal/murs/1/0.pdf',
+        );
+      }
+    }
   });
 
   it('returns one entry larger than the budget alone, and still advances', async () => {

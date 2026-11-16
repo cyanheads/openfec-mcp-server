@@ -121,7 +121,9 @@ describe('searchLegalTool', () => {
       const input = searchLegalTool.input.parse({ query: 'contribution limits' });
       const result = await searchLegalTool.handler(input, ctx);
 
-      expect(result.results).toEqual(results);
+      expect(result.results).toEqual([
+        { ...results[0], url: 'https://www.fec.gov/data/legal/advisory-opinions/2024-01/' },
+      ]);
       expect(result.total_count).toBe(1);
       expect(mockService.searchLegal).toHaveBeenCalledOnce();
       expect(getEnrichment(ctx).notice).toBeUndefined();
@@ -1247,7 +1249,7 @@ describe('searchLegalTool', () => {
 
       expect(highlights).toEqual(['first, with a comma', 'second match, also with one', 'third']);
       expect(text).toContain(
-        '  highlights:\n    - first, with a comma\n    - second match, also with one\n    - third\n',
+        '  highlights:\n  - first, with a comma\n  - second match, also with one\n  - third\n',
       );
     });
 
@@ -1258,8 +1260,9 @@ describe('searchLegalTool', () => {
 
     /**
      * Live snippets carry line breaks of their own (a MUR's bulleted list,
-     * a wrapped advisory-opinion paragraph), so a continuation line is indented
-     * under its item — otherwise it reads as a highlight, or a field, of its own.
+     * a wrapped advisory-opinion paragraph), so a continuation line sits at its
+     * item's content column — otherwise it reads as a highlight, or a field, of
+     * its own.
      */
     it('keeps a snippet that spans lines inside its own list item', async () => {
       const { highlights, text } = await runHighlights([
@@ -1272,13 +1275,13 @@ describe('searchLegalTool', () => {
         'If a committee receives a contribution that \nappears to be prohibited',
       ]);
       expect(text).toContain(
-        '  highlights:\n    - under reported 10,000\n      • Contribution reported but did not clear bank\n    - If a committee receives a contribution that \n      appears to be prohibited\n',
+        '  highlights:\n  - under reported 10,000\n    • Contribution reported but did not clear bank\n  - If a committee receives a contribution that \n    appears to be prohibited\n',
       );
     });
 
-    it('indents the continuation of a single highlight that spans lines', async () => {
+    it('renders a single highlight that spans lines as a one-item list', async () => {
       const { text } = await runHighlights(['one <em>match</em>\nwrapped']);
-      expect(text).toContain('  highlights: one match\n      wrapped\n');
+      expect(text).toContain('  highlights:\n  - one match\n    wrapped\n');
     });
 
     it('leaves a non-string highlight entry untouched', async () => {
@@ -1355,6 +1358,47 @@ describe('searchLegalTool', () => {
       expect(text).toMatch(/commission_votes: 2025-02-24T00:00:00 — The Commission decided/);
     });
 
+    /**
+     * MUR 8309's live votes, already within the 200-character action cut.
+     * Each action's blank lines stay blank inside its own list item, and the
+     * list closes before the next field, which keeps its own line.
+     */
+    it('keeps each multi-line commission vote in its own list item, the next field after the list', async () => {
+      const votes = [
+        {
+          vote_date: '2025-04-29T00:00:00',
+          action:
+            'The Commission decided by a vote of 4-0 to take the following actions in MUR 8309:\n\n1. Accept the signed Conciliation Agreement, as recommended in the Memorandum to the Commission dated April 3, 2025.',
+        },
+        {
+          vote_date: '2024-08-27T00:00:00',
+          action: 'The Commission failed by a vote of 3-3 to:\n\na. Open a MUR.',
+        },
+      ];
+      mockService.searchLegal.mockResolvedValueOnce({
+        results: [
+          {
+            document_type: 'mur',
+            no: '8309',
+            name: 'Oklahoma Leadership Council',
+            commission_votes: structuredClone(votes),
+            doc_id: 'mur_8309',
+          },
+        ],
+        totalCount: 1,
+      });
+
+      const result = await runToolContract(searchLegalTool, { type: 'murs', case_number: '8309' });
+
+      expect(result.isError).toBeFalsy();
+      const [doc] = (result.structuredContent as { results: Array<Record<string, unknown>> })
+        .results;
+      expect(doc?.commission_votes).toEqual(votes);
+      expect(contentText(result)).toContain(
+        '**8309** — Oklahoma Leadership Council\n  commission_votes:\n  - 2025-04-29T00:00:00 — The Commission decided by a vote of 4-0 to take the following actions in MUR 8309:\n\n    1. Accept the signed Conciliation Agreement, as recommended in the Memorandum to the Commission dated April 3, 2025.\n  - 2024-08-27T00:00:00 — The Commission failed by a vote of 3-3 to:\n\n    a. Open a MUR.\n\n  doc_id: mur_8309',
+      );
+    });
+
     it('heads an archived MUR by mur_name', async () => {
       mockService.searchLegal.mockResolvedValueOnce({
         results: [asResult('mur_1704', 'mur')],
@@ -1396,6 +1440,63 @@ describe('searchLegalTool', () => {
     });
   });
 
+  describe('record links', () => {
+    /** One result through the full contract: its structured record and the content[] text. */
+    const runOne = async (record: Record<string, unknown>, args: Record<string, unknown>) => {
+      mockService.searchLegal.mockResolvedValueOnce({ results: [record], totalCount: 1 });
+      const result = await runToolContract(searchLegalTool, args);
+      expect(result.isError).toBeFalsy();
+      const [doc] = (result.structuredContent as { results: Array<Record<string, unknown>> })
+        .results;
+      return { doc: doc!, text: contentText(result) };
+    };
+
+    it('serves a case record page under fec.gov/data on both surfaces', async () => {
+      const { doc, text } = await runOne(asResult('mur_8343', 'mur'), {
+        type: 'murs',
+        case_number: '8343',
+      });
+
+      const page = 'https://www.fec.gov/data/legal/matter-under-review/8343/';
+      expect(doc.url).toBe(page);
+      expect(text).toContain(`  url: [8343](<${page}>)`);
+    });
+
+    it('gives an advisory opinion, which upstream sends without a url, its fec.gov page', async () => {
+      const { doc, text } = await runOne(asResult('ao_2003_37', 'advisory_opinion'), {
+        type: 'advisory_opinions',
+        ao_number: '2003-37',
+      });
+
+      const page = 'https://www.fec.gov/data/legal/advisory-opinions/2003-37/';
+      expect(LIVE.ao_2003_37).not.toHaveProperty('url');
+      expect(doc.url).toBe(page);
+      expect(text).toContain(`  url: [2003-37](<${page}>)`);
+    });
+
+    it('passes an absolute statute url through unchanged, rendered as a link', async () => {
+      const govinfo = 'https://www.govinfo.gov/link/uscode/26/9001';
+      const { doc, text } = await runOne(
+        { document_type: 'statute', no: '9001', name: 'Definitions', url: govinfo },
+        { type: 'statutes', query: 'definitions' },
+      );
+
+      expect(doc.url).toBe(govinfo);
+      expect(text).toContain(`  url: [9001](<${govinfo}>)`);
+    });
+
+    it('fabricates no url for a case record upstream sends without one', async () => {
+      const { doc, text } = await runOne(asResult('mur_1704', 'mur'), {
+        type: 'murs',
+        case_number: '1704',
+      });
+
+      expect(LIVE.mur_1704).not.toHaveProperty('url');
+      expect(doc).not.toHaveProperty('url');
+      expect(text).not.toContain('url:');
+    });
+  });
+
   describe('format', () => {
     it('renders the criteria echo on a non-empty response', () => {
       const blocks = searchLegalTool.format!({
@@ -1427,6 +1528,28 @@ describe('searchLegalTool', () => {
       expect(text).toContain('**2024-02**');
       expect(text).toContain('**MUR-7890**');
       expect(text).toContain('3 total matching document(s)');
+    });
+
+    /** The service flattens an untyped answer in upstream's type order; the headings keep it. */
+    it('heads the type groups in the order their results arrive, not alphabetically', () => {
+      const blocks = searchLegalTool.format!({
+        results: [
+          { document_type: 'advisory_opinion', ao_no: '2024-01', name: 'Test AO' },
+          { document_type: 'mur', no: '7890', name: 'MUR Case' },
+          { document_type: 'admin_fine', no: '4229', name: 'Fine Case' },
+        ],
+        total_count: 3,
+        search_criteria: { query: 'contribution' },
+      });
+
+      const headings = formatText(blocks)
+        .split('\n')
+        .filter((line) => line.startsWith('### '));
+      expect(headings).toEqual([
+        '### Advisory Opinion',
+        '### Matter Under Review (MUR)',
+        '### Administrative Fine',
+      ]);
     });
 
     it('renders penalty amounts', () => {

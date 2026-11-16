@@ -84,7 +84,7 @@
             "document_id": 100470322,
             "filename": "XXXXXXXXXXX",
             "length": 840503,
-            "url": ""
+            "url": "/files/legal/murs/6916/"
           },
           "pad": "url",
           "sizes": [
@@ -211,7 +211,7 @@
         }
       },
       "type": "murs",
-      "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      "url": "/legal/matter-under-review/6916/"
     }
   },
   "mur_7594": {
@@ -237,7 +237,7 @@
                 "text": "XXXXXXXXXXX",
                 "title": "52",
                 "type": "statute",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "https://www.govinfo.gov/link/uscode/52/30104"
               }
             ],
             "disposition": "No Reason to Believe",
@@ -282,7 +282,7 @@
             "document_id": 100496144,
             "filename": "XXXXXXXX",
             "length": 1452203,
-            "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+            "url": "/files/legal/murs/7594/7594_101.pdf"
           },
           "pad": "description",
           "sizes": [
@@ -397,7 +397,7 @@
         }
       },
       "type": "murs",
-      "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      "url": "/legal/matter-under-review/7594/"
     }
   },
   "mur_8123": {
@@ -423,79 +423,79 @@
                 "text": "XXXXXXXXXXXXX",
                 "title": "52",
                 "type": "statute",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "https://www.govinfo.gov/link/uscode/52/30104"
               },
               {
                 "text": "XXXXXXXX",
                 "title": "52",
                 "type": "statute",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "https://www.govinfo.gov/link/uscode/52/30104"
               },
               {
                 "text": "XXXXXXXX",
                 "title": "52",
                 "type": "statute",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "https://www.govinfo.gov/link/uscode/52/30104"
               },
               {
                 "text": "XXXXXXXX",
                 "title": "52",
                 "type": "statute",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "https://www.govinfo.gov/link/uscode/52/30104"
               },
               {
                 "text": "XXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/100-26/CURRENT"
               },
               {
                 "text": "XXXXXXXXXXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/100-26/CURRENT"
               },
               {
                 "text": "XXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/100-26/CURRENT"
               },
               {
                 "text": "XXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/100-26/CURRENT"
               },
               {
                 "text": "XXXXXXXXXXXXXXXXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/104-130/CURRENT"
               },
               {
                 "text": "XXXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/104-130/CURRENT"
               },
               {
                 "text": "XXXXXXXXXXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/100-26/CURRENT"
               },
               {
                 "text": "XXXXXXXXXXXXXXXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/100-26/CURRENT"
               },
               {
                 "text": "XXXXXXXX",
                 "title": "11",
                 "type": "regulation",
-                "url": "XXXXXXXXXXXXXXXXXXXXXXXXXX"
+                "url": "/regulations/110-1/CURRENT"
               }
             ],
             "disposition": "Dismissed-Other",
@@ -523,7 +523,7 @@
             "document_id": 100512291,
             "filename": "XXXXXXX",
             "length": 902412,
-            "url": ""
+            "url": "/files/legal/murs/8123/"
           },
           "pad": "url",
           "sizes": [
@@ -580,7 +580,7 @@
         }
       },
       "type": "murs",
-      "url": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+      "url": "/legal/matter-under-review/8123/"
     }
   }
 }

@@ -14,21 +14,41 @@ import { getOpenFecService, LEGAL_DOC_TYPES } from '@/services/openfec/openfec-s
 import {
   buildSearchCriteria,
   formatSearchCriteria,
+  type RecordFieldRenderer,
   renderRecord,
   SearchCriteriaSchema,
 } from './utils/format-helpers.js';
 import {
+  block,
   LEGAL_FIELD_RENDERERS,
   legalDocumentNumber,
   legalDocumentTitle,
+  listItem,
+  resolveLegalLinks,
 } from './utils/legal-field-renderers.js';
-import {
-  enrichmentTrailerBytes,
-  RESPONSE_BUDGET_BYTES,
-  utf8Bytes,
-} from './utils/trim-schedule-row.js';
 
 type LegalRecord = Record<string, unknown>;
+
+/**
+ * Bytes each response surface — `structuredContent` and `content[]`,
+ * independently — is held to. One record has no page size a caller could set,
+ * so a record past this is returned without the arrays that do not fit.
+ */
+export const RESPONSE_BUDGET_BYTES = 100_000;
+
+const utf8 = new TextEncoder();
+
+/** UTF-8 byte length of `text` — the unit {@link RESPONSE_BUDGET_BYTES} is counted in. */
+export const utf8Bytes = (text: string): number => utf8.encode(text).length;
+
+/**
+ * An upper bound on the `content[]` bytes the framework's enrichment trailer
+ * adds for these rendered field lines: the block it opens with a blank line,
+ * the separator a reader joining text blocks inserts, and at most a blank line
+ * between fields.
+ */
+export const enrichmentTrailerBytes = (lines: readonly string[]): number =>
+  lines.reduce((sum, line) => sum + utf8Bytes(line) + 2, 3);
 
 /**
  * Record arrays rendered as their own blocks, every field of every entry — the
@@ -47,7 +67,7 @@ const LegalDocumentOutputSchema = z.object({
   document: z
     .looseObject({})
     .describe(
-      "The legal document record, fields as upstream sends them — the full documents array openfec_search_legal summarizes, the complete dispositions and commission_votes entries, and the scalar and date fields (name, type, url, penalty and determination amounts, case dates). Whole when it fits the 100,000-byte response budget; otherwise the scalar fields and the arrays that fit, with the rest in withheld. With array set, the record's non-array fields only — the entries are in slice. Fields present vary by document type.",
+      "The legal document record, fields as upstream sends them except that every link is absolute — the full documents array openfec_search_legal summarizes, the complete dispositions and commission_votes entries, and the scalar and date fields (name, type, url, penalty and determination amounts, case dates). url is the record's page (an advisory opinion's is built from its number); each documents[].url is the file on fec.gov. Whole when it fits the 100,000-byte response budget; otherwise the scalar fields and the arrays that fit, with the rest in withheld. With array set, the record's non-array fields only — the entries are in slice. Fields present vary by document type.",
     ),
   withheld: z
     .array(
@@ -92,16 +112,41 @@ type WithheldArray = NonNullable<LegalDocumentOutput['withheld']>[number];
 type ArraySlice = NonNullable<LegalDocumentOutput['slice']>;
 
 /**
- * One array entry as a numbered item. Entries of the three section arrays show
- * every field, as their whole-record sections do; an entry of any other array
- * takes that array's legal field rendering when it has one.
+ * Field renderers for one entry: a field's legal rendering where it has one,
+ * and any text of it that spans lines as a list item under its key, so a line
+ * that reads as a list marker ("1. Accept…") or follows a blank line stays
+ * inside that field.
+ */
+function entryRenderers(entry: LegalRecord): Record<string, RecordFieldRenderer> {
+  return Object.fromEntries(
+    Object.keys(entry).map((key): [string, RecordFieldRenderer] => [
+      key,
+      (value) => {
+        const rendered = LEGAL_FIELD_RENDERERS[key]?.(value);
+        if (rendered != null) return rendered.startsWith('\n') ? rendered : block([rendered]);
+        return typeof value === 'string' && value !== '' ? block([value]) : null;
+      },
+    ]),
+  );
+}
+
+/**
+ * One array entry as one CommonMark list item numbered by its position, its
+ * further lines at the item's content column. Entries of the three section
+ * arrays show every field, one per line, as their whole-record sections do; an
+ * entry of any other array takes that array's legal field rendering when it
+ * has one.
  */
 function renderEntry(array: string, entry: unknown, position: number): string {
-  if (typeof entry !== 'object' || entry === null) return `${position}. ${String(entry)}`;
+  const marker = `${position}. `;
+  if (typeof entry !== 'object' || entry === null) return listItem(marker, String(entry));
   const compact = SECTION_KEYS.has(array) ? null : LEGAL_FIELD_RENDERERS[array]?.([entry]);
-  if (compact) return `${position}. ${compact}`;
-  const fields = renderRecord(entry as LegalRecord, undefined, LEGAL_FIELD_RENDERERS);
-  return fields ? `${position}.\n${fields}` : `${position}. (no detail)`;
+  if (compact) return listItem(marker, compact);
+  const record = entry as LegalRecord;
+  const fields = renderRecord(record, undefined, entryRenderers(record));
+  if (!fields) return `${marker}(no detail)`;
+  /** renderRecord indents each field line two spaces; the item's content column takes their place. */
+  return listItem(marker, fields.replaceAll(/(?<=^|\n) {2}/g, ''));
 }
 
 /** Render one whole array section as a heading and its numbered entries. */
@@ -199,7 +244,7 @@ const sliceNotice = (array: string, total: number, next: number): string =>
 
 export const getLegalDocument = tool('openfec_get_legal_document', {
   description:
-    "Fetch one FEC legal document — advisory opinion, MUR, ADR, administrative fine, or statute — by its type and number. openfec_search_legal replaces each result's documents and dispositions arrays with a count and category summary and cuts every commission vote down to a date and a 200-character action; this returns the record as upstream sends it, whole when it fits the 100,000-byte response budget. A larger record returns its scalar fields and the arrays that fit, with the rest listed in withheld; page through one by re-calling with array and offset. doc_type is the plural form of the document_type discriminator on a search result (advisory_opinion becomes advisory_opinions, mur becomes murs, adr becomes adrs, admin_fine becomes admin_fines, statute becomes statutes), and no is that result's no field — every document type carries it, and advisory opinions repeat it as ao_no.",
+    "Fetch one FEC legal document — advisory opinion, MUR, ADR, administrative fine, or statute — by its type and number. openfec_search_legal replaces each result's documents and dispositions arrays with a count and category summary and cuts every commission vote down to a date and a 200-character action; this returns the record as upstream sends it, with every link made absolute, whole when it fits the 100,000-byte response budget. A larger record returns its scalar fields and the arrays that fit, with the rest listed in withheld; page through one by re-calling with array and offset. doc_type is the plural form of the document_type discriminator on a search result (advisory_opinion becomes advisory_opinions, mur becomes murs, adr becomes adrs, admin_fine becomes admin_fines, statute becomes statutes), and no is that result's no field — every document type carries it, and advisory opinions repeat it as ao_no.",
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   errors: [
@@ -285,9 +330,9 @@ export const getLegalDocument = tool('openfec_get_legal_document', {
     const fec = getOpenFecService();
 
     ctx.log.info('Fetching legal document', { doc_type: input.doc_type, no: input.no });
-    const record = await fec.getLegalDocument(input.doc_type, input.no, ctx);
+    const fetched = await fec.getLegalDocument(input.doc_type, input.no, ctx);
 
-    if (!record) {
+    if (!fetched) {
       throw ctx.fail(
         'legal_document_not_found',
         `No ${input.doc_type} record numbered "${input.no}".`,
@@ -298,6 +343,8 @@ export const getLegalDocument = tool('openfec_get_legal_document', {
       );
     }
 
+    /** Links are made absolute before anything is measured, so the budget counts what is sent. */
+    const record = resolveLegalLinks(fetched, input.doc_type);
     const attached = Array.isArray(record.documents) ? record.documents.length : 0;
     ctx.enrich({ attachedDocumentCount: attached });
 

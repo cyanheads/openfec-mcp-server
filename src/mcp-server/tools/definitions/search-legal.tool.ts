@@ -26,13 +26,9 @@ import {
   LEGAL_FIELD_RENDERERS,
   legalDocumentNumber,
   legalDocumentTitle,
+  resolveLegalLinks,
 } from './utils/legal-field-renderers.js';
 import { validateRange } from './utils/range-validators.js';
-import {
-  enrichmentTrailerBytes,
-  RESPONSE_BUDGET_BYTES,
-  utf8Bytes,
-} from './utils/trim-schedule-row.js';
 
 /**
  * `/legal/search/` runs on OpenSearch, whose result window serves a request
@@ -228,16 +224,6 @@ const typeOfDocument = (docType: string): LegalDocType =>
 const RETRIEVAL_HINT =
   "Every result above is trimmed: the documents array is replaced by document_count and document_categories, the dispositions array by disposition_count and disposition_categories, per-document highlights are dropped and the highlights list is capped at three, and each commission_vote is cut to its vote_date and a 200-character action. Retrieve the untrimmed documents, dispositions, and commission_votes with openfec_get_legal_document, passing doc_type as the result document_type made plural (advisory_opinion to advisory_opinions, mur to murs) and no as the result's no field.";
 
-/** `murs from_hit 34, adrs from_hit 12` — the continuation of each bounded type. */
-const describeNextFromHit = (next: Readonly<Record<string, number>>): string =>
-  Object.entries(next)
-    .map(([type, fromHit]) => `${type} from_hit ${fromHit}`)
-    .join(', ');
-
-/** The notice a bounded page carries: what was held back and how each type continues. */
-const boundNotice = (shown: number, next: Readonly<Record<string, number>>): string =>
-  `Response bounded to ${shown} result(s): the rest of this page would exceed the 100,000-byte response budget. Continue a type by re-calling with the same filters, type set to it, and from_hit set to its nextFromHit value (${describeNextFromHit(next)}). Nothing is skipped.`;
-
 const HEADER_KEYS = new Set(['ao_no', 'case_no', 'no', 'name', 'document_type']);
 /** An archived MUR is headed by its mur_name, so that line is not repeated below the header. */
 const ARCHIVED_HEADER_KEYS = new Set([...HEADER_KEYS, 'mur_name']);
@@ -261,32 +247,24 @@ function renderResult(doc: LegalRecord): string {
   return fields ? `${header}\n${fields}` : header;
 }
 
-/** Results grouped by `document_type`, in the order each type first appears. */
-function groupByType<T>(
-  docs: readonly LegalRecord[],
-  map: (doc: LegalRecord) => T,
-): Map<string, T[]> {
-  const grouped = new Map<string, T[]>();
-  for (const doc of docs) {
-    const docType = String(doc.document_type ?? 'unknown');
-    let group = grouped.get(docType);
-    if (!group) {
-      group = [];
-      grouped.set(docType, group);
-    }
-    group.push(map(doc));
-  }
-  return grouped;
-}
-
-/** Rendered results under their type headings, then the total and the criteria echo. */
+/**
+ * Rendered results under a heading per `document_type`, in the order each type
+ * first appears, then the total and the criteria echo.
+ */
 function assembleText(
-  groups: ReadonlyMap<string, readonly string[]>,
+  docs: readonly LegalRecord[],
   totalCount: number,
   criteria: Record<string, unknown>,
 ): string {
+  const grouped = new Map<string, string[]>();
+  for (const doc of docs) {
+    const docType = String(doc.document_type ?? 'unknown');
+    const group = grouped.get(docType);
+    if (group) group.push(renderResult(doc));
+    else grouped.set(docType, [renderResult(doc)]);
+  }
   const sections: string[] = [];
-  for (const [docType, items] of groups) {
+  for (const [docType, items] of grouped) {
     sections.push(`### ${typeLabels[docType] ?? docType}\n${items.join('\n\n')}`);
   }
   sections.push(`\n_${totalCount} total matching document(s)_`);
@@ -295,61 +273,9 @@ function assembleText(
   return sections.join('\n\n');
 }
 
-/**
- * What one result costs against the budget: the larger of its bytes on each
- * surface, with the separator that joins it to its neighbours.
- */
-const resultCharge = (doc: LegalRecord): number =>
-  Math.max(utf8Bytes(JSON.stringify(doc)) + 1, utf8Bytes(renderResult(doc)) + 2);
-
-/**
- * Admit whole results within `available` bytes, one per document type per
- * round so every type that matched is represented. A type whose next result
- * does not fit is closed and the others continue, so each type's admitted
- * results are a prefix of its own list and `from_hit` plus that count resumes
- * it exactly. The first result is admitted whatever its size, so a walk always
- * advances. Returns the admitted results in their original order and, for each
- * type with results held back, how many of its results were admitted. Each
- * result is measured at most once.
- */
-function admitRoundRobin(
-  results: readonly LegalRecord[],
-  available: number,
-): { admitted: LegalRecord[]; heldBack: Map<string, number> } {
-  const groups = groupByType(results, (doc) => doc);
-  const perType = new Map<string, number>([...groups.keys()].map((type) => [type, 0]));
-  let open = [...groups.keys()];
-  let remaining = available;
-  let first = true;
-  while (open.length > 0) {
-    open = open.filter((type) => {
-      const group = groups.get(type) as LegalRecord[];
-      const count = perType.get(type) as number;
-      if (count === group.length) return false;
-      const charge = resultCharge(group[count] as LegalRecord);
-      if (charge > remaining && !first) return false;
-      first = false;
-      remaining -= charge;
-      perType.set(type, count + 1);
-      return true;
-    });
-  }
-  const taken = new Map<string, number>();
-  const admitted = results.filter((doc) => {
-    const docType = String(doc.document_type ?? 'unknown');
-    const index = taken.get(docType) ?? 0;
-    taken.set(docType, index + 1);
-    return index < (perType.get(docType) as number);
-  });
-  const heldBack = new Map(
-    [...perType].filter(([type, count]) => count < (groups.get(type) as LegalRecord[]).length),
-  );
-  return { admitted, heldBack };
-}
-
 export const searchLegal = tool('openfec_search_legal', {
   description:
-    'Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, administrative fines, and statutes. The citation, penalty, respondent, ao_number, and case_number filters each apply to only some document types; with type omitted, the search returns only the types every one of them applies to. Each response is held to 100,000 bytes: when a page would exceed it, whole results are held back and nextFromHit gives the from_hit that continues each document type.',
+    'Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, administrative fines, and statutes. The citation, penalty, respondent, ao_number, and case_number filters each apply to only some document types; with type omitted, the search returns only the types every one of them applies to. A page carries every result upstream returns, up to hits_returned of each document type searched; the next page starts at from_hit + hits_returned.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   errors: [
@@ -472,7 +398,7 @@ export const searchLegal = tool('openfec_search_legal', {
       .max(RESULT_WINDOW - 1)
       .default(0)
       .describe(
-        'Offset for pagination (0-indexed), counted within each document type rather than across them. Default 0. When a response is bounded, nextFromHit gives the value that continues each type. The search index serves a 10,000-result window, so from_hit plus hits_returned must be 10,000 or less — the ceiling here assumes hits_returned of 1.',
+        'Offset for pagination (0-indexed), counted within each document type rather than across them. Default 0. The next page starts at from_hit + hits_returned; a type that returned fewer than hits_returned has no more. The search index serves a 10,000-result window, so from_hit plus hits_returned must be 10,000 or less — the ceiling here assumes hits_returned of 1.',
       ),
     hits_returned: z
       .number()
@@ -481,7 +407,7 @@ export const searchLegal = tool('openfec_search_legal', {
       .max(200)
       .default(20)
       .describe(
-        'Results per page, applied per document type. Default 20, max 200. A response is held to 100,000 bytes, so a page of large records can carry fewer, with nextFromHit naming where each type continues. Bounded together with from_hit by the 10,000-result window.',
+        'Results per page, applied per document type: a search covering several types returns up to this many of each. Default 20, max 200. Bounded together with from_hit by the 10,000-result window.',
       ),
   }),
 
@@ -491,11 +417,11 @@ export const searchLegal = tool('openfec_search_legal', {
         z
           .looseObject({})
           .describe(
-            'Legal document record. The document_type field discriminates among advisory_opinion, mur, adr, admin_fine, and statute. Common fields include no (the identifier every type carries, and the one openfec_get_legal_document takes; advisory opinions repeat it as ao_no), name, document_type, document_count and document_categories summarizing the related filings, and disposition_count and disposition_categories summarizing the dispositions.',
+            'Legal document record. The document_type field discriminates among advisory_opinion, mur, adr, admin_fine, and statute. Common fields include no (the identifier every type carries, and the one openfec_get_legal_document takes; advisory opinions repeat it as ao_no), name, document_type, url (the absolute link to the record page — on fec.gov for advisory opinions, MURs, ADRs, and administrative fines, on govinfo.gov for statutes; built from the opinion number for an advisory opinion upstream sends without one, and absent for any other record upstream sends without one), document_count and document_categories summarizing the related filings, and disposition_count and disposition_categories summarizing the dispositions.',
           ),
       )
       .describe(
-        'Legal document result set spanning advisory opinions, MURs, ADRs, admin fines, and statutes — only the types searched. Grouped by type in upstream order; when truncated is set, each type holds its first results up to the response budget.',
+        'Legal document result set spanning advisory opinions, MURs, ADRs, admin fines, and statutes — only the types searched. Grouped by type in upstream order.',
       ),
     total_count: z
       .number()
@@ -513,7 +439,7 @@ export const searchLegal = tool('openfec_search_legal', {
       .string()
       .optional()
       .describe(
-        'Guidance on the page returned: how to broaden a search that matched nothing, that from_hit ran past the end when documents did match, or — when truncated is set — how each document type continues.',
+        'Guidance on an empty page: how to broaden a search that matched nothing, or that from_hit ran past the end when documents did match.',
       ),
     retrievalHint: z
       .string()
@@ -521,31 +447,10 @@ export const searchLegal = tool('openfec_search_legal', {
       .describe(
         'How to recover the material trimmed out of these results. Present whenever any result was returned, because every result is trimmed.',
       ),
-    truncated: z
-      .boolean()
-      .optional()
-      .describe(
-        'True when results upstream returned for this page were held back because the next one would take the response past its 100,000-byte budget. Absent when the page is complete, including a naturally short page and an offset past the end.',
-      ),
-    shown: z
-      .number()
-      .optional()
-      .describe('Results in this response. Present only when truncated is true.'),
-    nextFromHit: z
-      .record(z.string(), z.number())
-      .optional()
-      .describe(
-        'The from_hit that continues each document type with results held back, keyed by the value to pass as type (advisory_opinions, murs, adrs, admin_fines, statutes). Re-call with the same filters, that type, and this from_hit. Present only when truncated is true.',
-      ),
   },
 
   enrichmentTrailer: {
     retrievalHint: { label: 'Full records' },
-    truncated: { label: 'Bounded by the response budget' },
-    shown: { label: 'Results in this response' },
-    nextFromHit: {
-      render: (next) => `**Next from_hit per type:** ${describeNextFromHit(next ?? {})}`,
-    },
   },
 
   async handler(input, ctx) {
@@ -784,7 +689,8 @@ export const searchLegal = tool('openfec_search_legal', {
      * Every result is trimmed: its related-filing and disposition arrays become
      * a count and category summary, highlights lose their match markup and stop
      * at three, and commission votes are cut to a date and a short action.
-     * openfec_get_legal_document returns what is trimmed here.
+     * openfec_get_legal_document returns what is trimmed here. Its links are
+     * made absolute, as that tool's are.
      */
     const trimmed = results.map((doc) => {
       const d = { ...doc };
@@ -826,60 +732,12 @@ export const searchLegal = tool('openfec_search_legal', {
         }));
       }
 
-      return d;
+      return resolveLegalLinks(d, typeOfDocument(doc.document_type));
     });
 
-    const searchCriteria = buildSearchCriteria(input);
-
-    /**
-     * Hold the response to the budget on both surfaces. The envelope — every
-     * byte that is not a result — is reserved at its largest: headings for
-     * every type fetched, the total and criteria lines, and the enrichment a
-     * bounded page carries with each type's continuation at its highest.
-     */
-    const deepestNext = Object.fromEntries(
-      [...new Set(trimmed.map((doc) => doc.document_type))].map((docType) => [
-        typeOfDocument(docType),
-        input.from_hit + input.hits_returned,
-      ]),
-    );
-    const deepestNotice = boundNotice(trimmed.length, deepestNext);
-    const envelope = Math.max(
-      utf8Bytes(
-        JSON.stringify({
-          results: [],
-          total_count: totalCount,
-          search_criteria: searchCriteria,
-          totalCount,
-          retrievalHint: RETRIEVAL_HINT,
-          truncated: true,
-          shown: trimmed.length,
-          nextFromHit: deepestNext,
-          notice: deepestNotice,
-        }),
-      ),
-      utf8Bytes(
-        assembleText(
-          groupByType(trimmed, () => ''),
-          totalCount,
-          searchCriteria,
-        ),
-      ) +
-        enrichmentTrailerBytes([
-          `**${totalCount} total**`,
-          `**Full records:** ${RETRIEVAL_HINT}`,
-          '**Bounded by the response budget:** true',
-          `**Results in this response:** ${trimmed.length}`,
-          `**Next from_hit per type:** ${describeNextFromHit(deepestNext)}`,
-          `> ${deepestNotice}`,
-        ]),
-    );
-    const { admitted, heldBack } = admitRoundRobin(trimmed, RESPONSE_BUDGET_BYTES - envelope);
-
     ctx.enrich.total(totalCount);
-    const notices: string[] = [];
-    if (admitted.length === 0) {
-      notices.push(
+    if (trimmed.length === 0) {
+      ctx.enrich.notice(
         totalCount > 0
           ? describeExhaustedPosition({ kind: 'offset', total_count: totalCount })
           : 'No legal documents matched. Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
@@ -887,19 +745,11 @@ export const searchLegal = tool('openfec_search_legal', {
     } else {
       ctx.enrich({ retrievalHint: RETRIEVAL_HINT });
     }
-    if (heldBack.size > 0) {
-      const nextFromHit = Object.fromEntries(
-        [...heldBack].map(([docType, count]) => [typeOfDocument(docType), input.from_hit + count]),
-      );
-      ctx.enrich({ truncated: true, shown: admitted.length, nextFromHit });
-      notices.push(boundNotice(admitted.length, nextFromHit));
-    }
-    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     return {
-      results: admitted,
+      results: trimmed,
       total_count: totalCount,
-      search_criteria: searchCriteria,
+      search_criteria: buildSearchCriteria(input),
     };
   },
 
@@ -916,11 +766,7 @@ export const searchLegal = tool('openfec_search_legal', {
         'Try different search terms, remove the type filter to search all document types, or check the ao_number/case_number format.',
       );
     }
-    const text = assembleText(
-      groupByType(result.results, renderResult),
-      result.total_count,
-      result.search_criteria,
-    );
+    const text = assembleText(result.results, result.total_count, result.search_criteria);
     return [{ type: 'text', text }];
   },
 });
