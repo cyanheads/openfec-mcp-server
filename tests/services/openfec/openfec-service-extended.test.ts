@@ -23,7 +23,10 @@ vi.mock('@/config/server-config.js', () => ({
 vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   fetchWithTimeout: vi.fn(),
-  withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
+  withRetry: vi.fn(
+    (fn: (attempt: { remainingMs: number; signal: AbortSignal }) => Promise<unknown>) =>
+      fn({ remainingMs: Number.POSITIVE_INFINITY, signal: new AbortController().signal }),
+  ),
 }));
 
 import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
@@ -583,6 +586,104 @@ describe('outbound parameter-name guard', () => {
         sort_null_only: false,
       }),
     ).not.toThrow();
+  });
+
+  it('accepts every name /schedules/schedule_a/ declares', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_a/', {
+        image_number: '202407209661626669',
+        min_image_number: '1',
+        max_image_number: '9',
+        min_amount: 200,
+        max_amount: 5_000,
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+        committee_id: 'C00401224',
+        contributor_id: 'C00030718',
+        contributor_name: 'Bloomberg, Michael',
+        contributor_city: 'Seattle',
+        contributor_state: 'WA',
+        contributor_zip: '98101',
+        contributor_employer: 'Anthropic',
+        contributor_occupation: 'Engineer',
+        last_contribution_receipt_date: '2026-09-30',
+        last_contribution_receipt_amount: '982000.00',
+        line_number: 'F3X-11AI',
+        is_individual: true,
+        contributor_type: 'individual',
+        two_year_transaction_period: 2024,
+        recipient_committee_type: 'P',
+        recipient_committee_org_type: 'C',
+        recipient_committee_designation: 'P',
+        min_load_date: '2024-01-01',
+        max_load_date: '2024-12-31',
+        per_page: 100,
+        last_index: '4111220261658019151',
+        sort: '-contribution_receipt_date',
+        sort_hide_null: false,
+        sort_null_only: false,
+      }),
+    ).not.toThrow();
+  });
+
+  /** The `last_indexes` keys a live page hands back under the date and amount sorts. */
+  it('accepts the keyset cursor keys Schedule A hands back', () => {
+    expect(() =>
+      assertKnownParams('/schedules/schedule_a/', {
+        committee_id: 'C00718866',
+        two_year_transaction_period: 2026,
+        per_page: 3,
+        last_contribution_receipt_date: '2026-09-30',
+        last_index: '4111220261658019151',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertKnownParams('/schedules/schedule_a/', {
+        committee_id: 'C00718866',
+        two_year_transaction_period: 2026,
+        per_page: 3,
+        sort: '-contribution_receipt_amount',
+        last_contribution_receipt_amount: '982000.00',
+        last_index: '4111220261658016550',
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ['candidate_id', { candidate_id: 'P00003392' }],
+    ['cycle', { cycle: 2024 }],
+    ['sort_nulls_last', { sort_nulls_last: true }],
+  ])('rejects %s aimed at /schedules/schedule_a/', (field, params) => {
+    let err: McpError | undefined;
+    try {
+      assertKnownParams('/schedules/schedule_a/', { committee_id: 'C00401224', ...params });
+    } catch (e) {
+      err = e as McpError;
+    }
+    expect(err?.data).toMatchObject({
+      endpoint: '/schedules/schedule_a/',
+      unknown_parameters: [field],
+    });
+  });
+
+  it('accepts the names a candidate totals walk sends, and rejects a tool-only input', () => {
+    expect(() =>
+      assertKnownParams('/candidates/totals/', {
+        candidate_id: ['H8CA52052', 'S6GA00119'],
+        cycle: 2026,
+        election_year: 2026,
+        election_full: true,
+        page: 2,
+        per_page: 100,
+        sort: '-cycle',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertKnownParams('/candidates/totals/', {
+        candidate_id: ['H8CA52052'],
+        include_totals: true,
+      }),
+    ).toThrow(/include_totals/);
   });
 
   it('rejects an itemized filter name aimed at the by_candidate endpoint', () => {

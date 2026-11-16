@@ -28,7 +28,10 @@ vi.mock('@/config/server-config.js', () => ({ getServerConfig: () => config }));
 vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   fetchWithTimeout: vi.fn(),
-  withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
+  withRetry: vi.fn(
+    (fn: (attempt: { remainingMs: number; signal: AbortSignal }) => Promise<unknown>) =>
+      fn({ remainingMs: Number.POSITIVE_INFINITY, signal: new AbortController().signal }),
+  ),
 }));
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
@@ -43,6 +46,13 @@ import {
   initOpenFecService,
   OpenFecService,
 } from '@/services/openfec/openfec-service.js';
+import {
+  candidateIds,
+  candidateRows,
+  later,
+  newestFirst,
+  totalsPage,
+} from './candidate-totals-upstream.js';
 import {
   COMMITTEES,
   type CommitteeRecord,
@@ -1606,5 +1616,545 @@ describe('getCommitteeTotalsAllCycles', () => {
         expect(attempts).toBe(2);
       },
     );
+  });
+});
+
+/**
+ * The candidate totals walk, through the real `fetchWithTimeout` and
+ * `withRetry` against a fake `/candidates/totals/` that filters, sorts, and
+ * pages as OpenFEC does, reshuffling the rows that tie on the sort column on
+ * every request.
+ */
+describe('getAllCandidateTotals', () => {
+  type Row = Record<string, unknown>;
+  const TOTALS = /^https:\/\/api\.open\.fec\.gov\/v1\/candidates\/totals\//;
+  /**
+   * 60 candidates of 7 cycles each: 420 rows. Ordered by candidate, a page of
+   * 100 holds 14 candidates whole and 2 rows of the 15th, so each full
+   * request reads 14 candidates and the walk takes 5 requests.
+   */
+  const IDS = candidateIds(60);
+  const ROWS = IDS.flatMap((id) => candidateRows(id, 7));
+  const CALLER_PARAMS = { candidate_id: IDS, cycle: 2026 };
+  /** Every row of `ids`, in the order the walk returns rows. */
+  const rowsFor = (ids: string[], rows: Row[] = ROWS) =>
+    newestFirst(rows.filter((row) => ids.includes(String(row.candidate_id))));
+
+  let http: FetchMockHarness;
+  let svc: OpenFecService;
+  let ctx: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockImplementation(realUtils.fetchWithTimeout);
+    mockWithRetry.mockImplementation(realUtils.withRetry);
+    http = createFetchMock();
+    http.install();
+    svc = new OpenFecService();
+    ctx = createMockContext();
+    calls = 0;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    http.restore();
+    mockFetch.mockReset();
+    mockWithRetry.mockReset();
+    config.fecMaxRetries = 0;
+    config.fecRequestTimeout = 5000;
+  });
+
+  type Respond = (request: Request) => Response | Promise<Response>;
+
+  /** The fake's answer; every HTTP call reshuffles the rows that tie on the sort column. */
+  let calls: number;
+  const fake =
+    (rows: Row[]): Respond =>
+    (request) =>
+      totalsPage(rows, request, ++calls);
+
+  /**
+   * Serve `rows`. `answers[n]` answers the walk's `n`th request in place of the
+   * fake, one entry per attempt, the last repeating; a request is told apart
+   * from a retry of the one before it by its query.
+   */
+  const serve = (rows: Row[], answers: Record<number, Respond[]> = {}) => {
+    const attempts = new Map<string, { request: number; attempt: number }>();
+    http.route({
+      match: TOTALS,
+      respond: (request) => {
+        const query = new URL(request.url).search;
+        const seen = attempts.get(query) ?? { request: attempts.size + 1, attempt: 0 };
+        attempts.set(query, { ...seen, attempt: seen.attempt + 1 });
+        const answer = answers[seen.request] ?? [fake(rows)];
+        return answer[Math.min(seen.attempt, answer.length - 1)]!(request);
+      },
+    });
+  };
+
+  /** What each HTTP call asked for, in order. */
+  const sent = () =>
+    http.calls.map(({ request }) => {
+      const query = new URL(request.url).searchParams;
+      return {
+        ids: query.getAll('candidate_id'),
+        page: query.get('page'),
+        perPage: query.get('per_page'),
+        sort: query.get('sort'),
+        cycle: query.get('cycle'),
+      };
+    });
+
+  /** The candidate IDs each HTTP call asked for, in order. */
+  const idsSent = () => sent().map(({ ids }) => ids);
+
+  const hang: Respond = (request) =>
+    new Promise<Response>((_, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), {
+        once: true,
+      });
+    });
+
+  const status =
+    (code: number, body = '{"message":"upstream failure","status":500}', headers = {}) =>
+    () =>
+      new Response(body, {
+        status: code,
+        headers: { 'content-type': 'application/json', ...headers },
+      });
+
+  const htmlPage = (code: number) => () =>
+    new Response('<!doctype html><title>Bad Gateway</title>', {
+      status: code,
+      headers: { 'content-type': 'text/html' },
+    });
+
+  /** Start the walk and record, in fake time, when it settles. */
+  const timed = (options?: { deadlineMs?: number }) => {
+    const startedAt = Date.now();
+    const settled: { afterMs?: number } = {};
+    const call = svc.getAllCandidateTotals(CALLER_PARAMS, ctx, options).finally(() => {
+      settled.afterMs = Date.now() - startedAt;
+    });
+    call.catch(() => undefined);
+    return { call, settled };
+  };
+
+  describe('a walk that reads every row', () => {
+    it('returns every row once, newest first, over requests that each end inside a candidate', async () => {
+      serve(ROWS);
+
+      const walk = await svc.getAllCandidateTotals(
+        { ...CALLER_PARAMS, page: 5, per_page: 20, sort: 'name' },
+        ctx,
+      );
+
+      const distinct = new Set(walk.results.map((row) => `${row.candidate_id}:${row.cycle}`));
+      expect({ rows: walk.results.length, distinct: distinct.size }).toEqual({
+        rows: ROWS.length,
+        distinct: ROWS.length,
+      });
+      expect(walk).toEqual({ results: newestFirst(ROWS), complete: true });
+      expect(idsSent()).toEqual([IDS, IDS.slice(14), IDS.slice(28), IDS.slice(42), IDS.slice(56)]);
+      for (const request of sent()) {
+        expect(request).toMatchObject({
+          page: '1',
+          perPage: '100',
+          sort: 'candidate_id',
+          cycle: '2026',
+        });
+      }
+    });
+
+    /**
+     * A: 40 rows, B: 40, C: 30 (across the first page end), D: 10, E: 60 (the
+     * second page ends exactly where E does — the walk cannot tell, so E is read
+     * again), F: 50 (across the third page end), G: 5.
+     */
+    it('reads a candidate the page end cuts through whole, from the next request', async () => {
+      const sizes: Array<[string, number]> = [
+        ['H0AA00001', 40],
+        ['H0AA00002', 40],
+        ['H0AA00003', 30],
+        ['H0AA00004', 10],
+        ['H0AA00005', 60],
+        ['H0AA00006', 50],
+        ['H0AA00007', 5],
+      ];
+      const rows = sizes.flatMap(([id, count]) => candidateRows(id, count, 2126));
+      const ids = sizes.map(([id]) => id);
+      serve(rows);
+
+      const walk = await svc.getAllCandidateTotals({ candidate_id: ids }, ctx);
+
+      expect(walk).toEqual({ results: newestFirst(rows), complete: true });
+      expect(idsSent()).toEqual([ids, ids.slice(2), ids.slice(4), ids.slice(5)]);
+    });
+
+    it.each([
+      ['fewer rows than a page', 2],
+      ['exactly a page of rows', 10],
+    ])('sends one request when it holds %s', async (_label, candidates) => {
+      const ids = candidateIds(candidates);
+      const rows = ids.flatMap((id) => candidateRows(id, 10));
+      serve(rows);
+
+      const walk = await svc.getAllCandidateTotals({ candidate_id: ids }, ctx);
+
+      expect(walk).toEqual({ results: newestFirst(rows), complete: true });
+      expect(http.calls).toHaveLength(1);
+    });
+
+    /** A short page is the last one, even beside a count estimated above its rows. */
+    it('sends one request when the first page is short, whatever count it reports', async () => {
+      const ids = candidateIds(5);
+      const rows = ids.flatMap((id) => candidateRows(id, 6));
+      http.route({
+        match: TOTALS,
+        respond: () =>
+          Response.json({
+            pagination: { count: 45, page: 1, pages: 1, per_page: 100, is_count_exact: false },
+            results: rows,
+          }),
+      });
+
+      const walk = await svc.getAllCandidateTotals({ candidate_id: ids }, ctx);
+
+      expect(walk).toEqual({ results: newestFirst(rows), complete: true });
+      expect(http.calls).toHaveLength(1);
+    });
+
+    it('answers a match with no rows as complete and empty', async () => {
+      serve([]);
+
+      await expect(svc.getAllCandidateTotals(CALLER_PARAMS, ctx)).resolves.toEqual({
+        results: [],
+        complete: true,
+      });
+      expect(http.calls).toHaveLength(1);
+    });
+
+    it.each([
+      ['no candidate_id', {}],
+      ['an empty candidate_id list', { candidate_id: [] }],
+    ])('answers %s as complete and empty without a request', async (_label, params) => {
+      serve(ROWS);
+
+      await expect(svc.getAllCandidateTotals(params, ctx)).resolves.toEqual({
+        results: [],
+        complete: true,
+      });
+      expect(http.calls).toHaveLength(0);
+    });
+
+    /**
+     * A Senate candidate's rows carry the year of the election each cycle leads
+     * to, so its 2026 and 2024 cycles sort under election year 2028, ahead of a
+     * House candidate's 2026 cycle.
+     */
+    it('orders rows newest election year first, then newest cycle', async () => {
+      const rows = [
+        ...candidateRows('H0CA00001', 2),
+        ...candidateRows('S0CA00002', 3, 2028, () => 2028),
+      ];
+      serve(rows);
+
+      const walk = await svc.getAllCandidateTotals(
+        { candidate_id: ['H0CA00001', 'S0CA00002'] },
+        ctx,
+      );
+
+      expect(walk.complete).toBe(true);
+      expect(walk.results.map((row) => [row.candidate_id, row.election_year, row.cycle])).toEqual([
+        ['S0CA00002', 2028, 2028],
+        ['S0CA00002', 2028, 2026],
+        ['S0CA00002', 2028, 2024],
+        ['H0CA00001', 2026, 2026],
+        ['H0CA00001', 2024, 2024],
+      ]);
+    });
+
+    it('matches candidate IDs in any case, as OpenFEC upper-cases them', async () => {
+      serve(ROWS);
+
+      const walk = await svc.getAllCandidateTotals(
+        { candidate_id: IDS.map((id) => id.toLowerCase()) },
+        ctx,
+      );
+
+      expect(walk).toEqual({ results: newestFirst(ROWS), complete: true });
+      expect(http.calls).toHaveLength(5);
+    });
+
+    it('retries a request inside the walk and finishes it', async () => {
+      vi.useFakeTimers();
+      config.fecMaxRetries = 3;
+      serve(ROWS, {
+        2: [htmlPage(503), htmlPage(502), fake(ROWS)],
+        3: [status(500), fake(ROWS)],
+      });
+
+      const { call } = timed();
+      await vi.runAllTimersAsync();
+
+      await expect(call).resolves.toEqual({ results: newestFirst(ROWS), complete: true });
+      expect(idsSent()).toEqual([
+        IDS,
+        IDS.slice(14),
+        IDS.slice(14),
+        IDS.slice(14),
+        IDS.slice(28),
+        IDS.slice(28),
+        IDS.slice(42),
+        IDS.slice(56),
+      ]);
+    });
+
+    it('stops, marked incomplete, at a candidate whose rows alone fill a page', async () => {
+      const rows = [
+        ...candidateRows('H0AA00001', 3),
+        ...candidateRows('H0AA00002', 120, 2266),
+        ...candidateRows('H0AA00003', 5),
+      ];
+      serve(rows);
+
+      const walk = await svc.getAllCandidateTotals(
+        { candidate_id: ['H0AA00001', 'H0AA00002', 'H0AA00003'] },
+        ctx,
+      );
+
+      expect(walk).toEqual({ results: rowsFor(['H0AA00001'], rows), complete: false });
+      expect(http.calls).toHaveLength(2);
+    });
+
+    it('stops, marked incomplete, on an answer that holds no candidate it asked for', async () => {
+      const elsewhere = candidateIds(20).flatMap((id) => candidateRows(id, 7));
+      http.route({
+        match: TOTALS,
+        respond: () =>
+          Response.json({
+            pagination: { count: 140, page: 1, pages: 2, per_page: 100, is_count_exact: true },
+            results: elsewhere.slice(0, 100),
+          }),
+      });
+
+      const walk = await svc.getAllCandidateTotals({ candidate_id: ['S6GA00119'] }, ctx);
+
+      expect(walk).toEqual({ results: [], complete: false });
+      expect(http.calls).toHaveLength(1);
+    });
+
+    it('refuses a filter /candidates/totals/ does not accept before any request', async () => {
+      serve(ROWS);
+
+      await expect(
+        svc.getAllCandidateTotals({ ...CALLER_PARAMS, include_totals: true }, ctx),
+      ).rejects.toMatchObject({
+        code: JsonRpcErrorCode.InternalError,
+        data: { unknown_parameters: ['include_totals'] },
+      });
+      expect(http.calls).toHaveLength(0);
+    });
+  });
+
+  describe('one budget across every request and its retries', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      config.fecMaxRetries = 3;
+      config.fecRequestTimeout = 30_000;
+    });
+
+    it('returns the candidates read whole before the budget ran out, marked incomplete', async () => {
+      serve(ROWS, { 2: [hang] });
+
+      const { call, settled } = timed();
+      await vi.advanceTimersByTimeAsync(49_999);
+      expect(settled.afterMs).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(settled.afterMs).toBe(50_000);
+      await expect(call).resolves.toEqual({
+        results: rowsFor(IDS.slice(0, 14)),
+        complete: false,
+      });
+      expect(idsSent()).toEqual([IDS, IDS.slice(14), IDS.slice(14)]);
+    });
+
+    /**
+     * The first request answers 30 s in, so the second gets the 20 s the walk
+     * has left, not a fresh budget of its own.
+     */
+    it('gives a later request only what the earlier ones left of the budget', async () => {
+      config.fecRequestTimeout = 60_000;
+      serve(ROWS, { 1: [later(30_000, fake(ROWS))], 2: [hang] });
+
+      const { call, settled } = timed();
+      await vi.advanceTimersByTimeAsync(49_999);
+      expect(settled.afterMs).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(settled.afterMs).toBe(50_000);
+      await expect(call).resolves.toEqual({
+        results: rowsFor(IDS.slice(0, 14)),
+        complete: false,
+      });
+      expect(idsSent()).toEqual([IDS, IDS.slice(14)]);
+    });
+
+    it('spends only the budget its caller passes', async () => {
+      serve(ROWS, { 3: [hang] });
+
+      const { call, settled } = timed({ deadlineMs: 20_000 });
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(settled.afterMs).toBe(20_000);
+      await expect(call).resolves.toEqual({
+        results: rowsFor(IDS.slice(0, 28)),
+        complete: false,
+      });
+    });
+
+    it('returns no rows, marked incomplete, when the budget runs out on the first request', async () => {
+      serve(ROWS, { 1: [hang] });
+
+      const { call, settled } = timed();
+      await vi.advanceTimersByTimeAsync(50_000);
+
+      expect(settled.afterMs).toBe(50_000);
+      await expect(call).resolves.toEqual({ results: [], complete: false });
+    });
+
+    /**
+     * The first request's attempt answers an HTML 503 49.5 s in, and the
+     * backoff before a retry outlasts what is left of the budget. The read
+     * reports that 503, the budget expiry only its cause, yet the walk still
+     * reads it as a budget that ran out, not a first request that failed.
+     */
+    it('returns no rows, marked incomplete, when the budget runs out behind a 503', async () => {
+      config.fecRequestTimeout = 60_000;
+      serve(ROWS, { 1: [later(49_500, htmlPage(503))] });
+
+      const { call, settled } = timed();
+      await vi.advanceTimersByTimeAsync(50_000);
+
+      expect(settled.afterMs).toBe(49_500);
+      await expect(call).resolves.toEqual({ results: [], complete: false });
+      expect(http.calls).toHaveLength(1);
+    });
+
+    it.each([0, 1])('sends nothing when %i ms of the budget is left', async (deadlineMs) => {
+      serve(ROWS);
+
+      const { call } = timed({ deadlineMs });
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(call).resolves.toEqual({ results: [], complete: false });
+      expect(http.calls).toHaveLength(0);
+    });
+
+    /**
+     * The second request's first attempt times out at 30 s; its second, started
+     * about 31 s in, meets a 429 about 49.5 s in, whose backoff outlasts the budget.
+     */
+    it('rejects with the rate limit a budget expiry cut short', async () => {
+      serve(ROWS, {
+        2: [
+          hang,
+          () =>
+            new Promise<Response>((resolve) => {
+              setTimeout(() => resolve(status(429)()), 18_500);
+            }),
+        ],
+      });
+
+      const { call } = timed();
+      await vi.advanceTimersByTimeAsync(50_000);
+
+      await expect(call).rejects.toMatchObject({ code: JsonRpcErrorCode.RateLimited });
+      expect(idsSent()).toEqual([IDS, IDS.slice(14), IDS.slice(14)]);
+    });
+  });
+
+  describe('a request that fails', () => {
+    it.each([
+      ['an HTML 503', htmlPage(503)],
+      ['a 500', status(500)],
+      ['an OpenFEC 422', status(422, '{"message":"Invalid cycle","status":422}')],
+      [
+        'a 200 whose results is not an array',
+        () => Response.json({ pagination: {}, results: null }),
+      ],
+      ['a dropped connection', () => Promise.reject(new TypeError('fetch failed'))],
+    ])(
+      'after the first leaves the candidates read whole before it, marked incomplete, on %s',
+      async (_label, failure) => {
+        serve(ROWS, { 3: [failure] });
+
+        await expect(svc.getAllCandidateTotals(CALLER_PARAMS, ctx)).resolves.toEqual({
+          results: rowsFor(IDS.slice(0, 28)),
+          complete: false,
+        });
+        expect(idsSent()).toEqual([IDS, IDS.slice(14), IDS.slice(28)]);
+      },
+    );
+
+    it.each([
+      ['an HTML 503', htmlPage(503), JsonRpcErrorCode.ServiceUnavailable],
+      ['a 500', status(500), JsonRpcErrorCode.ServiceUnavailable],
+      [
+        'an OpenFEC 422',
+        status(422, '{"message":"Invalid cycle","status":422}'),
+        JsonRpcErrorCode.ValidationError,
+      ],
+      ['a rate limit', status(429, '{}', { 'retry-after': '3600' }), JsonRpcErrorCode.RateLimited],
+    ])('first rejects the walk on %s', async (_label, failure, code) => {
+      serve(ROWS, { 1: [failure] });
+
+      await expect(svc.getAllCandidateTotals(CALLER_PARAMS, ctx)).rejects.toMatchObject({ code });
+      expect(http.calls).toHaveLength(1);
+    });
+
+    it('after the first rejects the walk on a rate limit', async () => {
+      serve(ROWS, { 2: [status(429, '{}', { 'retry-after': '3600' })] });
+
+      await expect(svc.getAllCandidateTotals(CALLER_PARAMS, ctx)).rejects.toMatchObject({
+        code: JsonRpcErrorCode.RateLimited,
+      });
+    });
+
+    it('rejects with the cancellation when the caller aborts mid-walk', async () => {
+      const controller = new AbortController();
+      ctx = createMockContext({ signal: controller.signal });
+      serve(ROWS, {
+        2: [
+          (request) => {
+            queueMicrotask(() => controller.abort());
+            return hang(request);
+          },
+        ],
+      });
+
+      await expect(svc.getAllCandidateTotals(CALLER_PARAMS, ctx)).rejects.toMatchObject({
+        code: JsonRpcErrorCode.RequestCancelled,
+      });
+    });
+
+    it('rejects with the cancellation when the caller aborts in a later request backoff', async () => {
+      config.fecMaxRetries = 1;
+      const controller = new AbortController();
+      ctx = createMockContext({ signal: controller.signal });
+      serve(ROWS, {
+        2: [
+          () => {
+            setTimeout(() => controller.abort(), 50);
+            return htmlPage(503)();
+          },
+        ],
+      });
+
+      await expect(svc.getAllCandidateTotals(CALLER_PARAMS, ctx)).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+    });
   });
 });

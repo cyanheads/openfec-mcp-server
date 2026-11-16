@@ -21,7 +21,10 @@ vi.mock('@/config/server-config.js', () => ({ getServerConfig: () => config }));
 vi.mock('@cyanheads/mcp-ts-core/utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@cyanheads/mcp-ts-core/utils')>()),
   fetchWithTimeout: vi.fn(),
-  withRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
+  withRetry: vi.fn(
+    (fn: (attempt: { remainingMs: number; signal: AbortSignal }) => Promise<unknown>) =>
+      fn({ remainingMs: Number.POSITIVE_INFINITY, signal: new AbortController().signal }),
+  ),
 }));
 
 import { fetchWithTimeout } from '@cyanheads/mcp-ts-core/utils';
