@@ -11,14 +11,14 @@ All tools are read-only and idempotent (`readOnlyHint: true`, `idempotentHint: t
 | `openfec_search_candidates` | Find federal candidates by name, state, office, party, or cycle. Retrieve a specific candidate by FEC ID with financial totals. | `query`, `candidate_id`, `state`, `office`, `party`, `cycle`, `include_totals` | readOnly, idempotent |
 | `openfec_search_committees` | Find political committees (campaign, PAC, Super PAC, party) by name, type, candidate affiliation, or state. | `query`, `committee_id`, `candidate_id`, `state`, `committee_type`, `designation`, `cycle` | readOnly, idempotent |
 | `openfec_get_committee_totals` | Pre-aggregated committee financial totals — one committee's per-cycle summary, or a ranked search across every committee of one entity type. | `mode`, `committee_id`, `entity_type`, `cycle`, `committee_state`, `min_receipts`, `sort` | readOnly, idempotent |
-| `openfec_search_contributions` | Search itemized individual contributions (Schedule A) or get aggregate breakdowns by size, state, employer, or occupation. | `mode`, `committee_id`, `candidate_id`, `contributor_name`, `contributor_state`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
+| `openfec_search_contributions` | Search itemized individual contributions (Schedule A) by recipient committee or by donor, or get aggregate breakdowns by size, state, employer, or occupation. | `mode`, `committee_id`, `candidate_id`, `contributor_id`, `contributor_name`, `contributor_employer`, `contributor_state`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_disbursements` | Search itemized committee spending (Schedule B) or get aggregate breakdowns by purpose or recipient. | `mode`, `committee_id`, `recipient_name`, `disbursement_description`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_expenditures` | Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. | `mode`, `committee_id`, `candidate_id`, `support_oppose`, `cycle`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_coordinated_expenditures` | Search coordinated party expenditures (Schedule F) — party committee spending made on behalf of a candidate, in coordination with that campaign. | `committee_id`, `candidate_id`, `cycle`, `payee_name`, `min_date`, `max_date`, `min_amount`, `max_amount` | readOnly, idempotent |
 | `openfec_search_filings` | Search FEC filings and reports by committee, candidate, form type, or date range. | `committee_id`, `candidate_id`, `form_type`, `report_type`, `cycle`, `most_recent` | readOnly, idempotent |
 | `openfec_lookup_elections` | Look up federal election races and candidate financial summaries. Find who's running with fundraising totals. | `mode`, `office`, `cycle`, `state`, `district` | readOnly, idempotent |
 | `openfec_search_legal` | Search FEC legal documents: advisory opinions, enforcement cases (MURs), alternative dispute resolutions, administrative fines, and statutes. | `query`, `type`, `ao_number`, `case_number`, `respondent` | readOnly, idempotent |
-| `openfec_get_legal_document` | Fetch one legal document in full by type and number — the detail counterpart to the compact search results. A record over the response budget pages its arrays by entry offset. | `doc_type`, `no`, `array`, `offset` | readOnly, idempotent |
+| `openfec_get_legal_document` | Fetch one legal document in full by type and number — the detail counterpart to the compact search results. A record over the 100,000-byte response budget pages its arrays by entry offset. | `doc_type`, `no`, `array`, `offset` | readOnly, idempotent |
 | `openfec_lookup_calendar` | Look up FEC calendar events, filing deadlines, and election dates. | `mode`, `state`, `min_date`, `max_date` | readOnly, idempotent |
 
 ### Resources
@@ -29,7 +29,7 @@ All resource data is also reachable via tools. Resources add convenience for cli
 |:-------------|:------------|:-----------|
 | `openfec://candidate/{candidate_id}` | Candidate profile with current financial totals and `principal_committees`. That list filters on each committee's current designation with no cycle, so it can include past campaigns and miss a committee since redesignated; a cycle's principal committee comes from `openfec_lookup_elections` `candidate_pcc_id`. | No |
 | `openfec://committee/{committee_id}` | Committee profile with type, designation, and financial summary. A committee with no totals on file resolves with its base record alone; a failed totals request fails the read. | No |
-| `openfec://election/{cycle}/{office}` | Election race summary. `state` and `district` appended as path segments when applicable (e.g., `openfec://election/2024/S/AZ`). Each template's `office` enum rejects the codes it does not serve with a message naming the sibling template that does. | First page only — returns the upstream `pagination` block, plus a `truncation_notice` pointing at `openfec_lookup_elections` when more pages exist. An empty race instead carries an `empty_result_notice` with the same guidance `openfec_lookup_elections` gives: check that the cycle is an even year, the state code, and that the district exists. |
+| `openfec://election/{cycle}/{office}` | Election race summary. `state` and `district` appended as path segments when applicable (e.g., `openfec://election/2024/S/AZ`). The state template reads an `H` race as district `00`, the district OpenFEC files at-large seats under (`openfec://election/2026/H/WY`). `{state}` wider than two characters fails `invalid_state_code` (decision 21). Each template's `office` enum rejects the codes it does not serve with a message naming the sibling template that does. | First page only — returns the upstream `pagination` block, plus a `truncation_notice` pointing at `openfec_lookup_elections` when more pages exist. An empty race instead carries an `empty_result_notice` with the same guidance `openfec_lookup_elections` gives: check that the cycle is an even year, the state code, and that the district exists. |
 
 ### Prompts
 
@@ -75,10 +75,10 @@ Find federal candidates and retrieve their details, history, and financial total
 |:----------|:-----|:---------|:------------|
 | `query` | string | No | Full-text candidate name search. |
 | `candidate_id` | string | No | FEC candidate ID: H, S, or P followed by exactly eight letters or digits (e.g., `P00003392`, `H2CO07170`). The prefix indicates office: H=House, S=Senate, P=President. When provided, returns a single candidate with full detail. |
-| `state` | string | No | Two-letter US state code (e.g., `AZ`, `CA`). |
+| `state` | string | No | Two-letter US state code (e.g., `AZ`, `CA`); a leading `-` excludes it (`-GA`). Wider than two characters after that `-` fails `invalid_state_code` (decision 21). |
 | `district` | string | No | Two-digit district number for House candidates (e.g., `07`). |
 | `office` | `H` \| `S` \| `P` | No | Filter by office: H=House, S=Senate, P=President. |
-| `party` | string | No | Three-letter party code (e.g., `DEM`, `REP`, `LIB`, `GRE`). |
+| `party` | string | No | Party code as OpenFEC files it, up to three characters (e.g., `DEM`, `REP`, `LIB`, `W`); a leading `-` excludes it (`-DEM`). Wider after that `-` fails `invalid_party_code` (decision 21). |
 | `cycle` | number | No | Two-year election cycle (e.g., `2024`). Even years only. |
 | `election_year` | number | No | Specific election year the candidate ran in. |
 | `incumbent_challenge` | `I` \| `C` \| `O` | No | Incumbent status: I=incumbent, C=challenger, O=open seat. |
@@ -86,13 +86,13 @@ Find federal candidates and retrieve their details, history, and financial total
 | `has_raised_funds` | boolean | No | Only candidates whose committee has received receipts for this office. Useful for filtering out paperwork-only candidates. |
 | `include_totals` | boolean | No | Include financial totals (receipts, disbursements, cash on hand, debt). Defaults to true when fetching a single candidate by ID. Adds at least one further API call — see the totals sub-fetch note below. |
 | `page` | number | No | Page number (1-indexed). Default 1. Addresses the candidate list only. |
-| `per_page` | number | No | Results per page. Default 20, max 100. A search with totals requests at most 35 candidates when `cycle` or `election_year` scopes the totals and 5 when they span every cycle (decision 16). |
+| `per_page` | number | No | Results per page. Default 20, max 100, sent upstream as given (decision 16). |
 
-**Output:** Candidate records with: `candidate_id`, `name`, `party`/`party_full`, `state`, `office`/`office_full`, `district_number`, `incumbent_challenge`/`incumbent_challenge_full`, `cycles`, `election_years`, `candidate_status`, `first_file_date`, `has_raised_funds`. When `include_totals` is true: `receipts`, `disbursements`, `cash_on_hand_end_period`, `debts_owed_by_committee`, `individual_itemized_contributions`, `coverage_start_date`, `coverage_end_date`. `missing_totals` lists any candidate IDs the totals sub-fetch could not cover. Null and empty fields are dropped from candidate and totals rows.
+**Output:** Candidate records with: `candidate_id`, `name`, `party`/`party_full`, `state`, `office`/`office_full`, `district_number`, `incumbent_challenge`/`incumbent_challenge_full`, `cycles`, `election_years`, `candidate_status`, `first_file_date`, `has_raised_funds`. When `include_totals` is true: `receipts`, `disbursements`, `cash_on_hand_end_period`, `debts_owed_by_committee`, `individual_itemized_contributions`, `coverage_start_date`, `coverage_end_date`. Totals the call could not read in full come back with a `notice` saying so. Null and empty fields are dropped from candidate and totals rows.
 
-**Pagination:** Page-based. Response includes `page`, `pages`, `count`, `per_page`; `per_page` echoes the size actually requested, and `truncated`/`shown`/`cap` report a page the totals cap bounded below the request.
+**Pagination:** Page-based. Response includes `page`, `pages`, `count`, `per_page`; `per_page` echoes the caller's value.
 
-**Totals sub-fetch:** `/v1/candidates/totals/` is a separately paged endpoint, not a view onto the candidate list — one candidate yields one row per cycle, so N candidates routinely produce more than N rows. The sub-fetch therefore ignores the candidate search's `page`/`per_page` and walks the totals endpoint's own pages at 100 per page, capped at 5 pages. If the cap is reached before every requested candidate is covered, the uncovered IDs are returned in `missing_totals` and rendered in the text output.
+**Totals sub-fetch:** `/v1/candidates/totals/` is a separately paged endpoint, not a view onto the candidate list — one candidate yields one row per cycle, so N candidates routinely produce more than N rows. The sub-fetch therefore ignores the candidate search's `page`/`per_page` and reads every totals row of the page's candidates with `getAllCandidateTotals`, a candidate keyset walk (decision 24). The candidate read and the walk share one 50 s budget (decision 25). If the budget runs out, a later request fails, or one candidate's rows fill a whole page, the candidates read so far come back whole and the `notice` says the totals are incomplete: a candidate shown without totals may still have them on file.
 
 **Error modes:**
 - Invalid `candidate_id` format → `ValidationError` (`invalid_candidate_id`): candidate IDs are H, S, or P followed by exactly eight letters or digits.
@@ -117,8 +117,8 @@ Find political committees — campaign committees, PACs, Super PACs, party commi
 | `query` | string | No | Full-text committee name search. |
 | `committee_id` | string | No | FEC committee ID: C followed by exactly eight digits (e.g., `C00358796`). Returns a single committee with full detail. |
 | `candidate_id` | string | No | Find committees linked to this candidate (authorized, leadership, joint fundraising). |
-| `state` | string | No | Two-letter state code. |
-| `party` | string | No | Three-letter party code. |
+| `state` | string | No | Two-letter state code; `other` selects foreign, invalid, and missing states, and a leading `-` excludes a code (`-GA`). Anything else wider than two characters fails `invalid_state_code` (decision 21). |
+| `party` | string | No | Party code as OpenFEC files it, up to three characters (e.g., `DEM`, `REP`, `LIB`, `W`); a leading `-` excludes it (`-DEM`). Wider after that `-` fails `invalid_party_code` (decision 21). |
 | `committee_type` | string | No | Committee type code. Common values: `H` (House), `S` (Senate), `P` (Presidential), `O` (Super PAC — independent expenditure-only), `N` (PAC nonqualified), `Q` (PAC qualified), `X` (Party nonqualified), `Y` (Party qualified). Full list: `C` (communication cost), `D` (delegate), `E` (electioneering communication), `I` (independent expenditure filer — not a committee), `U` (single candidate IE), `V` (PAC with non-contribution account, nonqualified), `W` (PAC with non-contribution account, qualified), `Z` (national party non-federal account). |
 | `designation` | string | No | Committee designation. `A` (authorized by candidate), `B` (lobbyist/registrant PAC), `D` (leadership PAC), `J` (joint fundraiser), `P` (principal campaign committee), `U` (unauthorized). Matches each committee's current designation only, even with `cycle` set, so a past principal committee since redesignated drops out of `P`; a cycle's principal committee comes from `openfec_lookup_elections` `candidate_pcc_id`. |
 | `cycle` | number | No | Two-year election cycle. |
@@ -152,9 +152,9 @@ Pre-aggregated committee finances. Answers "how much has this committee raised t
 | `committee_id` | string | Yes in `single` | Committee ID. In `by_entity_type` mode it narrows the grouped search to that one committee. |
 | `entity_type` | enum | Yes in `by_entity_type` | `presidential`, `pac`, `party`, `pac-party`, `house-senate`, `ie-only`. |
 | `cycle` | number | No | Two-year election cycle. Omit in `single` mode for every cycle on record, across changes of committee type (decision 11a). |
-| `committee_state` | string | No | Two-letter state code. `by_entity_type` only. |
-| `committee_type` | string | No | Committee type code. `by_entity_type` only. |
-| `committee_designation` | string | No | Committee designation. `by_entity_type` only. |
+| `committee_state` | string | No | Two-letter state code; `other` selects foreign, invalid, and missing states, and a leading `-` excludes a code (`-PA`). Anything else wider than two characters fails `invalid_state_code` (decision 21). `by_entity_type` only. |
+| `committee_type` | string | No | Committee type code, in any case, upper-cased before it is sent: one of `C D E H I N O P Q S U V W X Y Z`, else `invalid_committee_type` (decision 21); a leading `-` excludes the code and is kept (`-o` is sent as `-O`). `by_entity_type` only. |
+| `committee_designation` | string | No | Committee designation code, in any case, upper-cased before it is sent: one of `A B D J P U`, else `invalid_committee_designation` (decision 21); a leading `-` excludes the code and is kept (`-u` is sent as `-U`). `by_entity_type` only. |
 | `organization_type` | string | No | Sponsoring organization type. `by_entity_type` only. |
 | `min_receipts` / `max_receipts` | number | No | Total receipts bound in dollars. `by_entity_type` only. |
 | `min_disbursements` / `max_disbursements` | number | No | Total disbursements bound in dollars. `by_entity_type` only. |
@@ -162,7 +162,7 @@ Pre-aggregated committee finances. Answers "how much has this committee raised t
 | `page` | number | No | Page number. Default 1. |
 | `per_page` | number | No | Results per page. Default 20, max 100. |
 
-**Output:** Committee totals rows with `committee_id`, `committee_name`, `cycle`, `receipts`, `disbursements`, `last_cash_on_hand_end_period`, `last_debts_owed_by_committee`, the individual/PAC/party contribution breakdown, and `coverage_start_date`/`coverage_end_date`. `mode` echoes the resolved mode; `search_criteria` echoes every filter applied, minus paging.
+**Output:** Committee totals rows with `committee_id`, `committee_name`, `cycle`, `receipts`, `disbursements`, `last_cash_on_hand_end_period`, `last_debts_owed_by_committee`, the individual/PAC/party contribution breakdown, and `coverage_start_date`/`coverage_end_date`. `mode` echoes the resolved mode; `search_criteria` echoes every filter applied, minus paging, with `committee_type` and `committee_designation` as sent (upper-cased).
 
 **Pagination:** Page-based in both modes. A long-running committee can hold more cycles than one page.
 
@@ -182,22 +182,23 @@ Pre-aggregated committee finances. Answers "how much has this committee raised t
 
 ### `openfec_search_contributions`
 
-Search itemized individual contributions (Schedule A) or get aggregate breakdowns. Central tool for answering "who's funding this candidate/committee?"
+Search itemized individual contributions (Schedule A) or get aggregate breakdowns. Central tool for answering "who's funding this candidate/committee?" and "where has this donor given?"
 
 **Input schema:**
 
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `mode` | enum | No | `itemized` (default) — individual contribution records. `by_size` — aggregate by contribution size bucket ($200 and under, $200.01–$499.99, etc.). `by_state` — aggregate by contributor state. `by_employer` — aggregate by employer. `by_occupation` — aggregate by occupation. |
-| `committee_id` | string | No | Receiving committee ID. Required for `itemized`, `by_employer`, `by_occupation` modes. |
-| `candidate_id` | string | No | Candidate ID. Used for `by_size` and `by_state` aggregate modes (routes to the `/by_candidate` variant). |
-| `contributor_name` | string | No | Full-text donor name search. Itemized mode only. |
-| `contributor_employer` | string | No | Full-text employer search. Itemized mode only. |
+| `committee_id` | string | No | Receiving committee ID. Required for `by_employer` and `by_occupation`. In `itemized` mode it scopes the search on its own or narrows a donor scope to gifts to this committee. |
+| `candidate_id` | string | No | Candidate ID. Used for `by_size` and `by_state` aggregate modes (routes to the `/by_candidate` variant), whose totals cover the full election period ending in `cycle`. |
+| `contributor_id` | string | No | FEC committee ID of a registered donor (`C` + eight digits): the receipts recipients reported from it. Earmarked contributions carry the conduit ID here (e.g., ActBlue, `C00401224`) with the individual in `contributor_name`. Itemized mode only. |
+| `contributor_name` | string | No | Full-text donor name search. Itemized mode only; scopes the search on its own. Without `committee_id`, a common name can time out upstream. |
+| `contributor_employer` | string | No | Full-text employer search. Itemized mode only; scopes the search on its own. Without `committee_id`, an employer scan can time out upstream. |
 | `contributor_occupation` | string | No | Full-text occupation search. Itemized mode only. |
 | `contributor_city` | string | No | Contributor city. Itemized mode only. |
-| `contributor_state` | string | No | Two-letter state code. Itemized mode only. |
+| `contributor_state` | string | No | Two-letter state code; `other` selects foreign, invalid, and missing states, and a leading `-` excludes a code (`-GA`). Anything else wider than two characters fails `invalid_state_code` (decision 21). Itemized mode only. |
 | `contributor_zip` | string | No | ZIP code prefix (starts-with match). Itemized mode only. |
-| `cycle` | number | No | Two-year election cycle. For itemized mode, this sets `two_year_transaction_period` (required by the API). Defaults to current cycle if omitted. |
+| `cycle` | number | No | Two-year election cycle. For itemized mode, this sets `two_year_transaction_period` (required by the API). Defaults to current cycle if omitted, for candidate-scoped `by_size`/`by_state` too, where it names the election and the totals cover the full election period ending in it (4yr president, 6yr senate, 2yr house). |
 | `min_date` | string | No | Earliest contribution date (YYYY-MM-DD). Itemized mode only. |
 | `max_date` | string | No | Latest contribution date (YYYY-MM-DD). Itemized mode only. |
 | `min_amount` | number | No | Minimum contribution amount in dollars. Itemized mode only. |
@@ -205,28 +206,31 @@ Search itemized individual contributions (Schedule A) or get aggregate breakdown
 | `is_individual` | boolean | No | Only individual contributions (excludes committee-to-committee transfers). Itemized mode only. |
 | `sort` | `contribution_receipt_date` \| `contribution_receipt_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
 | `page` | number | No | Page number (1-indexed). Defaults to 1 in aggregate modes. Explicit values are rejected in itemized mode, which paginates with `cursor`. |
-| `per_page` | number | No | Results per page. Default 20, max 100. Itemized mode requests at most 30 (decision 16). |
+| `per_page` | number | No | Results per page. Default 20, max 100, sent upstream as given (decision 16). |
 | `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode uses keyset pagination — pass the cursor to get the next page. Valid only for an otherwise-identical call. |
 
 **Output:**
-- *Itemized:* Contribution records with: `contributor_name`, `contributor_employer`, `contributor_occupation`, `contributor_city`, `contributor_state`, `contributor_zip`, `contribution_receipt_amount`, `contribution_receipt_date`, `contributor_aggregate_ytd`, `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `receipt_type_full`, `is_individual`, `memo_text`, `pdf_url`. Plus `next_cursor` for pagination. The receiving committee's nested `committee` object is hoisted out of the rows into a top-level `committee` field — itemized mode always scopes to one `committee_id`, so it was identical in every row. The donor-as-committee `contributor` object stays on the row; it varies per donor and carries data no flat field does. `content[]` renders it as name, ID, and one attribute line; `structuredContent` keeps the full record.
-- *Aggregates:* Records with: dimension field (`size`, `state`, `employer`, `occupation`), `count`, `total`, `cycle`, and either `committee_id` or `candidate_id`.
-- *All modes:* `mode` echoes the mode the server resolved (a `by_size`/`by_state` query scoped by `candidate_id` resolves to `by_size_candidate`/`by_state_candidate`), and `search_criteria` echoes every filter applied, minus paging.
+- *Itemized:* Contribution records with: `contributor_name`, `contributor_employer`, `contributor_occupation`, `contributor_city`, `contributor_state`, `contributor_zip`, `contribution_receipt_amount`, `contribution_receipt_date`, `contributor_aggregate_ytd`, `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `receipt_type_full`, `is_individual`, `memo_code`, `memoed_subtotal`, `memo_text`, `pdf_url`. Plus `next_cursor` for pagination. Committee records are carried once per page, in full on both surfaces (decision 9). Scoped by `committee_id`, the receiving committee is hoisted into a top-level `committee` field. Scoped by donor alone, rows span recipients: nothing is hoisted and each recipient's record is in `committees`, keyed by the row's `committee_id` — the only place the recipient's name appears, since the flat `committee_name` is null. A donor that is itself a committee is in `contributor_committees`, keyed by the row's `contributor_id`. A row with `memo_code` `X` is a memo entry and is labelled as one (decision 23).
+- *Aggregates:* Records with: dimension field (`size`, `state`, `employer`, `occupation`), `count`, `total`, `cycle`, and either `committee_id` or `candidate_id`. `by_size` and `by_size_candidate` rows carry `size_range` after `size`: `$200 and under (includes unitemized)` for floor 0 (so its `count` is null), then `$200.01 to $499.99`, `$500 to $999.99`, `$1,000 to $1,999.99`, `$2,000 and over`; a floor outside those five carries none. `by_state`, `by_employer`, and `by_occupation` rows gain no `size_range`.
+- *Aggregate notices:* `by_size` and `by_state` with neither `committee_id` nor `candidate_id` return every committee's bucket for every cycle, one row per committee and cycle, not a combined breakdown; the rows stay and the `notice` says so, followed by the approximate-count sentence when the count is an estimate (decision 15). Any other non-empty aggregate page with an estimated count carries the approximate-count sentence. An exhausted position carries the exhausted-position notice instead (decision 14).
+- *All modes:* `mode` echoes the mode the server resolved (a `by_size`/`by_state` query scoped by `candidate_id` resolves to `by_size_candidate`/`by_state_candidate`, which send and echo `election_full: true` in `search_criteria`), and `search_criteria` echoes every filter applied, minus paging.
 
 **Pagination:**
 - Itemized: Keyset (SEEK). Response includes `next_cursor` (opaque string encoding `last_indexes`). Pass as `cursor` to get next page.
 - Aggregates: Page-based.
 
 **Error modes:**
-- Itemized without `committee_id` → `InvalidParams`: "Itemized contribution search requires a committee_id. To search contributions by candidate, use a 'by_size' or 'by_state' aggregate mode with candidate_id, or first look up the candidate's committee with openfec_search_committees."
-- `by_employer`/`by_occupation` without `committee_id` → `InvalidParams`: "Aggregate by employer/occupation requires a committee_id."
-- An itemized-only input in any aggregate mode → `ValidationError` (`itemized_only_filters_in_aggregate_mode`). The aggregate endpoints accept only `committee_id`, `candidate_id`, `cycle`, `mode`, `page`, `per_page`; every contributor filter, date bound, amount bound, `is_individual`, `sort`, and `cursor` is itemized-only. The rejection names both the offending inputs and the mode's supported set rather than dropping the filters and answering an unnarrowed query.
+- Itemized with none of `committee_id`, `contributor_id`, `contributor_name`, or `contributor_employer` (a blank or whitespace value does not count) → `ValidationError` (`itemized_requires_scope`), before any upstream call. Occupation, city, state, ZIP, date, amount, and `is_individual` filters narrow a scoped search but cannot scope one. The scopes combine freely, `committee_id` included (a PAC's gifts to one campaign). Candidate scoping is not offered: for a candidate use a `by_size` or `by_state` aggregate mode with `candidate_id`, or look up the candidate's committee with `openfec_search_committees`.
+- A malformed `contributor_id` → `ValidationError` (`invalid_committee_id`) naming `contributor_id`.
+- `contributor_state` wider than two characters, unless it is `other` or a code after a leading `-` → `ValidationError` (`invalid_state_code`).
+- `by_employer`/`by_occupation` without `committee_id` → `ValidationError` (`aggregate_requires_committee_id`).
+- An itemized-only input in any aggregate mode → `ValidationError` (`itemized_only_filters_in_aggregate_mode`). The aggregate endpoints accept only `committee_id`, `candidate_id`, `cycle`, `mode`, `page`, `per_page`; every contributor filter (`contributor_id` included), date bound, amount bound, `is_individual`, `sort`, and `cursor` is itemized-only. The rejection names both the offending inputs and the mode's supported set rather than dropping the filters and answering an unnarrowed query.
 - An explicit `page` or `candidate_id` in itemized mode → `ValidationError` (`inputs_not_applicable_to_mode`); the Schedule A itemized endpoint accepts `per_page` and `cursor`, but neither page-number pagination nor candidate scoping.
 - `candidate_id` in `by_employer` / `by_occupation`, or both IDs when `by_size` / `by_state` resolves to its candidate endpoint → `ValidationError` (`inputs_not_applicable_to_mode`). Each resolved aggregate endpoint receives only the identifier it actually supports.
 - Missing `cycle` on itemized → auto-default to current cycle (API requires `two_year_transaction_period`).
 
 **Upstream endpoints:**
-- `/v1/schedules/schedule_a/` — itemized contributions (SEEK)
+- `/v1/schedules/schedule_a/` — itemized contributions (SEEK). A query OpenFEC cancels at its statement timeout answers 504 `Query timed out`, which is attempted once rather than retried (see the Resilience table); a broad `contributor_name` or `contributor_employer` without `committee_id` can reach it.
 - `/v1/schedules/schedule_a/by_size/` — aggregate by size (committee)
 - `/v1/schedules/schedule_a/by_size/by_candidate/` — aggregate by size (candidate)
 - `/v1/schedules/schedule_a/by_state/` — aggregate by state (committee)
@@ -247,7 +251,7 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 | `mode` | enum | No | `itemized` (default) — individual disbursement records. `by_purpose` — aggregate by purpose category. `by_recipient` — aggregate by recipient name. `by_recipient_id` — aggregate by recipient committee ID (committee-to-committee transfers). |
 | `committee_id` | string | No | Spending committee ID. Required for all modes. |
 | `recipient_name` | string | No | Full-text payee name search. Itemized mode only. |
-| `recipient_state` | string | No | Recipient state. Itemized mode only. |
+| `recipient_state` | string | No | Recipient state; `other` selects foreign, invalid, and missing states, and a leading `-` excludes a code (`-GA`). Anything else wider than two characters fails `invalid_state_code` (decision 21). Itemized mode only. |
 | `recipient_city` | string | No | Recipient city. Itemized mode only. |
 | `recipient_committee_id` | string | No | Recipient committee ID (for committee-to-committee transfers). Itemized mode only. |
 | `disbursement_description` | string | No | Full-text description search (e.g., "media buy", "consulting"). Itemized mode only. |
@@ -259,12 +263,12 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 | `max_amount` | number | No | Maximum amount. Itemized mode only. |
 | `sort` | `disbursement_date` \| `disbursement_amount`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
 | `page` | number | No | Page number (1-indexed). Defaults to 1 in aggregate modes. Explicit values are rejected in itemized mode, which paginates with `cursor`. |
-| `per_page` | number | No | Results per page. Default 20, max 100. Itemized mode requests at most 30 (decision 16). |
+| `per_page` | number | No | Results per page. Default 20, max 100, sent upstream as given (decision 16). |
 | `cursor` | string | No | Opaque pagination cursor from a previous response. Itemized mode only. Valid only for an otherwise-identical call. |
 
 **Output:**
-- *Itemized:* Disbursement records with: `recipient_name`, `recipient_city`, `recipient_state`, `recipient_zip`, `disbursement_amount`, `disbursement_date`, `disbursement_description`, `disbursement_purpose_category`, `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `entity_type`, `memo_text`, `pdf_url`. Plus `next_cursor`. The spending committee's nested `committee` object is hoisted out of the rows into a top-level `committee` field — `committee_id` is required, so it was identical in every row. A transfer row's `recipient_committee` stays on the row and renders in `content[]` as name, ID, and one attribute line.
-- *by_purpose:* Records with: `purpose`, `count`, `total`, `memo_count`, `memo_total`, `cycle`, `committee_id`.
+- *Itemized:* Disbursement records with: `recipient_name`, `recipient_city`, `recipient_state`, `recipient_zip`, `disbursement_amount`, `disbursement_date`, `disbursement_description`, `disbursement_purpose_category`, `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `entity_type`, `memo_code`, `memoed_subtotal`, `memo_text`, `pdf_url`. Plus `next_cursor`. Committee records are carried once per page, in full on both surfaces (decision 9): the spending committee is hoisted into a top-level `committee` field (`committee_id` is required, so it is identical in every row), and each payee that is itself a committee is in `recipient_committees`, keyed by the row's `recipient_committee_id`. A row with `memo_code` `X` is a memo entry and is labelled as one (decision 23).
+- *by_purpose:* Records with: `purpose`, `count`, `total`, `memo_count`, `memo_total`, `cycle`, `committee_id`. `memo_count` and `memo_total` are the bucket's memo entries, which `count` and `total` already exclude; never add them to `count` or `total`.
 - *by_recipient:* Records with: `recipient_name`, `count`, `total`, `recipient_disbursement_percent`, `cycle`, `committee_id`.
 - *by_recipient_id:* Records with: `recipient_id`, `recipient_name`, `committee_name`, `count`, `total`, `cycle`.
 - *All modes:* `mode` echoes the resolved mode and `search_criteria` echoes every filter applied, minus paging.
@@ -272,7 +276,7 @@ Search itemized committee spending (Schedule B) or get aggregate breakdowns. Ans
 **Pagination:** Itemized: keyset. Aggregates: page-based.
 
 **Error modes:**
-- Missing `committee_id` → `InvalidParams`: "Disbursement search requires a committee_id. Use openfec_search_committees to find a committee's ID."
+- `committee_id` is required in every mode: the input schema rejects a missing or empty one, and a malformed one fails `invalid_committee_id`.
 - An itemized-only input in any aggregate mode → `ValidationError` (`itemized_only_filters_in_aggregate_mode`). The aggregate endpoints accept only `committee_id`, `cycle`, `mode`, `page`, `per_page`; every recipient filter, `disbursement_description`, `disbursement_purpose_category`, date bound, amount bound, `sort`, and `cursor` is itemized-only.
 - Explicit `page` in itemized mode → `ValidationError` (`inputs_not_applicable_to_mode`); itemized accepts `per_page` and `cursor` instead.
 
@@ -292,34 +296,34 @@ Search independent expenditures (Schedule E) — spending by outside groups (Sup
 
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
-| `mode` | enum | No | `itemized` (default) — individual expenditure records. `by_candidate` — aggregated totals per candidate by committee. |
+| `mode` | enum | No | `itemized` (default) — individual expenditure records. `by_candidate` — aggregated totals per candidate by committee, largest `total` first (`sort=-total` is sent on every page; `sort` itself stays rejected in this mode). |
 | `committee_id` | string | No | Spending committee ID. |
 | `candidate_id` | string | No | Targeted candidate ID. |
 | `support_oppose` | `S` \| `O` | No | `S` = support, `O` = oppose. Sent as `support_oppose_indicator` (itemized) or `support_oppose` (`by_candidate`). |
 | `payee_name` | string | No | Full-text payee name search. Itemized mode only. |
 | `candidate_office` | `H` \| `S` \| `P` | No | Office of the targeted candidate. Sent as `candidate_office` (itemized) or translated to `office` = `house`/`senate`/`president` (`by_candidate`). |
-| `candidate_office_state` | string | No | State of the targeted race. Sent as `candidate_office_state` (itemized) or `state` (`by_candidate`). Presidential `by_candidate` rows carry no state. |
+| `candidate_office_state` | string | No | State of the targeted race. Sent as `candidate_office_state` (itemized) or `state` (`by_candidate`). Presidential `by_candidate` rows carry no state. Itemized mode also takes `other` (foreign, invalid, and missing states) and a leading `-` that excludes a code (`-GA`); `by_candidate` matches the state exactly and takes neither. Any other value wider than two characters fails `invalid_state_code` before any request, in both modes (decision 21). |
 | `candidate_office_district` | string | No | Two-digit House district of the targeted race. Sent as `candidate_office_district` (itemized) or `district` (`by_candidate`). Senate and presidential `by_candidate` rows carry no district. |
-| `candidate_party` | string | No | Party of the targeted candidate. Itemized mode only — `by_candidate` rejects it, since the aggregate endpoint has no party filter. |
+| `candidate_party` | string | No | Party code as OpenFEC files it, up to three characters (e.g., `DEM`, `REP`, `LIB`, `W`), of the targeted candidate; a leading `-` excludes it (`-DEM`), and wider after that `-` fails `invalid_party_code` (decision 21). Itemized mode only — `by_candidate` rejects it, since the aggregate endpoint has no party filter. |
 | `cycle` | number | No | Two-year election cycle. Itemized mode defaults to the current cycle when omitted. In `by_candidate` mode it names the election, and `election_full` decides the period its totals cover. |
 | `election_full` | boolean | No | `by_candidate` mode only: totals over the full election period ending in `cycle` (4yr president, 6yr senate, 2yr house) instead of the two-year cycle alone. Defaults to true — OpenFEC's own default and `openfec_lookup_elections`' — and the effective value is sent upstream and echoed in `search_criteria`. Carries no schema default, so an explicit value is distinguishable from an omission. |
 | `min_date` | string | No | Earliest expenditure date (YYYY-MM-DD). Itemized mode only. |
 | `max_date` | string | No | Latest expenditure date (YYYY-MM-DD). Itemized mode only. |
 | `min_amount` | number | No | Minimum amount. Itemized mode only. |
 | `max_amount` | number | No | Maximum amount. Itemized mode only. |
-| `is_notice` | boolean | No | Only 24/48-hour notice filings (near-election spending). Itemized mode only. |
+| `is_notice` | boolean | No | Which Schedule E filings to read. Omitted returns 24/48-hour notices and periodic-report rows together, which overlap — most spending filed on a notice is reported again on the same spender's next periodic report — so never add the two kinds together. `false` returns report rows only, which sum once memo entries are left out. `true` returns notices only, the newest spending, filed before it reaches a periodic report. Itemized mode only. |
 | `most_recent` | boolean | No | Only the most recent version of amended filings. Itemized mode only — defaults to true there when omitted, and `by_candidate` rejects it. Carries no schema default, so an explicit value is distinguishable from an omission. |
 | `sort` | `expenditure_date` \| `expenditure_amount` \| `office_total_ytd`, each with an optional `-` prefix for descending | No | Sort field. Itemized mode only. |
 | `page` | number | No | Page number (1-indexed). Defaults to 1 in `by_candidate` mode. Explicit values are rejected in itemized mode, which paginates with `cursor`. |
-| `per_page` | number | No | Results per page. Default 20, max 100. Itemized mode requests at most 60 when `committee_id` is set and 30 otherwise (decision 16). |
+| `per_page` | number | No | Results per page. Default 20, max 100, sent upstream as given (decision 16). |
 | `cursor` | string | No | Opaque pagination cursor. Itemized mode only. Valid only for an otherwise-identical call. |
 
 **Output:**
-- *Itemized:* Expenditure records with: `committee_id`, `committee_name`, `payee_name`, `expenditure_amount`, `expenditure_date`, `expenditure_description`, `support_oppose_indicator`, `candidate_id`, `candidate_name`, `candidate_office`, `candidate_office_state`, `candidate_party`, `is_notice`, `dissemination_date`, `office_total_ytd`, `most_recent`, `pdf_url`. Plus `next_cursor`.
-- *by_candidate:* Records with: `candidate_id`, `candidate_name`, `committee_id`, `committee_name`, `support_oppose_indicator`, `count`, `total`, `cycle`.
+- *Itemized:* Expenditure records with: `committee_id`, `committee_name`, `payee_name`, `expenditure_amount`, `expenditure_date`, `expenditure_description`, `support_oppose_indicator`, `candidate_id`, `candidate_name`, `candidate_office`, `candidate_office_state`, `candidate_party`, `is_notice`, `dissemination_date`, `office_total_ytd`, `most_recent`, `memo_code`, `memoed_subtotal`, `pdf_url`. Plus `next_cursor`. A row with `is_notice: true` is labelled `24/48-hour notice` and a row with `memo_code` `X` is labelled `memo entry` in its `content[]` header; a page that mixes either kind with other rows carries a `notice` sentence with the count, "{n} of {m} rows on this page are …", and a do-not-sum warning (decision 23).
+- *by_candidate:* Records with: `candidate_id`, `candidate_name`, `committee_id`, `committee_name`, `support_oppose_indicator`, `count`, `total`, `cycle`, largest `total` first. The totals come from periodic reports only; 24/48-hour notices are excluded so one buy is not counted twice. In the current cycle (`cycle` omitted, or the current cycle or later) the `notice` therefore says that spending reported so far only on a notice is missing from the totals, and names the itemized call that lists it — `mode: "itemized"`, `is_notice: true`, and the caller's scope. When the by_candidate call carried `page` or `election_full`, the sentence says to leave them out, since itemized mode rejects both. An earlier cycle's notices have all reappeared on reports, so it carries no such sentence. On an empty current-cycle page the sentence follows "No periodic report lists independent expenditures in this scope."; an empty past-cycle page gets the zero-match sentence.
 - *All modes:* `mode` echoes the resolved mode and `search_criteria` echoes every filter applied, minus paging.
 
-Itemized rows drop the nested `candidate` sub-object, whose three fields are the row's own `candidate_id`, an internal `idx`, and a `two_year_period` that restates the query's cycle. The nested `committee` object is hoisted into a top-level `committee` field **only when the caller supplied a `committee_id`** — Schedule E does not require one, so a candidate- or race-scoped page spans several spending committees and hoisting any single one would misattribute the rest. Without a `committee_id`, each row keeps its own `committee`, which `content[]` renders as name, ID, and one attribute line — the hoisted header's layout, per row — while `structuredContent` keeps the full record.
+Itemized rows drop the nested `candidate` sub-object, whose three fields are the row's own `candidate_id`, an internal `idx`, and a `two_year_period` that restates the query's cycle. The nested `committee` object is hoisted into a top-level `committee` field **only when the caller supplied a `committee_id`** — Schedule E does not require one, so a candidate- or race-scoped page spans several spending committees and hoisting any single one would misattribute the rest. Without a `committee_id`, the page's spenders are collected into a top-level `committees` map keyed by `committee_id`, each rendered once in full on both surfaces; a row's `committee_id` line in `content[]` reads `C… (NAME)`.
 
 **Pagination:** Itemized: keyset. Aggregate: page-based.
 
@@ -350,13 +354,13 @@ Search coordinated party expenditures (Schedule F) — spending a party committe
 | `min_amount` / `max_amount` | number | No | Expenditure amount bound in dollars. |
 | `sort` | enum | No | `expenditure_date` or `expenditure_amount`, each with a `-` descending form. |
 | `page` | number | No | Page number. Default 1. |
-| `per_page` | number | No | Results per page. Default 20, max 100. At most 80 are requested when `committee_id` is set and 25 otherwise (decision 16). |
+| `per_page` | number | No | Results per page. Default 20, max 100, sent upstream as given (decision 16). |
 
-**Output:** Coordinated expenditure records with `expenditure_date`, `expenditure_amount`, `expenditure_type_full`, `expenditure_purpose_full`, `payee_name`, `candidate_id`/`candidate_name`/`candidate_office`, `aggregate_general_election_expenditure`, `subordinate_committee_id`, `filing_form`, `image_number`, and `pdf_url`.
+**Output:** Coordinated expenditure records with `expenditure_date`, `expenditure_amount`, `expenditure_type_full`, `expenditure_purpose_full`, `payee_name`, `candidate_id`/`candidate_name`/`candidate_office`, `aggregate_general_election_expenditure`, `subordinate_committee_id`, `filing_form`, `image_number`, `memo_code`, and `pdf_url`. Spending committees are carried once per page (see Payload shaping). A row with `memo_code` `X` is a memo entry and is labelled as one; Schedule F rows carry no `memoed_subtotal`, so `memo_code` alone identifies it (decision 23).
 
 **Pagination:** Page-based — unlike Schedules A, B, and E, this endpoint has no `last_index` keyset. Unscoped queries return promptly (roughly 82K rows across all history), so no cycle default is applied.
 
-**Payload shaping:** Rows embed up to two committee objects. `committee` — the spender — is hoisted out once when the caller scoped the query to a single `committee_id`, following the Schedule B/E convention; otherwise it stays on each row and renders in `content[]` as name, ID, and one attribute line. `subordinate_committee` is dropped outright: across a 100-row sample it was null on 39 rows, the spender again on 60, and a different committee on 1, and in every case the row's own `subordinate_committee_id` matched it — so the ID is the recovery path, resolvable through `openfec_search_committees`.
+**Payload shaping:** Rows embed up to two committee objects. `committee` — the spender — is hoisted out once when the caller scoped the query to a single `committee_id`, following the Schedule B/E convention; otherwise it is collected into a top-level `committees` map keyed by `committee_id`, each spender once and in full on both surfaces. A row whose record differs from its ID's entry — the same committee's record for another cycle, on a page spanning cycles — keeps its own, rendered in full. `subordinate_committee` is dropped outright: across a 100-row sample it was null on 39 rows, the spender again on 60, and a different committee on 1, and in every case the row's own `subordinate_committee_id` matched it — so the ID is the recovery path, resolvable through `openfec_search_committees`.
 
 **Upstream endpoints:**
 - `/v1/schedules/schedule_f/` — itemized coordinated expenditures
@@ -383,7 +387,7 @@ Search FEC filings and reports. Covers all disclosure documents: financial repor
 | `min_receipt_date` | string | No | Earliest date FEC received the filing (YYYY-MM-DD). |
 | `max_receipt_date` | string | No | Latest FEC receipt date (YYYY-MM-DD). |
 | `page` | number | No | Page number. Default 1. |
-| `per_page` | number | No | Results per page. Default 20, max 100. At most 65 are requested (decision 16). |
+| `per_page` | number | No | Results per page. Default 20, max 100, sent upstream as given (decision 16). |
 
 **Output:** Filing records with: `committee_id`, `committee_name`, `candidate_id`, `candidate_name`, `form_type`, `form_category`, `report_type`/`report_type_full`, `report_year`, `receipt_date`, `coverage_start_date`, `coverage_end_date`, `is_amended`, `most_recent`, `amendment_chain`, `total_receipts`, `total_disbursements`, `total_individual_contributions`, `cash_on_hand_beginning_period`, `cash_on_hand_end_period`, `debts_owed_by_committee`, `pdf_url`, `csv_url`, `fec_file_id`, `means_filed`, `pages`.
 
@@ -403,26 +407,28 @@ Look up federal election races and candidate financial summaries. Answers "who's
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `mode` | enum | No | `search` (default) — find candidates in a race with financial totals. `summary` — aggregate race financial summary. |
-| `office` | `president` \| `senate` \| `house` | Yes | Office sought. |
+| `office` | `H` \| `S` \| `P` | Yes | Office sought: H=House, S=Senate, P=President. |
 | `cycle` | number | Yes | Election cycle year (e.g., `2024`). Even years only. |
-| `state` | string | No | Two-letter state code. Required for Senate and House races. |
-| `district` | string | No | Two-digit district number. Required for House races. |
-| `zip` | string | No | ZIP code — finds races covering this ZIP. Search mode only. |
+| `state` | string | No | Two-letter state code. Required for Senate and House races unless `zip` is given. Presidential races are filed under `US`: omit it or pass `US` (any case). Wider than two characters fails `invalid_state_code` (decision 21). |
+| `district` | string | No | Two-digit district number; `00` for an at-large House seat (e.g., WY, AK). Required for House races unless `zip` is given. Presidential and Senate races are filed under `00`: omit it or pass `00`. |
+| `zip` | string | No | ZIP code — returns a locator (`office`, `state`, `district`, `cycle`) for each race covering this ZIP, not candidates. Pass a locator back as `state` and `district` for that race. Search mode only. |
 | `election_full` | boolean | No | Expand to full election period: 4 years for President, 6 for Senate, 2 for House. Defaults to true when omitted, and a ZIP-scoped search rejects it. Carries no schema default, so an explicit value is distinguishable from an omission. |
 | `page` | number | No | Page number (1-indexed). Defaults to 1 in search mode. An explicit value is rejected in summary mode. |
 | `per_page` | number | No | Results per page. Default 20, max 100. Search mode only. |
 
 **Output:**
-- *Search:* Candidate records in the race with: `candidate_id`, `candidate_name`, `candidate_pcc_id`, `candidate_pcc_name`, `party_full`, `incumbent_challenge_full`, `total_receipts`, `total_disbursements`, `cash_on_hand_end_period`, `coverage_end_date`, `committee_ids`.
-- *Summary:* Aggregate totals for the race.
+- *Search:* Candidate records in the race with: `candidate_id`, `candidate_name`, `candidate_pcc_id`, `candidate_pcc_name`, `party_full`, `incumbent_challenge_full`, `total_receipts`, `total_disbursements`, `cash_on_hand_end_period`, `coverage_end_date`, `committee_ids`. With `zip`, race locators instead; `content[]` heads each with its race — `GA-05 House 2026`, `GA Senate 2026`, `President 2024` — and keeps a presidential race's state and a Senate race's district as fields, since they are the values to pass back.
+- *Summary:* Aggregate totals for the race, with an `_independent_expenditures_note` that marks `independent_expenditures` as an unreconciled upstream aggregate and points to `openfec_search_expenditures` `by_candidate` for per-committee totals from periodic reports; in the current cycle those leave out spending reported so far only on 24/48-hour notices, which itemized mode with `is_notice: true` returns.
 - *All modes:* `mode` echoes the resolved mode and `search_criteria` echoes every filter applied, minus paging — including the `election_full` default when the caller omitted it.
 
 **Pagination:** Page-based.
 
 **Error modes:**
-- Senate/House without `state` → `InvalidParams`: "Senate and House election lookups require a state. Provide a two-letter state code."
-- House without `district` → `InvalidParams`: "House election lookups require a district number."
-- Odd cycle year → `InvalidParams`: "Election cycles are even years (e.g., 2024, 2026)."
+- Senate/House without `state` and without `zip` → `ValidationError` (`missing_state_for_office`).
+- House without `district` and without `zip` → `ValidationError` (`missing_district_for_house`); the recovery names `00` for an at-large seat.
+- Odd cycle year → `ValidationError` (`cycle_must_be_even`).
+- A presidential race given a `state` other than `US`, or a presidential or Senate race given a `district` other than `00` → `ValidationError` (`inputs_not_applicable_to_office`), in both modes and with a `zip`, before any request. OpenFEC files those races under `US` and `00`, so any other value matches nothing, and the empty-result notice would have blamed the state code. The error carries `inapplicable_inputs` and `filed_values`. `US` and `00` pass, and so does `0`, which OpenFEC's district arg pads to `00` (sent and echoed as given); `000` does not pad and fails. (`inputs_not_applicable_to_mode` means the endpoint cannot take the input; here it can.)
+- `state` wider than two characters → `ValidationError` (`invalid_state_code`, decision 21).
 - `election_full` alongside `zip` → `ValidationError` (`inputs_not_applicable_to_mode`). A ZIP-scoped search runs `/elections/search/`, which has no such parameter; the rejection names it and the set that endpoint does accept.
 - Explicit `page` or `per_page` in summary mode → `ValidationError` (`inputs_not_applicable_to_mode`); `/v1/elections/summary/` accepts neither.
 
@@ -453,7 +459,7 @@ Search FEC legal documents. Powered by OpenSearch with proximity search and high
 | `min_date` | string | No | Earliest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
 | `max_date` | string | No | Latest date (YYYY-MM-DD) for the selected `date_kind`. Requires `type` and `date_kind`. |
 | `from_hit` | number | No | Offset for pagination (0-indexed), counted within each document type. Default 0, max 9999. Bounded with `hits_returned` by the upstream result window: `from_hit + hits_returned <= 10000` (decision 4). |
-| `hits_returned` | number | No | Results per page, applied per document type. Default 20, max 200. A page of large results can return fewer, held to the response budget below. |
+| `hits_returned` | number | No | Results per page, applied per document type: a search covering several types returns up to this many of each. Default 20, max 200. Every result upstream returns is delivered. |
 
 **Output:** Varies by `type`:
 - *Advisory opinions:* `ao_no`, `name`, `summary`, `issue_date`, `request_date`, `status`, `requestor_names`, `regulatory_citations`, `statutory_citations`, `highlights`, and the related-filing summary `document_count` / `document_categories`.
@@ -461,7 +467,7 @@ Search FEC legal documents. Powered by OpenSearch with proximity search and high
 - *Admin fines:* Case details, penalty amounts, respondents.
 - *Statutes:* Citation, title, text.
 
-The server normalizes the type-keyed response arrays into a uniform `results` array with a `document_type` discriminator. Every result is trimmed: `documents` becomes `document_count` and `document_categories`, `dispositions` becomes `disposition_count` and `disposition_categories` (the distinct `disposition` values, or `disposition_description` on administrative fines), `document_highlights` is dropped, highlights stop at three, and each `commission_votes` entry is cut to its `vote_date` and a 200-character `action`; `retrievalHint` points at `openfec_get_legal_document` for all of it. Each kept highlight has upstream's `<em>`/`</em>` match markup removed — only those two tokens, since the prose itself carries literal `<`, `>`, and `&` — and `content[]` puts each highlight on its own list line, since the snippets carry commas, with a snippet's own line breaks indented under its item. `format()` groups results by type, heads each by its number and `name` (or `mur_name` on an archived MUR), and renders nested fields through the legal field renderers of decision 18.
+The server normalizes the type-keyed response arrays into a uniform `results` array with a `document_type` discriminator. Every result is trimmed: `documents` becomes `document_count` and `document_categories`, `dispositions` becomes `disposition_count` and `disposition_categories` (the distinct `disposition` values, or `disposition_description` on administrative fines), `document_highlights` is dropped, highlights stop at three, and each `commission_votes` entry is cut to its `vote_date` and a 200-character `action`; `retrievalHint` points at `openfec_get_legal_document` for all of it. Every link is absolute (decision 22): the result's `url` is the record's page on fec.gov (a statute's is on govinfo.gov), and an advisory opinion, which arrives with none, is given `https://www.fec.gov/data/legal/advisory-opinions/<ao_no>/`. Each kept highlight has upstream's `<em>`/`</em>` match markup removed — only those two tokens, since the prose itself carries literal `<`, `>`, and `&` — and `content[]` puts each highlight on its own list line, since the snippets carry commas, with a snippet's own line breaks indented under its item. `format()` groups results by type, heads each by its number and `name` (or `mur_name` on an archived MUR), and renders nested fields through the legal field renderers of decision 18.
 
 **Type-specific filters:** each is sent under the upstream name the selected type reads (decision 17):
 
@@ -473,9 +479,7 @@ The server normalizes the type-keyed response arrays into a uniform `results` ar
 | `ao_number` | `ao_no` | rejected (ignored) | rejected (ignored) | rejected (ignored) |
 | `case_number` | rejected (ignored) | `case_no` | `case_no` | rejected (ignored) |
 
-**Pagination:** Custom model — `from_hit`/`hits_returned` (not page-based). The tool exposes this directly since it differs from other tools. `total_count` covers the types searched: `total_all` for a search scoped to one type (by `type`, or by filters that leave only one) or one with no type-specific filter, and otherwise the sum of the per-type `total_<type>` counts over the types kept.
-
-**Response budget:** a page is held to 100,000 bytes per surface by admitting whole results, one type at a time (decision 20). When results upstream returned are held back, the `truncated`, `shown`, and `nextFromHit` enrichment fields are set and the `notice` names the continuation: `nextFromHit` maps each type with results held back (keyed by its `type` value) to the `from_hit` that resumes it, and the caller re-calls with the same filters, that `type`, and that `from_hit`. A naturally short page, a page that fits, and an exhausted offset set none of them.
+**Pagination:** Custom model — `from_hit`/`hits_returned` (not page-based). The tool exposes this directly since it differs from other tools. The next page starts at `from_hit + hits_returned`, with the same filters (decision 4); a type that returned fewer than `hits_returned` is exhausted. `total_count` covers the types searched: `total_all` for a search scoped to one type (by `type`, or by filters that leave only one) or one with no type-specific filter, and otherwise the sum of the per-type `total_<type>` counts over the types kept.
 
 **Error modes:**
 - No scoping filter at all → `ValidationError` (`missing_filter`). Any one of `query`, `type`, `ao_number`, `case_number`, `respondent`, `regulatory_citation`, `statutory_citation`, a penalty bound, or a date bound satisfies it.
@@ -506,7 +510,7 @@ The server normalizes the type-keyed response arrays into a uniform `results` ar
 
 ### `openfec_get_legal_document`
 
-Fetch one legal document in full. The detail counterpart to `openfec_search_legal`, which trims every result unconditionally and offered no way to recover what it cut. A record too large for the 100,000-byte response budget is returned in parts (decision 20).
+Fetch one legal document in full. The detail counterpart to `openfec_search_legal`, which trims every result unconditionally and offers no way to recover what it cut. A record too large for the 100,000-byte response budget is returned in parts (decision 20).
 
 **Input schema:**
 
@@ -518,13 +522,13 @@ Fetch one legal document in full. The detail counterpart to `openfec_search_lega
 | `offset` | number | No | Entry offset (0-indexed) into `array`; requires `array`, defaults to 0 with it. |
 
 **Output:** one flat object with three arms, rendered on field presence:
-- *Whole:* `document` — the complete record as upstream sends it, carrying the full `documents` array that search replaces with a count and category summary, the complete `dispositions` and `commission_votes`, and the scalar/date fields. Fields present vary by document type.
+- *Whole:* `document` — the complete record as upstream sends it, with every link made absolute (decision 22), carrying the full `documents` array that search replaces with a count and category summary, the complete `dispositions` and `commission_votes`, and the scalar/date fields. Fields present vary by document type.
 - *Bounded* (the whole record would exceed the budget): `document` carries every non-array field and the arrays that fit, smallest first, in the record's own key order; `withheld` lists the rest, smallest first, as `{ array, count, bytes }` — `bytes` is the array's JSON size in UTF-8. The `notice` names the re-call.
 - *Slice* (`array` given): `document` carries the record's non-array fields; `slice` is `{ array, offset, total, next_offset?, entries }` — entries from `offset` while they fit, at least one while `offset` is inside the array, and `next_offset` until the last entry is in. An `offset` at or past the end returns no entries and a `notice` naming the array's length (decision 14); an empty array returns none and says so.
 
 `search_criteria` echoes `doc_type`, `no`, and `array`, minus the paging `offset`. `attachedDocumentCount` enrichment reports the length of the record's `documents` in every arm — whether they are inline, in a slice, or held back — so it can be checked against the `document_count` the search result reported.
 
-**Rendering:** `format()` heads the record by its number and `name`, or `mur_name` for an archived MUR whose `name` is null, and renders the nested fields through the legal field renderers of decision 18 — each `dispositions` entry's `citations` included. `withheld` renders as a list of array names with entry counts and sizes; a slice renders its entries numbered from `offset + 1` — every field of a `documents`, `commission_votes`, or `dispositions` entry, as their whole-record sections do, and an entry of any other array through that array's legal renderer — then the offset that continues it.
+**Rendering:** `format()` heads the record by its number and `name`, or `mur_name` for an archived MUR whose `name` is null, and renders the nested fields through the legal field renderers of decision 18 — each `dispositions` entry's `citations` included. `withheld` renders as a list of array names with entry counts and sizes; a slice renders its entries numbered from `offset + 1` — every field of a `documents`, `commission_votes`, or `dispositions` entry, as their whole-record sections do, and an entry of any other array through that array's legal renderer — then the offset that continues it. Every array entry, in a whole-record section or a slice, is one CommonMark list item numbered by position, its first field on the marker line and the rest one per line at the item's content column. A field whose text spans lines renders as a list item under its key with its blank lines kept, so an upstream line that reads as a list marker (MUR 8309's vote action steps `1. Accept…`) stays inside its entry instead of joining the section's numbering.
 
 **Not returned:** `highlights` and `document_highlights`. Those are a relevance artifact `/legal/search/` computes against a query, not data attached to a canonical record — the detail endpoint has no such field.
 
@@ -551,9 +555,9 @@ Look up FEC calendar events, filing deadlines, and election dates.
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `mode` | enum | No | `events` (default) — FEC calendar events. `filing_deadlines` — report due dates. `election_dates` — upcoming/past elections. |
-| `state` | string | No | Two-letter state code. Election dates mode. |
+| `state` | string | No | Two-letter state code, in any case; upper-cased before it is sent, since upstream matches it case-sensitively. A leading `-` excludes the state (`-ga` is sent as `-GA`). Wider than two characters after that `-` fails `invalid_state_code` (decision 21). Election dates mode. |
 | `office` | `H` \| `S` \| `P` | No | Office sought. Election dates mode. |
-| `district` | string | No | Two-digit House district (e.g., `14`), sent as `election_district`. A single digit is zero-padded, since upstream matches only the padded form; any other value passes through. Upstream applies it without `state` — alone it matches that district number in every state. At-large races carry a blank `election_district` upstream and never match. Election dates mode. |
+| `district` | string | No | Two-digit House district (e.g., `14`), sent as `election_district`; a leading `-` excludes the district. A single digit is zero-padded, after that `-` too (`1` → `01`, `-1` → `-01`), since upstream matches only the padded form (measured live 2026-11-16: CA 2026 returned 6 election dates with no district and with `-1`, 4 with `-01`). Any other digit string passes through, and so does a whitespace-only value, which selects the rows upstream files with a blank district (at-large races). A value that is neither digits (after an optional `-`) nor spaces fails `invalid_district`. Upstream applies it without `state` — alone it matches that district number in every state. A numbered district never matches an at-large race. Election dates mode. |
 | `report_type` | string | No | Report type code (e.g., `Q1`, `Q2`). Filing deadlines mode only. |
 | `report_year` | number | No | Report year. Filing deadlines. |
 | `election_year` | number | No | Election year. Election dates mode. |
@@ -573,6 +577,8 @@ Look up FEC calendar events, filing deadlines, and election dates.
 
 **Error modes:**
 - An input belonging to another mode → `ValidationError` (`inputs_not_applicable_to_mode`). Each mode reads a different dataset: `events` accepts `description` and `category`, `filing_deadlines` accepts `report_type` and `report_year`, `election_dates` accepts `state`, `office`, `district`, and `election_year`; `min_date` and `max_date` work everywhere. The rejection names both the offending inputs, the mode that owns each, and the chosen mode's accepted set.
+- A `district` that is neither digits (after an optional `-`) nor spaces → `ValidationError` (`invalid_district`): no election date carries it.
+- `state` wider than two characters after an optional leading `-` → `ValidationError` (`invalid_state_code`, decision 21).
 
 **Upstream endpoints:**
 - `/v1/calendar-dates/` — calendar events
@@ -595,8 +601,9 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 
 | Method | Endpoint(s) | Pagination |
 |:-------|:------------|:-----------|
-| `searchCandidates(params)` | `/candidates/`, `/candidates/{id}/` | Offset |
+| `searchCandidates(params, ctx, options?)` | `/candidates/`, `/candidates/{id}/` | Offset |
 | `getCandidateTotals(params)` | `/candidates/totals/` | Offset |
+| `getAllCandidateTotals(params, ctx, options?)` | `/candidates/totals/` → `{ results, complete }` | Candidate keyset (`sort=candidate_id`, `page=1` on every request, 100 per page), under one budget (decision 24) |
 | `searchCommittees(params)` | `/committees/`, `/committees/{id}/` | Offset |
 | `getCommitteeTotals(id, params)` | `/committee/{id}/totals/` | Offset |
 | `getCommitteeTotalsAllCycles(id, params)` | `/committee/{id}/history/`, `/committee/{id}/totals/` (once per totals table) | Offset, applied locally across the merged rows (decision 11a) |
@@ -624,7 +631,10 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | Retry boundary | Wraps full request (fetch + JSON parse). `withRetry` from `/utils`. |
 | Backoff calibration | 1s base delay (rate-limit oriented). An upstream `Retry-After` of 30 s or less (`withRetry`'s `maxDelayMs`) replaces the backoff. |
 | Max retries | 3 (configurable via `FEC_MAX_RETRIES`). |
-| HTTP status check | `fetchWithTimeout` maps each non-OK status to its own code: 429 → `RateLimited`, 504 → `Timeout`, other 5xx → `ServiceUnavailable`; these retry, 501 excepted. A 429 whose `Retry-After` exceeds 30 s (an exhausted key's runs to hours) fails at once without retrying. Its message names that wait and, on `DEMO_KEY`, points at a personal `FEC_API_KEY`. |
+| Call budget | Every read — page, keyset, legal search, summary, legal document — shares one 50 s deadline across its attempts and backoffs (`CALL_DEADLINE_MS`); a caller that chains reads holds one budget and passes each read what is left of it (decision 25). `FEC_REQUEST_TIMEOUT` still bounds each request, capped by the time the budget has left. |
+| Budget expiry | A read whose budget runs out reports the failure of the last attempt that completed — a 429's wait, a 5xx's or gateway 504's retry hint — with the expiry as its cause. With no completed attempt, or one that timed out on its own clock, it fails as `Timeout` with reason `retry_deadline_exceeded`: "FEC /path/ request did not finish within this call's 50-second budget (N attempts).", hint "Retry shortly; if it runs out of time again, narrow the query with more selective filters." |
+| HTTP status check | `fetchWithTimeout` maps each non-OK status to its own code: 429 → `RateLimited`, 504 → `Timeout`, other 5xx → `ServiceUnavailable`; these retry, 501 excepted, and a 504 whose body is OpenFEC's own `{"message":"Query timed out","status":504}` (its database cancelled the query at the statement timeout) is attempted once, since the same query times out the same way again. A 429 whose `Retry-After` exceeds 30 s (an exhausted key's runs to hours) fails at once without retrying. Its message names that wait and, on `DEMO_KEY`, points at a personal `FEC_API_KEY`. A 504 carries the hint "The FEC API timed out running this query. Narrow it with more selective filters, then retry." |
+| OpenFEC's stated reason | A 400, 404, or 422 whose body is OpenFEC's own `{message, status}` ends its message with OpenFEC's reason instead of a fixed hint: `OpenFEC rejected <param>: <messages>; …` for a validation map, `OpenFEC: <message>` for a string, whitespace folded to one line. `data.body` keeps the original. Any other body — edge HTML or plain text, api.data.gov's `{"error":…}`, a longer-than-captured document, JSON of another shape — keeps the fixed hint. |
 | Parse failure | A 2xx body that is not JSON (an edge error page served with 200) or an envelope without a `results` array → `ServiceUnavailable`, retried like a 503. |
 | Rate limit awareness | Not tracked: the `X-RateLimit-*` headers are never read. A 429's `Retry-After` is the only limit signal, passed through as `data.retryAfter` and named in the message. |
 
@@ -633,8 +643,9 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | Helper | Purpose |
 |:-------|:--------|
 | `buildUrl(path, params)` | Construct URL with query params, inject `api_key`, strip undefined values. |
-| `getJson(url, ctx, attempt?)` | One `fetchWithTimeout` GET under the request timeout (or the attempt's remaining budget, when the call carries a deadline) and the caller's signal, with `exposeErrorBody` set, parsed as JSON; a 2xx body that is not JSON fails as `ServiceUnavailable`. |
-| `fetchPage<T>(path, params, ctx, options?)` | `getJson` → validate envelope → return `{ pagination, results }`, inside `withRetry`; `options.deadlineMs` bounds every attempt and backoff. |
+| `getJson(url, ctx, attempt)` | One `fetchWithTimeout` GET under the request timeout or the attempt's remaining budget, whichever is smaller, and the attempt's signal (the read's deadline and the caller's cancellation), with `exposeErrorBody` set, parsed as JSON; a 2xx body that is not JSON fails as `ServiceUnavailable`. With 1 ms or less of budget left it sends nothing and waits for the deadline or the cancellation to settle the attempt. |
+| `ladder<T>(operation, ctx, options, read)` | One read's request ladder: `read` under `withRetry`, every attempt and backoff inside `options.deadlineMs` (default `CALL_DEADLINE_MS`), a failure rethrown sanitized. It remembers the last attempt that completed, so an expired budget reports that failure (Resilience, "Budget expiry"). Every fetch helper below runs through it. |
+| `fetchPage<T>(path, params, ctx, options?)` | `getJson` → validate envelope → return `{ pagination, results }`, inside `ladder`. |
 | `fetchSeek<T>(path, params, query, ctx, delivered)` | Like `fetchPage` but returns `{ pagination, results, nextCursor }` from `last_indexes`, with the cursor bound to `query` and carrying the rows delivered through this page. |
 | `fetchLegalSearch(params, ctx)` | Special handling for legal search response shape. |
 | `cursorQuery(scope, input)` | Normalize a tool's arguments into the `{ scope, args }` identity its cursors are bound to (`cursor`, `page`, and `per_page` excluded). |
@@ -650,7 +661,7 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 | `FEC_API_KEY` | No | `DEMO_KEY` | OpenFEC API key from api.data.gov. `DEMO_KEY` is a small daily allowance shared per IP; a personal key gets OpenFEC's published 1,000 requests/hour. |
 | `FEC_BASE_URL` | No | `https://api.open.fec.gov/v1` | API base URL. |
 | `FEC_MAX_RETRIES` | No | `3` | Max retry attempts for failed requests. |
-| `FEC_REQUEST_TIMEOUT` | No | `30000` | Request timeout in milliseconds. |
+| `FEC_REQUEST_TIMEOUT` | No | `30000` | Per-request timeout in milliseconds. Each call is also capped at 50 s across its attempts (decision 25). |
 
 ---
 
@@ -695,14 +706,15 @@ Single service wrapping all API interactions. Uses `fetchWithTimeout` from `@cya
 
 ### "What's the outside money picture for this race?"
 1. `openfec_lookup_elections` → get `candidate_id`s for all candidates in the race
-2. `openfec_search_expenditures` with `candidate_id`, mode `by_candidate` → totals for/against each candidate
-3. `openfec_search_expenditures` with `support_oppose=O` → who's opposing whom
+2. `openfec_search_expenditures` with `candidate_id`, mode `by_candidate` → totals for/against each candidate, largest first, from periodic reports only. In the current cycle, add the 24/48-hour notices (`mode` itemized, `is_notice: true`) dated after each spender's last periodic report, which those totals do not include yet.
+3. `openfec_search_expenditures` with `support_oppose=O` → who's opposing whom. Never add up an itemized page that mixes notices with report rows (`is_notice: false` returns report rows alone), and leave memo entries (`memo_code` `X`) out of any sum.
 
 ### "Trace the money trail for a Super PAC"
 1. `openfec_search_committees` → get Super PAC `committee_id`
 2. `openfec_search_contributions` with `committee_id` → who funds the PAC
 3. `openfec_search_disbursements` with `committee_id` → what the PAC spends on
 4. `openfec_search_expenditures` with `committee_id` → which candidates the PAC supports/opposes
+5. `openfec_search_contributions` with `contributor_id` set to the PAC's `committee_id` → which committees the PAC gave to
 
 ### "Has this committee had legal issues?"
 1. `openfec_search_legal` with committee/candidate name as `query` → enforcement cases, advisory opinions
@@ -724,7 +736,7 @@ Schedule A/B/E use keyset pagination with `last_indexes` containing multiple cur
 
 The encoded payload also carries the query that issued it — the tool name plus the caller's arguments, minus `cursor`, `page`, and `per_page` (none of them changes which rows the keyset walks — `page` addresses the page-based aggregate modes). `decodeCursor` validates the structure and compares that identity against the current call, because `last_indexes` keys are sort-specific and OpenFEC silently ignores keys that do not match the active sort: without the check, a cursor replayed under a changed sort or filter is accepted and restarts at page one with no signal. A malformed cursor fails as `invalid_cursor`; a valid cursor from a different query fails as `cursor_query_mismatch`, naming the arguments that changed. The identity is a generic serialization of the arguments rather than a per-field allowlist, so new filters and sort values need no matching change here.
 
-`last_indexes` alone cannot say whether a next page exists: OpenFEC populates it for the last row of every page, terminal pages included. A cursor is therefore minted only when the page could have a successor — `last_indexes` is populated, the page came back full (`results.length >= per_page`), and an exact count does not already account for every row delivered so far (`is_count_exact === true && count <= delivered + results.length`). A short page ends the walk. The SEEK envelope carries no `page`, so `pages` is not a usable cross-check: there is no position to compare it against, and when the count is an estimate `pages` is derived from that estimate. The cursor therefore carries the position itself — `n`, the rows delivered through the page that minted it — so an exact count ends the walk on whichever page reaches it, and a capped page never reports `truncated` (decision 16) with nothing left. A cursor without `n` reads as position 0, which can only under-count and never ends a walk early. When the count is not declared exact, a full page that happens to be terminal still mints a cursor — nothing in the envelope distinguishes it — and the empty page that follows reports an exhausted position (decision 14) rather than a search that matched nothing.
+`last_indexes` alone cannot say whether a next page exists: OpenFEC populates it for the last row of every page, terminal pages included. A cursor is therefore minted only when the page could have a successor — `last_indexes` is populated, the page came back full (`results.length >= per_page`), and an exact count does not already account for every row delivered so far (`is_count_exact === true && count <= delivered + results.length`). A short page ends the walk. The SEEK envelope carries no `page`, so `pages` is not a usable cross-check: there is no position to compare it against, and when the count is an estimate `pages` is derived from that estimate. The cursor therefore carries the position itself — `n`, the rows delivered through the page that minted it — so an exact count ends the walk on whichever page reaches it, even a full one. A cursor without `n` reads as position 0, which can only under-count and never ends a walk early. When the count is not declared exact, a full page that happens to be terminal still mints a cursor — nothing in the envelope distinguishes it — and the empty page that follows reports an exhausted position (decision 14) rather than a search that matched nothing.
 
 ### 3. `two_year_transaction_period` abstraction
 
@@ -736,7 +748,7 @@ Legal search uses `from_hit`/`hits_returned` (offset-based, max 200) with type-k
 
 Both ride the OpenSearch result window behind `/legal/search/`, which serves a request only while `from_hit + hits_returned <= 10000`, inclusive. Past it upstream answers 400 with `Opensearch failed to execute query` — a message that names the engine, not the window. The ceiling moves with the page size, so it cannot be expressed as a static `.max()` on its own: `from_hit` advertises the ceiling it has at `hits_returned: 1` (9999) and the sum is checked in the handler before dispatch, rejected as `legal_window_exceeded` with the largest `from_hit` the supplied page size allows. That follows decision 8 — reject an unservable input rather than spend the round trip on a 400 that misattributes the cause. No document type holds enough records to reach the window (the largest single-type total measured is 7,670 MURs), so a paging run runs out of documents first; this is about the advertised contract and the error text.
 
-Because `from_hit` offsets within each type, a page the response budget bounds (decision 20) continues per type: `nextFromHit` gives each type with results held back the `from_hit` of its first unshown result, and a re-call with that `type` returns it next. Measured live, a typed search at `from_hit: n - 1` returns the last result an untyped page showed for that type and then the one its continuation starts at, so the typed and untyped orders agree.
+Because `from_hit` offsets within each type, a page is `hits_returned` results of each type searched, and the next page starts at `from_hit + hits_returned` with the same filters. A type that returned fewer than `hits_returned` is exhausted; the others continue. A page carries every result upstream returned, so no per-type continuation value is needed (decision 16).
 
 ### 5. `_full` fields for LLM readability
 
@@ -754,11 +766,20 @@ All twelve tools return `search_criteria` on every response, not only empty ones
 
 Every handler validates the concrete endpoint selected by an ID or mode before dispatch. Direct candidate and committee lookup reject search-only inputs; Schedule A aggregate variants accept only the identifier their resolved endpoint supports; Schedule A/B/E itemized reject page-number pagination; election summary rejects paging. The rejection names the offending inputs and the endpoint's supported set. Silently dropping one is the worse failure: the caller gets an unnarrowed result set that looks like an answer to the narrowed question.
 
-The check sits at input-presence level before the branch builds `params`, because the service allowlist only sees outbound names and cannot catch an input that was never copied. A branch-scoped input therefore carries no Zod `.default()` when omission must be distinguished from explicit presence; `page` on ID/mode-dispatched tools, `most_recent` on `openfec_search_expenditures`, and `election_full` on `openfec_lookup_elections` and `openfec_search_expenditures` are optional, with defaults applied inside the branches that support them. The service layer separately allowlists the six Schedule A aggregate paths and election summary as a final backstop against future routing drift.
+The check sits at input-presence level before the branch builds `params`, because the service allowlist only sees outbound names and cannot catch an input that was never copied. A branch-scoped input therefore carries no Zod `.default()` when omission must be distinguished from explicit presence; `page` on ID/mode-dispatched tools, `most_recent` on `openfec_search_expenditures`, and `election_full` on `openfec_lookup_elections` and `openfec_search_expenditures` are optional, with defaults applied inside the branches that support them. The service layer separately checks every outbound parameter name against the allowlist of each endpoint it has an entry for — `/schedules/schedule_a/` and its six aggregate paths, Schedule B, E, and F, `/candidates/totals/`, legal search, committee totals and history, grouped totals, election summary, and election dates — as a final backstop against future routing drift.
 
-### 9. The nested committee object is hoisted, not duplicated per row
+The same rule covers code-shaped inputs OpenFEC would answer with an empty success: a state, party, committee type, or committee designation outside what OpenFEC files fails before the request (decision 21), and a race given a state or district it is never filed under fails as `inputs_not_applicable_to_office`.
 
-OpenFEC embeds a ~40-field committee object in every itemized Schedule A/B/E row. When the query is scoped to one `committee_id` it is identical across the page, so it is lifted into a single top-level `committee` field. Schedule A and B require a `committee_id`, so the hoist is unconditional there; Schedule E does not, so it hoists only when the caller supplied one — a candidate- or race-scoped Schedule E page spans several spending committees, and attributing those rows to one of them would be worse than the payload cost. Schedule A's donor-side `contributor` object is deliberately kept on the row: it varies per row and carries treasurer, designated-agent, and cycle-history data that appears nowhere else. A committee record left on a row — Schedule E/F's spender on a page spanning committees, Schedule A's donor-as-committee `contributor`, Schedule B's `recipient_committee` — renders in `content[]` as name, ID, and one attribute line through a `renderRecord` field renderer, the same summary the hoisted header uses; the generic JSON fallback in `renderValue` stays for fields with no known shape, and `structuredContent` keeps the full record. Schedule E's nested `candidate` object is dropped outright — its three fields are the row's own `candidate_id`, an internal `idx`, and a `two_year_period` that restates the query's cycle.
+### 9. Committee records are carried once per page, in full
+
+OpenFEC embeds a ~40-field committee object in every itemized Schedule A/B/E/F row — the filing committee on every row, and on some a donor or payee that is itself a committee. They repeat: a 100-row Schedule F page spanning committees carries 11 distinct ones. Each record is therefore carried once per page and in full on both surfaces, so the payload sheds the repetition and no field.
+
+- **Hoist.** When the query is scoped to one `committee_id`, the filing committee is identical across the page and is lifted into a single top-level `committee` field. Schedule B requires a `committee_id`, so the hoist is unconditional there. Schedules A, E, and F hoist only when the caller supplied one: a Schedule A page scoped by donor alone and a candidate- or race-scoped Schedule E page span several committees, and attributing those rows to one of them would be worse than the payload cost.
+- **Maps.** Every other record leaves its row for a page-level map keyed by the ID the row already carries: `contributor_committees[contributor_id]` (Schedule A donor that is a committee), `recipient_committees[recipient_committee_id]` (Schedule B payee that is a committee), and `committees[committee_id]` (the spender on Schedule E/F pages without `committee_id`, the recipient on donor-scoped Schedule A pages). A record whose row carries no matching ID, and a value under the key that is not a record, stay on the row with the generic rendering.
+- **Rendering.** The hoisted record and each map entry render in `content[]` in full: a title line, then every other non-empty field. Map entries follow the rows, and a row's ID line reads `C… (NAME)`, so the row still names whose it is. The generic JSON fallback in `renderValue` stays for fields with no known shape.
+- **One ID, several records.** A committee's embedded record is its filing history for the row's own cycle, so a page spanning cycles can hold different records under one ID (Schedule F with `cycle` omitted: the same committee's 2016 and 2018 records differ). The hoisted record or map entry is the one most rows with that ID carry, the first seen on a tie; a row carrying another record keeps it, rendered in full. Lifting the first row's record alone would have dropped the other cycles' data from the page.
+
+Schedule E's nested `candidate` object is dropped outright — its three fields are the row's own `candidate_id`, an internal `idx`, and a `two_year_period` that restates the query's cycle.
 
 ### 10. The outbound parameter guard resolves interpolated paths to their spec template
 
@@ -778,7 +799,7 @@ OpenFEC keeps committee totals in one table per filing form — presidential (`P
 
 Single mode without `cycle` therefore reads `/committee/{committee_id}/history/` beside the unfiltered totals request — concurrently, so a single-type committee keeps today's latency and gets today's request and page unchanged. When the history spans more than one table, each other table is asked for its cycles with a multi-value `cycle`, the newest table is read whole when the caller's page did not hold all of it, and the merged rows are sorted (NULL placed as OpenFEC's PostgreSQL places it) and paged locally. A cycle both tables hold is answered by the table its history row names, as an explicit `cycle` request is. A committee whose newest type has no totals row yet now answers from its earlier types; the `openfec://committee/{committee_id}` resource still reads one unfiltered row and shows no financial summary in that state.
 
-Cost: one extra request for a single-type committee, plus one per additional table, plus one when the caller's page split the newest table. The history-driven reads are best-effort, because detecting the gap needs the same history read as closing it: a failed one leaves the reads that succeeded standing with a notice naming what they lack, never a silent partial and never a rejected call the unfiltered page alone would have answered. Only a rate limit and a caller cancellation fail the call, since the caller's next step is to wait or to stop either way. A 404 for cycles the history just named counts as a failed read, not an empty one; OpenFEC's own 404 for the history itself reads as an empty history, the same rule the totals read follows. Every request shares one 50 s budget across attempts and backoffs, so the call settles before an MCP SDK client's 60 s request timeout; the heaviest call (history, the unfiltered page, three other tables, a newest-table re-read) would otherwise run two sequential retry ladders of four 30 s attempts each, about 254 s, against about 127 s for the single unfiltered request it replaces.
+Cost: one extra request for a single-type committee, plus one per additional table, plus one when the caller's page split the newest table. The history-driven reads are best-effort, because detecting the gap needs the same history read as closing it: a failed one leaves the reads that succeeded standing with a notice naming what they lack, never a silent partial and never a rejected call the unfiltered page alone would have answered. Only a rate limit and a caller cancellation fail the call, since the caller's next step is to wait or to stop either way. A 404 for cycles the history just named counts as a failed read, not an empty one; OpenFEC's own 404 for the history itself reads as an empty history, the same rule the totals read follows. Every request shares one 50 s budget across attempts and backoffs (`CALL_DEADLINE_MS`, decision 25), so the call settles before an MCP SDK client's 60 s request timeout; the heaviest call (history, the unfiltered page, three other tables, a newest-table re-read) would otherwise run two sequential retry ladders of four 30 s attempts each, about 254 s, against about 127 s for the single unfiltered request it replaces.
 
 ### 12. Coordinated expenditures use page-based pagination, unlike the other schedules
 
@@ -802,34 +823,19 @@ OpenFEC reports `is_count_exact: false` on its highest-volume datasets — measu
 
 Tools surface it as `count_is_approximate`, set only when upstream declared the count inexact, and `format()` then renders `≈N total (approximate)`. The polarity is deliberate: a positively-named flag that is simply absent for a tallied count keeps an exact response byte-identical on both surfaces, where an `is_count_exact: true` carried into the output would have to render a marker on every response to keep `structuredContent` and `content[]` in parity. The framework's `total` enrichment still renders a bare `**N total**` trailer from the number alone, so the four tools that measure inexact upstream also set the `notice` enrichment to say the total is an estimate. The static "may be approximate for itemized" caveat the three itemized tools used to carry on `count` is gone — it was wrong in both directions, hedging a `count: 1` terminal page while `openfec_search_filings` measured inexact with no caveat at all.
 
-### 16. High-volume pages are bounded to 100,000 bytes per surface
+### 16. The caller's page size is the page
 
-At `per_page: 100` a single page from the six high-volume search tools ran 310–700KB across `structuredContent` and `content[]` — pagination worked, but one permitted page could fill a model's context. The budget is **100,000 bytes on each surface, independently**, reached by two lossless measures and no change to any schema-declared `per_page` maximum, which stays 100 (OpenFEC's own ceiling).
+`per_page` and `hits_returned` are the page. Every search tool sends the value asked for upstream (defaults stay 20; maxima 100, and 200 per legal type, are OpenFEC's own) and returns every row upstream sent. No response carries a page-bound field or a per-type continuation value: the keyset tools mint `next_cursor` from the last row returned, the page-based tools echo the caller's `per_page` and count pages at it, and legal search continues at `from_hit + hits_returned` (decision 4). Clients handle large results themselves; a server-side cut would hand callers a smaller page than they asked for, page numbers at a size they never sent, and per-type continuations to learn, in exchange for a bound the caller's own `per_page` already sets.
+
+Weight is shaped by what a row carries, never by cutting a page:
 
 1. **Null/empty-field drop.** `dropEmptyFields` removes `null`, `''`, `[]`, and records left empty, at every depth, from every itemized and filing row and from candidate and totals rows — 15–46% of row bytes, carrying nothing. `false` and `0` stay; array elements are never removed, since their positions can carry meaning.
-2. **An effective `per_page` cap.** Each tool sends `min(per_page, cap)` upstream, per scope. The cap lowers the request itself rather than trimming a fetched page, so no row is ever discarded: the keyset tools mint `next_cursor` from the last row upstream actually returned, and the page-based tools echo the size applied as `pagination.per_page`, with `pages` and every page number counted at that size.
+2. **Committee records once per page** (decision 9) instead of once per row.
+3. **The legal search-result trim** (`documents` and `dispositions` as counts and categories, highlights capped at three, votes cut to a date and an action) with `openfec_get_legal_document` returning the rest.
 
-A page bounded below the caller's request, with rows remaining past it, sets the `truncated`/`shown`/`cap` enrichment and a `notice` naming the continuation; `totalCount` and `count` keep the full upstream total. A page the cap did not bound, a naturally short last page, and an exhausted position report nothing — they are complete.
+A candidate search with `include_totals` is the heaviest shape: one long-serving incumbent carries a totals row per cycle filed, so 100 House incumbents bring 653 totals rows. The page is still the caller's `per_page`, and the totals walk reads every row (decision 24).
 
-The surfaces are measured as the caller receives them, from the assembled `CallToolResult`: the UTF-8 bytes of `JSON.stringify(structuredContent)` with the enrichment fields merged in, and of the `content[]` text blocks joined by a newline, the enrichment trailer included. The legal tools hold to the same budget and measure (`RESPONSE_BUDGET_BYTES`, `utf8Bytes`) by measuring each response rather than capping a request (decision 20).
-
-Each cap is the largest multiple of 5 for which a page of the heaviest row measured live in that scope stays within the budget on both surfaces, and a page at the heaviest measured per-row average stays within 90% of it. Measured 2026-09-23 against 2024 data, after the null-drop and compact committee rendering; `structuredContent` bytes per row (it outweighs `content[]` in every scope):
-
-| Tool | Scope | Heaviest avg / row | Heaviest row | Cap |
-|:--|:--|--:|--:|--:|
-| `openfec_search_contributions` | itemized | 2,151 | 2,894 | 30 |
-| `openfec_search_disbursements` | itemized | 2,391 | 2,961 | 30 |
-| `openfec_search_expenditures` | itemized, `committee_id` (hoisted) | 1,427 | 1,487 | 60 |
-| `openfec_search_expenditures` | itemized, no `committee_id` (per-row committee) | 2,689 | 3,100 | 30 |
-| `openfec_search_coordinated_expenditures` | `committee_id` (hoisted) | 1,055 | 1,070 | 80 |
-| `openfec_search_coordinated_expenditures` | no `committee_id` (per-row committee) | 3,026 | 3,130 | 25 |
-| `openfec_search_filings` | all | 1,345 | 1,426 | 65 |
-| `openfec_search_candidates` | `include_totals`, `cycle` or `election_year` set | 1,828 | 2,756 | 35 |
-| `openfec_search_candidates` | `include_totals` across every cycle | 8,135 | 17,303 | 5 |
-
-A candidate row is the candidate plus its totals rows — one per cycle filed, so an all-cycles page of long-serving incumbents is the heaviest shape the server returns. Candidate search without totals (835 bytes at the heaviest row) and every aggregate mode stay under the budget at 100 and are not capped. The heaviest row of each scope, strings masked to equal-length placeholders, is kept as a test fixture, so a cap or renderer that outgrows the budget fails the suite.
-
-Rejected: truncating a fetched page (breaks keyset continuation and discards rows the caller paid a request for), lowering the schema maximum (a breaking contract change for a budget the server can meet on its own), and DataCanvas `spillover()` (needs a canvas provider this server does not register).
+Rejected: capping `per_page` by scope from measured row weights (the page the caller asked for is not the page it got, and every scope needed its own measured table), truncating a fetched page (breaks keyset continuation and discards rows the caller paid a request for), and DataCanvas `spillover()` (needs a canvas provider this server does not register).
 
 ### 17. Legal search routes each type-specific filter by document type
 
@@ -839,7 +845,7 @@ Case search has a second blind spot: when a MUR or ADR search carries a citation
 
 ### 18. Nested legal fields render as text
 
-Legal records nest participants, subjects, citations (a flat array per disposition on current MURs and ADRs, an object of `regulations`/`us_code` arrays on archived MURs), a recursive `subject` tree on archived MURs, advisory-opinion citation lists, and commission votes. `utils/legal-field-renderers.ts` gives each a text rendering — `name (role)`, `52 U.S.C. 30104(g) (url)`, `11 CFR 100.4`, `AO 2000-25 (name)`, `>`-joined subject paths — through `renderRecord` field renderers, which take the raw value and decline (null) anything that is not the whole shape they know. A declined value, and any field with no renderer, keeps the generic JSON rendering, so an upstream shape change shows up as JSON rather than as silently missing text. `structuredContent` is untouched. Dispositions need no renderer of their own: search summarizes them to `disposition_count` and `disposition_categories` (decision 20), and the detail tool renders each one as a section entry, every field on its own line, with its `citations` through the citation renderer.
+Legal records nest participants, subjects, citations (a flat array per disposition on current MURs and ADRs, an object of `regulations`/`us_code` arrays on archived MURs), a recursive `subject` tree on archived MURs, advisory-opinion citation lists, and commission votes. `utils/legal-field-renderers.ts` gives each a text rendering — `name (role)`, `[52 U.S.C. 30104(g)](<url>)` (a citation linked to its URL through `markdownLink`), `11 CFR 100.4`, `AO 2000-25 (name)`, `>`-joined subject paths, and `[<last path segment>](<url>)` for a `url` field — through `renderRecord` field renderers, which take the raw value and decline (null) anything that is not the whole shape they know. A declined value, and any field with no renderer, keeps the generic JSON rendering, so an upstream shape change shows up as JSON rather than as silently missing text. The renderers never touch `structuredContent`. Commission votes and search highlights render as a CommonMark list, one item per entry with the entry's lines and blank lines inside it; a lone one-line entry stays on the key line. Upstream vote actions carry their own numbered steps, and an indented continuation line would open a code block, so only the list form keeps each vote whole. Dispositions need no renderer of their own: search summarizes them to `disposition_count` and `disposition_categories`, and the detail tool renders each one as a section entry, one list item with every field on its own line, with its `citations` through the citation renderer.
 
 ### 19. Legal citations are checked against the form upstream parses
 
@@ -847,33 +853,93 @@ Legal records nest participants, subjects, citations (a flat array per dispositi
 
 Because the match ignores everything after the section number, a value holding two citations filters on the first alone: `52 U.S.C. 30104, 52 U.S.C. 30118` returns the 783 MURs `52 U.S.C. 30104` does, not the 346 of `30118`, and the reversed order returns 346. The tool rejects such a value as `invalid_citation` too, one citation per field. It reads the text after the section number, with parenthesized subsections removed, as a second citation when it holds another `U.S.C.` or `CFR` code, or another section number introduced by a list separator (`,` `;` `&` `/`), a range dash, `and`/`or`/`through`/`to`, or bare whitespace. A letter suffix (`441b`, `441a-1`), a dotted continuation (`110.1.2`), subsection lists (`30104(a), (b)`), and trailing words carry no second section and stay accepted, each confirmed live to narrow the result like its bare citation. Upstream takes each citation parameter as a repeatable array; exposing that is a schema change this tool does not make.
 
-### 20. Legal responses are bounded by measurement, not by count
+### 20. A legal record over the budget pages its arrays, measured by bytes
 
-Legal record size is heavy-tailed — across the first 200 MURs the median search result is 3 KB and the largest 79 KB — so no result count holds decision 16's budget: MUR 6916 alone exceeds it at `hits_returned: 1`, and eleven MURs and one ADR exceed it as detail records. Both legal tools therefore measure what they return, against the same 100,000-byte, per-surface budget, measured the same way.
+`openfec_get_legal_document` returns one record, so there is no page size a caller could set to bound it. Legal record size is heavy-tailed — eleven MURs and one ADR exceed 100,000 bytes as detail records, and MUR 6916 alone runs near 500 KB — so the tool measures what it returns against a 100,000-byte budget on each surface, independently (`RESPONSE_BUDGET_BYTES`, `utf8Bytes`), and returns a record over it in parts. Search results are not measured: a search page is the caller's `hits_returned` per type (decision 16), already trimmed (decision 18).
 
-- **Charge.** A result, an array, or an array entry is charged the larger of its UTF-8 bytes on the two surfaces — its JSON and its `format()` rendering — plus its separator, against the budget minus the envelope: every byte that is not content (criteria echo, totals, headings, the `withheld` list or slice metadata, and the enrichment with its trailer), reserved at its largest. Charging the larger surface keeps both under the budget; the cost is that the lighter surface — `content[]` for search results — runs well under it.
-- **Search.** `dispositions` is summarized like `documents` (in MUR search results it was 467 KB of a 792 KB page), then whole results are admitted round-robin across the types the search covers, one per type per round. A type whose next result does not fit is closed while the others continue, so an untyped page carries every type that matched and each type's admitted results are a prefix of its list, resumable at `from_hit + shown`. The page upstream returned is cut after the fetch: offset paging, unlike a keyset cursor (decision 16), loses nothing by it. The first result is always admitted, so a walk never stalls.
-- **Detail.** A record that fits returns whole and unchanged. Otherwise it returns its non-array fields plus its arrays smallest-first while they fit, and lists the rest in `withheld`. A re-call naming one array and an entry `offset` returns entries from there while they fit, plus `next_offset`; the first entry is always returned, so an entry larger than the budget alone still advances the walk (the largest entry measured is a 7 KB commission vote).
+- **Charge.** An array or an array entry is charged the larger of its UTF-8 bytes on the two surfaces — its JSON and its `format()` rendering — plus its separator, against the budget minus the envelope: every byte that is not content (criteria echo, headings, the `withheld` list or slice metadata, and the enrichment with its trailer), reserved at its largest. Links are made absolute before anything is measured (decision 22), so the budget counts what is sent. Charging the larger surface keeps both under the budget; the cost is that the lighter surface runs under it.
+- **Whole.** A record that fits returns whole.
+- **Bounded.** Otherwise it returns its non-array fields plus its arrays smallest-first while they fit, and lists the rest in `withheld` as `{ array, count, bytes }`.
+- **Slice.** A re-call naming one array and an entry `offset` returns entries from there while they fit, plus `next_offset`; the first entry is always returned, so an entry larger than the budget alone still advances the walk (the largest entry measured is a 7 KB commission vote).
 
-The framework's `outlineOnOverflow`/`selectSections` was the alternative for detail and does not fit: it measures UTF-16 `length` rather than bytes, its outline carries none of the record's scalar fields, and `selectSections` returns a named top-level section whole — MUR 6916's `dispositions` alone is 333 KB, MUR 7594's `documents` 219 KB.
+The framework's `outlineOnOverflow`/`selectSections` was the alternative and does not fit: it measures UTF-16 `length` rather than bytes, its outline carries none of the record's scalar fields, and `selectSections` returns a named top-level section whole — MUR 6916's `dispositions` alone is 333 KB, MUR 7594's `documents` 219 KB.
 
-Measured live 2026-09-24, UTF-8 bytes per surface, before and after:
+Measured live 2026-09-24, UTF-8 bytes per surface:
 
-| Call | Before `structuredContent` / `content[]` | After | After, shape |
+| Call | Record as upstream sends it, `structuredContent` / `content[]` | Returned | Shape |
 |:--|--:|--:|:--|
-| search, `type: murs`, `hits_returned: 200` | 792,307 / 778,650 | 98,639 / 80,416 | 65 results, `nextFromHit` `murs: 65` |
-| search, `query: "contribution"`, `hits_returned: 200` | 2,480,951 / 2,376,266 | 97,795 / 82,851 | 49 results, all five types |
-| search, `query: "contribution"`, default `hits_returned` | 232,186 / 221,655 | 99,259 / 84,106 | 50 results, all five types |
-| search, MUR 6916 alone | 400,205 / 400,931 | 67,126 / 53,085 | whole, 763 dispositions summarized |
-| detail, MUR 8123 | 126,499 / 126,429 | 53,943 / 52,825 | `dispositions` withheld |
-| detail, MUR 7594 | 350,658 / 346,109 | 41,352 / 34,939 | `dispositions`, `documents` withheld |
-| detail, MUR 6916 | 497,977 / 488,820 | 68,136 / 54,278 | `documents`, `dispositions` withheld |
-| detail, MUR 7594 `documents` by offset | — | ≤ 99,488 / ≤ 99,727 | 3 calls, 667 entries |
-| detail, MUR 6916 `dispositions` by offset | — | ≤ 99,732 / ≤ 71,813 | 4 calls, 763 entries |
+| MUR 8123 | 126,499 / 126,429 | 53,943 / 52,825 | `dispositions` withheld |
+| MUR 7594 | 350,658 / 346,109 | 41,352 / 34,939 | `dispositions`, `documents` withheld |
+| MUR 6916 | 497,977 / 488,820 | 68,136 / 54,278 | `documents`, `dispositions` withheld |
+| MUR 7594 `documents` by offset | — | ≤ 99,488 / ≤ 99,727 | 3 calls, 667 entries |
+| MUR 6916 `dispositions` by offset | — | ≤ 99,732 / ≤ 71,813 | 4 calls, 763 entries |
 
-Statute 30113, advisory opinion 1980-35, and administrative fine 4229 return whole and byte-identical. The three heaviest MURs are kept as a test fixture — masked scalars and the exact byte size of every array entry, expanded to each record's live weight — so a renderer or envelope that outgrows the budget fails the suite.
+Statute 30113, advisory opinion 1980-35, and administrative fine 4229 return whole. The three heaviest MURs are kept as a test fixture (`tests/fixtures/heaviest-legal-records.json`) — masked scalars and the exact byte size of every array entry, expanded to each record's live weight — so a renderer or envelope that outgrows the budget fails the suite.
 
-Rejected: a count cap on `hits_returned` (one record breaks it), stop-at-first admission (a heavy MUR page would crowd out every later type), and a per-array entry `limit` (entries run from 30 bytes to 7 KB, so no count suits every array).
+Rejected: a per-array entry `limit` (entries run from 30 bytes to 7 KB, so no count suits every array).
+
+### 21. State, party, and committee codes are checked by width, not shape
+
+OpenFEC matches state, party, and committee code filters literally and answers a spelled-out name (`Georgia`, `Democratic`) with an empty success whose notice says to broaden the search. A letters-only check would reject codes OpenFEC does file: state `US` (presidential candidates), `00` (Schedule E presidential rows), `14`, and one-character Schedule B states; party `W` (write-in), `N`, `D/C`, `N/A`. No filed state is longer than two characters and no party longer than three, so the check is width, run before any request (`utils/code-validators.ts`): a wider value, apart from the two filter values below, fails `invalid_state_code` or `invalid_party_code`, carrying `field`, `value`, and a recovery hint showing the expected form.
+
+- **Where.** `state` on candidates, committees, elections, calendar, and the election resources' `{state}`; `contributor_state`, `recipient_state`, `candidate_office_state`, `committee_state`; `party` on candidates and committees; `candidate_party` (itemized only — `by_candidate` rejects it as inapplicable first).
+- **Pass-through.** Values reach OpenFEC as given, except `openfec_lookup_calendar` `state` and the two committee totals codes, which are upper-cased: `/election-dates/` and `/totals/{entity_type}/` match case-sensitively, so a lowercase `ga` or `o` returned nothing where `GA` and `O` returned rows. `search_criteria` echoes the value sent.
+- **Exclusion and `other`.** Two values wider than a code are OpenFEC filter syntax, not names, and pass where the field's endpoint reads them. A leading `-` excludes the code after it on fields OpenFEC filters through `filter_multi` (`-GA`: every state but Georgia), and the width check runs on the code after that one `-`. `other`, in any case, selects foreign, invalid, and missing states on OpenFEC's STATE_OTHER fields. Still rejected: `-GAA`, `-Georgia`, `-other`, `--GA`, `-DEMO`, and `other` on a field without it. So is an exclusion that excludes nothing, `-` alone or `--D`: OpenFEC answers it with the unfiltered set (Senate 2026 `state: "-"` returns all 1,565 candidates, as no state does).
+
+  | Field | `-CODE` | `other` |
+  |:--|:--|:--|
+  | `openfec_search_candidates` `state`, `party` | yes | no |
+  | `openfec_search_committees` `state` / `party` | yes | yes / — |
+  | `contributor_state`, `recipient_state`, `committee_state` | yes | yes |
+  | `candidate_office_state`, itemized / `by_candidate` | yes / no | yes / no |
+  | `candidate_party` | yes | — |
+  | `committee_type`, `committee_designation` | yes: kept, code upper-cased (`-o` → `-O`) | — |
+  | `openfec_lookup_calendar` `state`; `district` | yes; yes, digit zero-padded (`-1` → `-01`) | no |
+  | `openfec_lookup_elections` `state`, the election resources' `{state}` | no: `/elections/` matches the state exactly | no |
+
+- **Closed sets.** `/totals/{entity_type}/` answers any committee code with HTTP 200 rather than a 422, so `committee_type` and `committee_designation` are checked against OpenFEC's lists (`C D E H I N O P Q S U V W X Y Z`; `A B D J P U`, in any case, after an optional leading `-`) and fail `invalid_committee_type` / `invalid_committee_designation`. `openfec_search_committees` leaves `committee_type`, `designation`, and `organization_type` unchecked: OpenFEC's 422 there names the parameter, and the server passes that reason through (Resilience, "OpenFEC's stated reason").
+- **Schemas unchanged.** No input gains a `pattern`, `maxLength`, or `enum`: OpenFEC upper-cases most codes before its check, so a schema-level enum would reject calls that work.
+
+### 22. Legal links are resolved to absolute fec.gov URLs
+
+Upstream writes legal links site-relative (`/legal/matter-under-review/8112/`, `/files/legal/murs/8112/8112_11.pdf`, `/regulations/100-26/CURRENT`), which a caller cannot open from a tool result. `resolveLegalLinks` makes every `url` at any depth of a legal record absolute, on `structuredContent` and `content[]` alike, in search results, whole records, and `array` slices:
+
+| Link | Upstream | Resolved | Checked live |
+|:--|:--|:--|:--|
+| record `url` (MUR, ADR, admin fine) | `/legal/matter-under-review/8112/` | `https://www.fec.gov/data/legal/matter-under-review/8112/` | 200 (the same path at the site root is a 404) |
+| advisory opinion `url` (absent upstream) | — | `https://www.fec.gov/data/legal/advisory-opinions/2024-01/` | 200 |
+| `documents[].url` | `/files/legal/murs/8112/8112_11.pdf` | `https://www.fec.gov/files/legal/murs/8112/8112_11.pdf` | 200 |
+| citation `url` in `dispositions[].citations` | `/regulations/100-26/CURRENT` | `https://www.fec.gov/regulations/100-26/CURRENT` | 302 to eCFR |
+
+A path under `/legal/` takes the `https://www.fec.gov/data` prefix, since fec.gov serves record pages there; every other site-relative path takes `https://www.fec.gov`; an absolute URL (a statute's govinfo.gov link) is kept as sent, and a `//host` reference is not treated as site-relative. The advisory-opinion page, built from its number, is the one link the server constructs; a record with no `url` otherwise stays without one rather than getting a guess. The change reaches `structuredContent` values, not just rendering, because a link the caller cannot open is the defect; the field renderers of decision 18 still never touch the structured record. `content[]` renders each link as a Markdown link, `[8112_11.pdf](<https://www.fec.gov/files/legal/murs/8112/8112_11.pdf>)`, through the framework's `markdownLink`.
+
+### 23. Rows that must not be summed are labelled, not dropped
+
+Two kinds of itemized row sit beside the rows they overlap. A memo entry (`memo_code` `X`, on Schedules A, B, E, and F) itemizes or restates another row and sits outside FEC report totals. A 24/48-hour notice (Schedule E, `is_notice: true`) is the newest spending, and most of it is reported again on the spender's next periodic report. OpenFEC takes no memo filter, and notices are data a caller may want, so the rows stay and the server says what they are (`utils/row-kinds.ts`):
+
+- **Marker.** Each such row's `content[]` header ends `· memo entry` or `· 24/48-hour notice`. `structuredContent` rows are unchanged.
+- **Page sentence.** For each kind a page mixes with other rows — at least one such row and at least one other — the `notice` carries "{n} of {m} rows on this page are …" counted on the returned rows, with the do-not-sum warning. A page of one kind sums consistently within itself, and an empty page has nothing to sum, so neither gets one. Measured live: "3 of 5 rows … memo entries" on a Schedule A page, "15 of 28 … 24/48-hour notices" on a Schedule E page.
+- **One test per kind.** `memo_code === "X"` is the memo test that holds on all four schedules (Schedule F rows carry no `memoed_subtotal`). The kinds are judged separately; a row can be both.
+- **One notice.** The enrichment `notice` is last-wins, so the approximate-count sentence, the zero-match or exhausted-position sentence, and the row-kind sentences are composed into one call, in that order.
+- **Aggregates.** `memo_count` and `memo_total` on disbursement `by_purpose` rows are the bucket's memo entries, already excluded from `count` and `total`. `by_candidate` totals exclude notices for the same reason, which leaves a current-cycle gap that its `notice` names (see `openfec_search_expenditures`).
+
+Rejected: dropping the rows (a notice is the only record of spending not yet on a report, and a memo entry names the transaction it itemizes).
+
+### 24. Candidate totals are walked by candidate keyset
+
+`/candidates/totals/` orders on its one `sort` column with no tiebreaker, so rows that tie reorder between requests. An offset walk over 100 House incumbents' 653 rows returned 19 of them twice and missed 19 others. `getAllCandidateTotals` therefore walks by candidate, not by page: every request asks for page 1, `per_page=100`, `sort=candidate_id`, and lists only the candidates not yet read. A full page holds every candidate but the one in its last row whole; those are kept, and the next request starts at that last candidate. Each candidate's rows come from exactly one response, so none repeats and none is missed, with no deduplication; a set that fits one page takes one request, and the 100 incumbents took seven. Rows come back newest election year first, then newest cycle.
+
+The walk shares one 50 s budget with the candidate read (decision 25). It stops early with the candidates read whole and `complete: false` when the budget runs out, a later request fails, or a full page holds no whole candidate (one candidate's rows alone fill it, and OpenFEC cannot page them in a fixed order). It never sends an unfiltered request, and a candidate's rows are all returned or none are, so a candidate shown with totals has every cycle and one shown without may still have them on file; the tool's `notice` says so. A caller cancellation, a rate limit, and any other failure of the first request reject the call, since the caller's next step is to stop or wait and no rows exist to stand on.
+
+Rejected: a fixed page limit on the walk with a list of unread candidates in the output (a limit made sense only while the candidate page itself was capped; with the caller's page size it would drop whole cycles while reporting nothing missing) and an offset walk with deduplication (it cannot recover the rows an unstable order skipped).
+
+### 25. Every read runs under a 50 s budget, and its expiry reports what failed
+
+MCP SDK clients abandon a request after 60 s by default, and one read's retry ladder of four 30 s attempts would run about 127 s. Every service read — page, keyset, legal search, election summary, legal document — therefore runs under one 50 s deadline across its attempts and backoffs (`CALL_DEADLINE_MS`), so the call settles with an answer before the client gives up. Decision 11a's history reads set the pattern; the default now covers all of them. A tool that chains reads (a candidate read then the totals walk, or committee totals' several tables) holds one `countdown(CALL_DEADLINE_MS)` and passes each read what is left of it; a read with 1 ms or less left sends nothing.
+
+When the deadline runs out, the read reports the failure of the last attempt that completed rather than the expiry: a 429's wait, a 5xx's or gateway 504's retry hint, with the expiry as its `cause`. That failure names the caller's next step, and a bare "ran out of time" would hide it. With no completed attempt, or one that timed out on its own clock, the read fails as `Timeout` with reason `retry_deadline_exceeded`, a message naming the 50-second budget and attempt count, and the hint to retry or narrow the query.
+
+OpenFEC's own `Query timed out` 504 is the exception to retrying. The same query times out the same way again, so a retry only spends the budget: a broad `contributor_employer` search times out upstream every time in 15–18 s, and three retries would take about 79 s, past a client's 60 s timeout. A 504 with any other body comes from the gateway in front of OpenFEC and is still retried.
 
 ---
 
@@ -886,9 +952,9 @@ Rejected: a count cap on `hits_returned` (one record breaks it), stop-at-first a
 - **Schedule A date range limitation:** The API does not support date ranges spanning multiple `two_year_transaction_period`s. Queries are scoped to a single cycle.
 - **Legal search vs. entity search:** Legal search is full-text, not entity-linked. Searching for a committee name may miss cases where the committee is referenced differently.
 - **Data freshness:** Nightly refresh for most data. E-filing data is near-real-time but only retained ~4 months and is excluded from this server's scope.
-- **No field selection:** The API does not support a `fields` parameter, so full records come back — a Schedule A/B/E row runs 3–4KB. The nested committee object, roughly a third of that weight, is hoisted out of the rows whenever the query is scoped to a single `committee_id`, null and empty fields are dropped, and each high-volume tool caps the page size it requests (decision 16). The cost is more calls per result set: at `per_page: 100` a bounded tool returns 5–80 rows a page, and walking a large set takes proportionally more requests against the rate limit.
-- **Schedule page budget is measured, not enforced:** The per-scope caps come from the heaviest rows measured live, not from serializing each response. An unusually heavy page can still exceed 100,000 bytes — most plausibly an all-cycles candidate search with totals, where one long-serving incumbent's totals alone run ~30KB. The legal tools serialize each response instead (decision 20).
-- **Legal responses over the budget:** a single search result, a single array entry, or a detail record's non-array fields larger than the budget are still returned alone rather than stalling the walk — the heaviest measured is a 67 KB search result (MUR 6916) and a 7 KB entry, both within it. A bounded search page discards the results it held back after upstream sent them, so walking a heavy type spends more requests than its result count suggests; each continuation re-fetches from `nextFromHit`.
+- **No field selection:** The API does not support a `fields` parameter, so full records come back — a Schedule A/B/E row runs 3–4KB, and a `per_page: 100` page of a high-volume tool runs 125–295 KB on a surface. Null and empty fields are dropped and each committee record is carried once per page (decisions 9 and 16), but a page is never cut: the caller's `per_page` is the bound, and a smaller one is the way to a lighter response.
+- **Heavy all-cycles candidate pages:** a candidate search with `include_totals` and no `cycle` or `election_year` carries a totals row per cycle filed for each candidate, so a page of 100 long-serving House incumbents is 653 totals rows and about 885 KB on each surface. It is complete, not bounded; lower `per_page` or scope the cycle.
+- **Legal detail records over the budget:** a single array entry, or a detail record's non-array fields, larger than the budget is still returned alone rather than stalling the walk — the heaviest measured is a 7 KB entry, within it. Search results are not bounded (decision 16).
 
 ---
 
