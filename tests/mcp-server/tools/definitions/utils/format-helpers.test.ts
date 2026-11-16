@@ -14,11 +14,17 @@ import {
   formatEmptyResult,
   formatExhaustedResult,
   formatSearchCriteria,
+  type RecordFieldRenderer,
   renderRecord,
   str,
   toPagination,
 } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
-import { formatRowCommittee } from '@/mcp-server/tools/definitions/utils/trim-schedule-row.js';
+
+/** A field renderer for one known shape — a plain record with a name — declining anything else. */
+const nameOf: RecordFieldRenderer = (value) =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) && 'name' in value
+    ? String(value.name)
+    : null;
 
 describe('buildSearchCriteria', () => {
   it('includes truthy non-pagination fields', () => {
@@ -418,14 +424,12 @@ describe('renderRecord', () => {
   });
 
   it('applies a field renderer to a plain-object value under its key', () => {
-    const result = renderRecord({ committee: { name: 'PAC' } }, undefined, {
-      committee: formatRowCommittee,
-    });
+    const result = renderRecord({ committee: { name: 'PAC' } }, undefined, { committee: nameOf });
     expect(result).toBe('  committee: PAC');
   });
 
   it('falls back to the generic rendering when the value is not the renderer shape', () => {
-    const renderers = { committee: formatRowCommittee };
+    const renderers = { committee: nameOf };
     expect(renderRecord({ committee: [{ name: 'PAC' }] }, undefined, renderers)).toBe(
       '  committee: {"name":"PAC"}',
     );

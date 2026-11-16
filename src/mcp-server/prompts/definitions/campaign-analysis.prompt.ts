@@ -76,8 +76,9 @@ Use openfec_lookup_elections to find all candidates in the race — the step 2 s
 
 ## 6. Outside Money Context
 Use openfec_search_expenditures with the candidate_id:
-- Total independent expenditure support vs. opposition
+- Total independent expenditure support vs. opposition: take the per-committee totals from mode: by_candidate (largest first, periodic reports only), and in the current cycle add the 24/48-hour notices (mode: itemized, is_notice: true) dated after each spender's last periodic report, which those totals do not include yet
 - Key outside groups involved
+- Never sum an itemized page that mixes 24/48-hour notices with periodic-report rows: most notice spending is reported again on the next periodic report. Pass is_notice: false for report rows alone, and leave memo entries (memo_code "X") out of any sum
 
 Then use openfec_search_coordinated_expenditures with the candidate_id. Schedule F is party money spent on the candidate's behalf in coordination with the campaign, under its own statutory limit — legally distinct from independent expenditure and absent from the query above, so party support is understated without it.
 

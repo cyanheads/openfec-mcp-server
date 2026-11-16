@@ -24,15 +24,15 @@ import {
   toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
-import { validateRange } from './utils/range-validators.js';
+import { validateScheduleRanges } from './utils/range-validators.js';
+import { markRowKinds, rowKindSentences } from './utils/row-kinds.js';
 import {
-  disclosePageBound,
+  COMMITTEES,
+  CommitteeMapSchema,
+  committeeRenderers,
+  formatCommitteeMaps,
   formatHoistedCommittee,
-  formatRowCommittee,
   HoistedCommitteeSchema,
-  PageBoundEnrichment,
-  PageBoundTrailer,
-  PER_PAGE_CAPS,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -82,15 +82,7 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       .describe(
         'Page number (1-indexed). Read pagination.pages in the response to see how many pages exist.',
       ),
-    per_page: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe(
-        `Results per page. At most ${PER_PAGE_CAPS.coordinatedExpenditures.committeeScoped} are requested upstream when scoped by committee_id and ${PER_PAGE_CAPS.coordinatedExpenditures.perRowCommittee} otherwise, keeping the response under a 100,000-byte budget. A page bounded below your request reports truncated and cap, and pagination.per_page echoes the size applied — page numbers count at that size, so continue with the next page number.`,
-      ),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
   }),
 
   output: z.object({
@@ -99,11 +91,14 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
         z
           .looseObject({})
           .describe(
-            'Coordinated expenditure record; common keys include expenditure_date, expenditure_amount, payee_name, candidate_id, candidate_name, candidate_office, expenditure_type_full, pdf_url, and subordinate_committee_id — the committee the expenditure was attributed to, which is usually the spender but can be another committee; look it up with openfec_search_committees.',
+            'Coordinated expenditure record; common keys include expenditure_date, expenditure_amount, payee_name, candidate_id, candidate_name, candidate_office, expenditure_type_full, pdf_url, and subordinate_committee_id — the committee the expenditure was attributed to, which is usually the spender but can be another committee; look it up with openfec_search_committees. The spender is committee_id: its record is the hoisted committee on a query scoped to one committee_id, otherwise its entry in committees. A row with memo_code "X" is a memo entry: it itemizes another row, named by back_reference_transaction_id when filed, or restates earlier activity, and FEC leaves it out of report totals — never add it to the other rows.',
           ),
       )
       .describe('Coordinated expenditure result set; one record per itemized transaction.'),
     committee: HoistedCommitteeSchema,
+    committees: CommitteeMapSchema.describe(
+      "The spending party committees, keyed by the committee_id each row carries: every distinct spender once, in full, instead of a copy on each row. Present when the query was not scoped to a single committee_id. A row whose record differs from its ID's entry — the same committee's record for another cycle, on a page spanning cycles — keeps its own.",
+    ),
     pagination: PaginationSchema,
     search_criteria: SearchCriteriaSchema,
   }),
@@ -114,46 +109,19 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, or that the page was bounded below the per_page requested and how to continue.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, or how many rows on the page are memo entries not to be added to the rest.',
       ),
-    ...PageBoundEnrichment,
   },
-  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     if (input.committee_id) validateCommitteeId(input.committee_id);
     if (input.candidate_id) validateCandidateId(input.candidate_id);
 
-    validateRange({
-      minField: 'min_date',
-      minValue: input.min_date,
-      maxField: 'max_date',
-      maxValue: input.max_date,
-      valueType: 'date',
-    });
-    validateRange({
-      minField: 'min_amount',
-      minValue: input.min_amount,
-      maxField: 'max_amount',
-      maxValue: input.max_amount,
-      valueType: 'number',
-    });
+    validateScheduleRanges(input);
 
     const fec = getOpenFecService();
 
-    /**
-     * A committee-scoped page hoists the committee record out of its rows; a
-     * page spanning committees keeps one per row. Upstream paginates at the
-     * size sent, so `pages` and every page number are counted at the capped
-     * size, which the response echoes as `pagination.per_page`.
-     */
-    const perPage = Math.min(
-      input.per_page,
-      input.committee_id
-        ? PER_PAGE_CAPS.coordinatedExpenditures.committeeScoped
-        : PER_PAGE_CAPS.coordinatedExpenditures.perRowCommittee,
-    );
-    const params: FecParams = { page: input.page, per_page: perPage };
+    const params: FecParams = { page: input.page, per_page: input.per_page };
     if (input.committee_id) params.committee_id = input.committee_id;
     if (input.candidate_id) params.candidate_id = input.candidate_id;
     if (input.cycle !== undefined) params.cycle = input.cycle;
@@ -172,26 +140,11 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
 
     const result = await fec.searchCoordinatedExpenditures(params, ctx);
 
-    ctx.enrich.total(result.pagination.count);
-    const exhausted = exhaustedPage(result.pagination, result.results.length);
-    if (exhausted) {
-      ctx.enrich.notice(describeExhaustedPosition(exhausted));
-    } else if (result.results.length === 0) {
-      ctx.enrich.notice(
-        'No coordinated party expenditures matched. Try a different cycle, drop the committee_id or candidate_id filter, or confirm the committee is a party committee — only party committees report Schedule F.',
-      );
-    }
-    disclosePageBound(ctx, {
-      requested: input.per_page,
-      applied: perPage,
-      shown: result.results.length,
-      continuation: { kind: 'page', pagination: result.pagination },
-    });
-
     /**
-     * Rows carry the spending committee as `committee`, hoisted when the caller
-     * pinned one. `subordinate_committee` is a second embedded committee object:
-     * null on most rows, the spender again on most of the rest, occasionally a
+     * Rows carry the spending committee as `committee`: hoisted when the caller
+     * pinned one, otherwise collected once per spender into `committees`.
+     * `subordinate_committee` is a second embedded committee object: null on
+     * most rows, the spender again on most of the rest, occasionally a
      * different committee. It is dropped because the row's own
      * `subordinate_committee_id` always matches it, and that ID resolves through
      * openfec_search_committees.
@@ -199,11 +152,26 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
     const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
       hoistCommittee: Boolean(input.committee_id),
       drop: ['subordinate_committee'],
+      collect: [COMMITTEES],
     });
+
+    ctx.enrich.total(result.pagination.count);
+    const exhausted = exhaustedPage(result.pagination, trimmed.results.length);
+    if (exhausted) {
+      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+    } else if (trimmed.results.length === 0) {
+      ctx.enrich.notice(
+        'No coordinated party expenditures matched. Try a different cycle, drop the committee_id or candidate_id filter, or confirm the committee is a party committee — only party committees report Schedule F.',
+      );
+    } else {
+      const notices = rowKindSentences(trimmed.results);
+      if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
+    }
 
     return {
       results: trimmed.results,
       ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+      ...(trimmed.committees ? { committees: trimmed.committees } : {}),
       pagination: toPagination(result.pagination),
       search_criteria: buildSearchCriteria(input),
     };
@@ -220,15 +188,20 @@ export const searchCoordinatedExpenditures = tool('openfec_search_coordinated_ex
     }
 
     const headerKeys = new Set(['candidate_name', 'expenditure_amount', 'expenditure_date']);
+    const renderers = committeeRenderers(result);
     const lines: string[] = [...formatHoistedCommittee(result.committee)];
 
     for (const row of result.results) {
       const candidate = str(row, 'candidate_name') || str(row, 'candidate_id') || 'Unknown';
       const date = str(row, 'expenditure_date').slice(0, 10);
-      const header = `**${fmt$(row.expenditure_amount)} for ${candidate}**${date ? ` — ${date}` : ''}`;
-      const fields = renderRecord(row, headerKeys, { committee: formatRowCommittee });
+      const header = markRowKinds(
+        `**${fmt$(row.expenditure_amount)} for ${candidate}**${date ? ` — ${date}` : ''}`,
+        row,
+      );
+      const fields = renderRecord(row, headerKeys, renderers);
       lines.push(fields ? `${header}\n${fields}` : header);
     }
+    lines.push(...formatCommitteeMaps(result));
 
     const { page, pages, count, per_page, count_is_approximate } = result.pagination;
     lines.push(

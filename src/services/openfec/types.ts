@@ -129,7 +129,8 @@ export interface ElectionSummary {
   /**
    * Unreconciled upstream aggregate from /elections/summary/ — may be wildly inflated
    * due to double-counting across reporting periods. Surface with a caveat; use
-   * /schedules/schedule_e/by_candidate/ for verified per-committee totals.
+   * /schedules/schedule_e/by_candidate/ for per-committee totals from periodic reports
+   * (current-cycle notice-only spending excluded).
    */
   independent_expenditures: number;
   receipts: number;

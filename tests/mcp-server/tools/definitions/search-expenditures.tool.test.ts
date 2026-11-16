@@ -5,10 +5,10 @@
  * @module tests/mcp-server/tools/definitions/search-expenditures.tool.test
  */
 
-import type { ContentBlock } from '@cyanheads/mcp-ts-core';
+import type { CallToolResult, ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
   searchCandidates: vi.fn(),
@@ -37,6 +37,7 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { searchExpenditures } from '@/mcp-server/tools/definitions/search-expenditures.tool.js';
+import { APPROXIMATE_COUNT_NOTICE } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
 import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
 import { contractFailure, declaredRecovery } from './contract-failure.js';
 
@@ -115,6 +116,18 @@ const formatText = (blocks: ContentBlock[]): string => {
 };
 
 const makeCtx = () => createMockContext({ errors: searchExpenditures.errors });
+
+/** The production-shaped surfaces of one `runToolContract` call. */
+const surfaces = (result: CallToolResult) => ({
+  structured: result.structuredContent as Record<string, unknown> & { notice?: string },
+  text: result.content
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n'),
+});
+
+/** Occurrences of `fragment` in `text`. */
+const occurrences = (text: string, fragment: string) => text.split(fragment).length - 1;
 
 describe('searchExpenditures', () => {
   let ctx: ReturnType<typeof makeCtx>;
@@ -541,7 +554,7 @@ describe('searchExpenditures', () => {
       expect(result.results[0]!.committee_id).toBe('C00111111');
     });
 
-    it('keeps the per-row committee when the query spans committees', async () => {
+    it('moves each spender into the committees map when the query spans committees', async () => {
       mockService.searchExpenditures.mockResolvedValueOnce({
         pagination: { count: 2, per_page: 20 },
         results: [nestedExpenditureRecord('C00111111'), nestedExpenditureRecord('C00222222')],
@@ -555,8 +568,9 @@ describe('searchExpenditures', () => {
       const result = await searchExpenditures.handler(input, ctx);
 
       expect(result.committee).toBeUndefined();
-      expect(result.results[0]!.committee).toMatchObject({ committee_id: 'C00111111' });
-      expect(result.results[1]!.committee).toMatchObject({ committee_id: 'C00222222' });
+      for (const row of result.results) expect(row).not.toHaveProperty('committee');
+      expect(result.committees?.C00111111).toEqual(nestedCommittee('C00111111'));
+      expect(result.committees?.C00222222).toEqual(nestedCommittee('C00222222'));
     });
 
     it('drops the duplicated candidate sub-object whether or not the committee is hoisted', async () => {
@@ -999,13 +1013,12 @@ describe('searchExpenditures', () => {
       expect(text).toContain('ROE, RICHARD');
     });
 
-    it('renders an un-hoisted per-row committee compactly instead of as a JSON dump', () => {
+    it('renders a committee record left on its row in full, as a block rather than a JSON dump', () => {
       const deep = {
         ...nestedCommittee('C00111111'),
         designation_full: 'Unauthorized',
         state: 'DC',
         designated_agent_street1: '430 SOUTH CAPITOL STREET SE',
-        sponsor: { name: 'SPONSOR ORG', address: { street: '1 MAIN ST' } },
       };
       /** The handler drops the nested candidate sub-object before format() sees a row. */
       const { candidate: _first, ...first }: Record<string, unknown> = nestedExpenditureRecord(
@@ -1026,14 +1039,19 @@ describe('searchExpenditures', () => {
 
       const text = formatText(blocks);
       expect(text).not.toContain('{"');
-      expect(text).toContain('  committee: PAC C00111111 (C00111111)');
-      expect(text).toContain('    Super PAC · Unauthorized · DC · Treasurer: ROE, RICHARD');
-      expect(text).toContain('  committee: PAC C00222222 (C00222222)');
-      // Fields past the summary — first level and nested — stay on structuredContent only.
-      expect(text).not.toContain('430 SOUTH CAPITOL');
-      expect(text).not.toContain('SPONSOR ORG');
-      expect(text).not.toContain('1 MAIN ST');
-      expect(text).not.toContain('2020');
+      expect(text).toContain(
+        [
+          '  committee:',
+          '    PAC C00111111 (C00111111)',
+          '    committee_type_full: Super PAC',
+          '    treasurer_name: ROE, RICHARD',
+          '    cycles: 2020, 2022, 2024',
+          '    designation_full: Unauthorized',
+          '    state: DC',
+          '    designated_agent_street1: 430 SOUTH CAPITOL STREET SE',
+        ].join('\n'),
+      );
+      expect(text).toContain('  committee:\n    PAC C00222222 (C00222222)');
       // The rest of each row still renders.
       expect(text).toContain('MEDIA PARTNERS LLC');
       expect(text).toContain('SECOND PAYEE');
@@ -1049,7 +1067,7 @@ describe('searchExpenditures', () => {
       });
 
       const text = formatText(blocks);
-      expect(text).toContain('  committee: C00999999 (C00999999)');
+      expect(text).toContain('  committee:\n    C00999999');
       expect(text).not.toContain('{"');
     });
   });
@@ -1153,6 +1171,672 @@ describe('searchExpenditures', () => {
       const text = formatText(searchExpenditures.format!(result));
       expect(text).toContain('**144800 total independent expenditures**');
       expect(text).not.toContain('approximate');
+    });
+  });
+
+  describe('by_candidate order', () => {
+    const NULL_FLAGS = ['sort_hide_null', 'sort_nulls_last', 'sort_null_only'] as const;
+
+    it.each([1, 3])(
+      'leads page %i with the largest totals by sending sort -total',
+      async (page) => {
+        mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+          pagination: { page, pages: 23, count: 112, per_page: 5 },
+          results: [byCandidateRecord()],
+        });
+
+        await runToolContract(searchExpenditures, {
+          mode: 'by_candidate',
+          candidate_id: 'S8GA00180',
+          cycle: 2026,
+          per_page: 5,
+          page,
+        });
+
+        const params = mockService.getExpendituresByCandidate.mock.calls[0]![0];
+        expect(params).toMatchObject({ sort: '-total', page });
+      },
+    );
+
+    it('sends no null-handling flag beside the fixed order', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      await runToolContract(searchExpenditures, {
+        mode: 'by_candidate',
+        candidate_id: 'S8GA00180',
+      });
+
+      const params = mockService.getExpendituresByCandidate.mock.calls[0]![0];
+      for (const flag of NULL_FLAGS) expect(params).not.toHaveProperty(flag);
+    });
+
+    it('does not echo the fixed order in search_criteria on either surface', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      const { structured, text } = surfaces(
+        await runToolContract(searchExpenditures, {
+          mode: 'by_candidate',
+          candidate_id: 'S8GA00180',
+          cycle: 2024,
+        }),
+      );
+
+      expect(structured.search_criteria).not.toHaveProperty('sort');
+      expect(text).not.toContain('-total');
+    });
+
+    it('sends no sort upstream in itemized mode when the caller omits one', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      await runToolContract(searchExpenditures, { candidate_id: 'S8GA00180' });
+
+      const params = mockService.searchExpenditures.mock.calls[0]![0];
+      expect(params).not.toHaveProperty('sort');
+      for (const flag of NULL_FLAGS) expect(params).not.toHaveProperty(flag);
+    });
+
+    it('says in the mode description that by_candidate rows come largest total first', () => {
+      expect(searchExpenditures.input.shape.mode.description).toContain('largest total first');
+    });
+  });
+
+  describe('is_notice', () => {
+    it('describes all three settings and defers summing report rows to the memo rule', () => {
+      const description = searchExpenditures.input.shape.is_notice.description ?? '';
+
+      expect(description).toContain('Omitted returns both');
+      expect(description).toContain('false returns periodic-report rows only');
+      expect(description).toContain('true returns 24/48-hour notices only');
+      expect(description).toContain('memo entries');
+    });
+
+    it('keeps its boolean validation', () => {
+      expect(searchExpenditures.input.parse({ is_notice: false }).is_notice).toBe(false);
+      expect(searchExpenditures.input.parse({}).is_notice).toBeUndefined();
+      expect(searchExpenditures.input.safeParse({ is_notice: 'true' }).success).toBe(false);
+    });
+
+    it('forwards an explicit is_notice=false to the itemized endpoint', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      await runToolContract(searchExpenditures, { candidate_id: 'S8GA00180', is_notice: false });
+
+      expect(mockService.searchExpenditures.mock.calls[0]![0].is_notice).toBe(false);
+    });
+  });
+
+  /**
+   * `/by_candidate/` leaves 24/48-hour notices out, so spending reported only on
+   * a notice is missing from the current cycle's totals. The clock is pinned so
+   * the current cycle is a fact of the test, not of the day it runs.
+   */
+  describe('current-cycle notice gap (by_candidate)', () => {
+    const GAP = 'by_candidate totals come from periodic reports only';
+
+    const runByCandidate = (
+      args: Record<string, unknown>,
+      rows: unknown[] = [byCandidateRecord()],
+    ) => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: rows.length, pages: rows.length > 0 ? 1 : 0 },
+        results: rows,
+      });
+      return runToolContract(searchExpenditures, { mode: 'by_candidate', ...args });
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      ['omitted', {}],
+      ['the current cycle', { cycle: 2026 }],
+      ['a later cycle', { cycle: 2028 }],
+    ])(
+      'names the itemized notice call when cycle is %s, on both surfaces',
+      async (_label, cycleArg) => {
+        const { structured, text } = surfaces(
+          await runByCandidate({ candidate_id: 'S8GA00180', ...cycleArg }),
+        );
+
+        expect(structured.notice).toContain(GAP);
+        expect(structured.notice).toContain('mode: "itemized", is_notice: true');
+        expect(structured.notice).toContain('candidate_id: "S8GA00180"');
+        expect(text).toContain(structured.notice);
+      },
+    );
+
+    it('carries no gap sentence for an earlier cycle, whose notices are all on reports', async () => {
+      const { structured, text } = surfaces(
+        await runByCandidate({ candidate_id: 'S6PA00217', cycle: 2024 }),
+      );
+
+      expect(structured.notice).toBeUndefined();
+      expect(text).not.toContain(GAP);
+    });
+
+    it('derives the current cycle from the clock: in an odd year the next even cycle is current', async () => {
+      vi.setSystemTime(new Date('2027-03-01T12:00:00Z'));
+
+      const past = surfaces(await runByCandidate({ candidate_id: 'S8GA00180', cycle: 2026 }));
+      const current = surfaces(await runByCandidate({ candidate_id: 'S8GA00180', cycle: 2028 }));
+
+      expect(past.structured.notice).toBeUndefined();
+      expect(current.structured.notice).toContain(GAP);
+    });
+
+    it('names the race scope the caller passed when there is no candidate_id', async () => {
+      const { structured } = surfaces(
+        await runByCandidate({
+          candidate_office: 'H',
+          candidate_office_state: 'GA',
+          candidate_office_district: '07',
+          support_oppose: 'S',
+          cycle: 2026,
+        }),
+      );
+
+      expect(structured.notice).toContain(
+        'mode: "itemized", is_notice: true, support_oppose: "S", candidate_office: "H", candidate_office_state: "GA", candidate_office_district: "07", cycle: 2026',
+      );
+      expect(structured.notice).not.toContain('candidate_id');
+    });
+
+    it('keeps the committee_id the caller narrowed the aggregate to in the itemized call', async () => {
+      const { structured, text } = surfaces(
+        await runByCandidate({ candidate_id: 'S8GA00180', committee_id: 'C00571703' }),
+      );
+
+      expect(structured.notice).toContain(
+        'mode: "itemized", is_notice: true, committee_id: "C00571703", candidate_id: "S8GA00180"',
+      );
+      expect(text).toContain(structured.notice);
+    });
+
+    it('leaves a blank scope input out of the itemized call', async () => {
+      const { structured } = surfaces(
+        await runByCandidate({
+          candidate_office: 'P',
+          committee_id: '',
+          candidate_id: '',
+          candidate_office_state: '',
+          candidate_office_district: '',
+          cycle: 2026,
+        }),
+      );
+
+      expect(structured.notice).toContain(
+        'Find it with mode: "itemized", is_notice: true, candidate_office: "P", cycle: 2026 — ',
+      );
+      expect(structured.notice).not.toContain('""');
+    });
+
+    it('names no input to leave out when the caller passed neither page nor election_full', async () => {
+      const { structured } = surfaces(
+        await runByCandidate({ candidate_id: 'S8GA00180', cycle: 2026, per_page: 100 }),
+      );
+
+      expect(structured.notice).toContain('candidate_id: "S8GA00180", cycle: 2026 — ');
+      expect(structured.notice).not.toContain('which itemized mode rejects');
+    });
+
+    it.each([
+      ['page', { page: 2 }, ['page']],
+      ['election_full', { election_full: false }, ['election_full']],
+      ['page and election_full', { page: 2, election_full: true }, ['page', 'election_full']],
+    ] as const)(
+      'tells a caller who passed %s to leave it out of the itemized call, which rejects it',
+      async (_label, extra, dropped) => {
+        const byCandidate = { candidate_id: 'S8GA00180', cycle: 2026, per_page: 100, ...extra };
+        const { structured, text } = surfaces(await runByCandidate(byCandidate));
+
+        expect(structured.notice).toContain(
+          `is_notice: true, candidate_id: "S8GA00180", cycle: 2026, without ${dropped.join(' or ')}, which itemized mode rejects — `,
+        );
+        expect(text).toContain(structured.notice);
+
+        // Replayed over the caller's by_candidate arguments, the call fails on exactly the inputs named…
+        const replay = { ...byCandidate, mode: 'itemized' as const, is_notice: true };
+        const err = await contractFailure(searchExpenditures, replay);
+        expect(err.data).toMatchObject({
+          reason: 'inputs_not_applicable_to_mode',
+          inapplicable_inputs: [...dropped],
+        });
+
+        // …and runs once they are left out.
+        mockService.searchExpenditures.mockResolvedValueOnce({
+          pagination: { count: 0, per_page: 100 },
+          results: [],
+          nextCursor: null,
+        });
+        const kept = Object.fromEntries(
+          Object.entries(replay).filter(([key]) => !(dropped as readonly string[]).includes(key)),
+        );
+        expect((await runToolContract(searchExpenditures, kept)).isError).toBeFalsy();
+        expect(mockService.searchExpenditures.mock.calls[0]![0]).toMatchObject({
+          candidate_id: 'S8GA00180',
+          cycle: 2026,
+          is_notice: true,
+          per_page: 100,
+        });
+      },
+    );
+
+    it('follows the zero-match sentence on an empty current-cycle page, in one notice', async () => {
+      const { structured, text } = surfaces(
+        await runByCandidate(
+          {
+            candidate_office: 'H',
+            candidate_office_state: 'GA',
+            candidate_office_district: '07',
+            cycle: 2026,
+          },
+          [],
+        ),
+      );
+
+      const notice = structured.notice ?? '';
+      const zeroMatch = notice.indexOf('No periodic report lists independent expenditures');
+      expect(zeroMatch).toBe(0);
+      expect(notice.indexOf(GAP)).toBeGreaterThan(zeroMatch);
+      // The race scope was right; the empty answer must not send the caller to re-check it.
+      expect(notice).not.toContain('Verify the candidate_id');
+      expect(text).toContain(notice);
+      expect(text).not.toContain('Try a different cycle');
+    });
+
+    it('keeps the input check on an empty earlier-cycle page, with no gap sentence', async () => {
+      const { structured } = surfaces(
+        await runByCandidate({ candidate_id: 'S6PA00217', cycle: 2024 }, []),
+      );
+
+      expect(structured.notice).toBe(
+        'No expenditures by candidate matched. Not every race draws outside spending; if you expected rows, check the cycle and the candidate_id or race scope.',
+      );
+    });
+
+    it('follows the exhausted-page sentence past the last current-cycle page', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { page: 9, pages: 2, count: 30, per_page: 20 },
+        results: [],
+      });
+
+      const { structured } = surfaces(
+        await runToolContract(searchExpenditures, {
+          mode: 'by_candidate',
+          candidate_id: 'S8GA00180',
+          page: 9,
+        }),
+      );
+
+      const notice = structured.notice ?? '';
+      expect(notice.indexOf('Page 9 is past the last page')).toBe(0);
+      expect(notice.indexOf(GAP)).toBeGreaterThan(0);
+    });
+  });
+
+  describe('state and party codes', () => {
+    it.each([
+      ['itemized', 'candidate_office_state', 'Georgia', 'invalid_state_code', {}],
+      [
+        'by_candidate',
+        'candidate_office_state',
+        'Georgia',
+        'invalid_state_code',
+        { mode: 'by_candidate', candidate_office: 'S' },
+      ],
+      ['itemized', 'candidate_party', 'Democratic', 'invalid_party_code', {}],
+    ] as const)(
+      'rejects %s %s %s before any request, with the expected form on both surfaces',
+      async (_mode, field, value, reason, extra) => {
+        const result = await runToolContract(searchExpenditures, {
+          ...extra,
+          [field]: value,
+        });
+
+        expect(result.isError).toBe(true);
+        const { error } = result.structuredContent as {
+          error: {
+            data: { reason: string; field: string; value: string; recovery: { hint: string } };
+          };
+        };
+        expect(error.data).toMatchObject({ reason, field, value });
+        expect(error.data.recovery.hint.length).toBeGreaterThan(0);
+        expect(surfaces(result).text).toContain(error.data.recovery.hint);
+        expect(mockService.searchExpenditures).not.toHaveBeenCalled();
+        expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+      },
+    );
+
+    it('still names candidate_party as itemized-only in by_candidate, however wide', async () => {
+      const err = await contractFailure(searchExpenditures, {
+        mode: 'by_candidate',
+        candidate_id: 'S8GA00180',
+        candidate_party: 'Democratic',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'itemized_only_filters_in_aggregate_mode',
+        inapplicable_inputs: ['candidate_party'],
+      });
+    });
+
+    it.each([
+      ['GA', 'DEM'],
+      ['ga', 'dem'],
+      ['US', 'W'],
+      ['00', 'D/C'],
+      ['14', 'N/A'],
+      ['D', 'REP'],
+      ['ZZ', 'LIB'],
+    ])('sends state %s and party %s to the itemized endpoint as given', async (state, party) => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const result = await runToolContract(searchExpenditures, {
+        candidate_office_state: state,
+        candidate_party: party,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockService.searchExpenditures.mock.calls[0]![0]).toMatchObject({
+        candidate_office_state: state,
+        candidate_party: party,
+      });
+    });
+
+    /** `/schedules/schedule_e/` reads `other` as foreign, invalid, or missing states and `-` as exclude. */
+    it.each([
+      ['other', 'DEM'],
+      ['OTHER', 'W'],
+      ['-GA', '-DEM'],
+      ['-ga', '-d/c'],
+    ])('sends the itemized filter values %s and %s as given', async (state, party) => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const result = await runToolContract(searchExpenditures, {
+        candidate_office_state: state,
+        candidate_party: party,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockService.searchExpenditures.mock.calls[0]![0]).toMatchObject({
+        candidate_office_state: state,
+        candidate_party: party,
+      });
+    });
+
+    it.each([
+      ['candidate_office_state', '-other', 'invalid_state_code'],
+      ['candidate_office_state', '--GA', 'invalid_state_code'],
+      ['candidate_party', '-DEMO', 'invalid_party_code'],
+    ] as const)('still rejects itemized %s %s', async (field, value, reason) => {
+      const err = await contractFailure(searchExpenditures, { [field]: value });
+
+      expect(err.data).toMatchObject({ reason, field, value });
+      expect(mockService.searchExpenditures).not.toHaveBeenCalled();
+    });
+
+    /** `/schedules/schedule_e/by_candidate/` matches its state exactly, so neither value selects a race. */
+    it.each(['other', '-GA'])('rejects by_candidate state %s before any request', async (state) => {
+      const err = await contractFailure(searchExpenditures, {
+        mode: 'by_candidate',
+        candidate_office: 'S',
+        candidate_office_state: state,
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'candidate_office_state',
+        value: state,
+      });
+      expect(mockService.getExpendituresByCandidate).not.toHaveBeenCalled();
+    });
+
+    it('sends a valid by_candidate state as given', async () => {
+      mockService.getExpendituresByCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [byCandidateRecord()],
+      });
+
+      await runToolContract(searchExpenditures, {
+        mode: 'by_candidate',
+        candidate_office: 'S',
+        candidate_office_state: 'ga',
+        cycle: 2024,
+      });
+
+      expect(mockService.getExpendituresByCandidate.mock.calls[0]![0].state).toBe('ga');
+    });
+
+    it('leaves an empty candidate_office_state unchecked and unsent', async () => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [expenditureRecord()],
+        nextCursor: null,
+      });
+
+      const result = await runToolContract(searchExpenditures, {
+        candidate_office_state: '',
+        candidate_party: '',
+      });
+
+      expect(result.isError).toBeFalsy();
+      const params = mockService.searchExpenditures.mock.calls[0]![0];
+      expect(params).not.toHaveProperty('candidate_office_state');
+      expect(params).not.toHaveProperty('candidate_party');
+    });
+
+    it('describes candidate_party as the code OpenFEC files, up to three characters', () => {
+      expect(searchExpenditures.input.shape.candidate_party.description).toContain(
+        'Party code as OpenFEC files it, up to three characters (e.g., DEM, REP, LIB, W).',
+      );
+    });
+  });
+
+  /**
+   * The row-kind helper and the committee map are tabled at their own seam; these
+   * cases prove only this tool's wiring — one per side of each branch, both surfaces.
+   */
+  describe('itemized rows not to be summed', () => {
+    const NOTICE_SENTENCE = 'rows on this page are 24/48-hour notices';
+    const MEMO_SENTENCE = 'rows on this page are memo entries';
+    const reportRow = (overrides: Record<string, unknown> = {}) =>
+      expenditureRecord({ candidate_name: 'OSSOFF, T. JONATHAN', ...overrides });
+    const noticeRow = () => reportRow({ is_notice: true, filing_form: 'F24' });
+    const memoRow = () => reportRow({ memo_code: 'X', memoed_subtotal: true });
+
+    const runItemized = (rows: unknown[], pagination: Record<string, unknown> = {}) => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: rows.length, per_page: 20, ...pagination },
+        results: rows,
+        nextCursor: null,
+      });
+      return runToolContract(searchExpenditures, { candidate_id: 'S8GA00180' });
+    };
+
+    it('counts the notice rows a page mixes with report rows and marks each notice header', async () => {
+      const { structured, text } = surfaces(
+        await runItemized([reportRow(), noticeRow(), reportRow()]),
+      );
+
+      expect(structured.notice).toContain(`1 of 3 ${NOTICE_SENTENCE}`);
+      expect(text).toContain(structured.notice);
+      expect(occurrences(text, '**[SUPPORT] OSSOFF, T. JONATHAN** · 24/48-hour notice')).toBe(1);
+      expect(occurrences(text, '**[SUPPORT] OSSOFF, T. JONATHAN**\n')).toBe(2);
+      // The rows themselves are unchanged: the kind stays readable from each one.
+      expect((structured.results as Record<string, unknown>[]).map((r) => r.is_notice)).toEqual([
+        false,
+        true,
+        false,
+      ]);
+    });
+
+    it('carries no notice sentence on an all-notice page, but still marks every header', async () => {
+      const { structured, text } = surfaces(await runItemized([noticeRow(), noticeRow()]));
+
+      expect(structured.notice).toBeUndefined();
+      expect(occurrences(text, '· 24/48-hour notice')).toBe(2);
+    });
+
+    it('counts the memo rows a page mixes with other rows and marks each memo header', async () => {
+      const { structured, text } = surfaces(
+        await runItemized([reportRow(), memoRow(), reportRow(), memoRow(), reportRow()]),
+      );
+
+      expect(structured.notice).toContain(`2 of 5 ${MEMO_SENTENCE}`);
+      expect(structured.notice).not.toContain(NOTICE_SENTENCE);
+      expect(text).toContain(structured.notice);
+      expect(occurrences(text, '** · memo entry')).toBe(2);
+      expect((structured.results as Record<string, unknown>[]).map((r) => r.memo_code)).toEqual([
+        undefined,
+        'X',
+        undefined,
+        'X',
+        undefined,
+      ]);
+    });
+
+    it('carries no memo sentence on an all-memo page', async () => {
+      const { structured, text } = surfaces(await runItemized([memoRow(), memoRow()]));
+
+      expect(structured.notice).toBeUndefined();
+      expect(occurrences(text, '· memo entry')).toBe(2);
+    });
+
+    it('composes the approximate count, memo, and notice sentences into one notice, in that order', async () => {
+      const both = reportRow({ is_notice: true, memo_code: 'X' });
+      const { structured, text } = surfaces(
+        await runItemized([reportRow(), memoRow(), noticeRow(), both], {
+          count: 1_601_546,
+          is_count_exact: false,
+        }),
+      );
+
+      const notice = structured.notice ?? '';
+      expect(notice.indexOf(APPROXIMATE_COUNT_NOTICE)).toBe(0);
+      const memo = notice.indexOf(`2 of 4 ${MEMO_SENTENCE}`);
+      const notices = notice.indexOf(`2 of 4 ${NOTICE_SENTENCE}`);
+      expect(memo).toBeGreaterThan(0);
+      expect(notices).toBeGreaterThan(memo);
+      expect(text).toContain(notice);
+      expect(text).toContain('**[SUPPORT] OSSOFF, T. JONATHAN** · memo entry · 24/48-hour notice');
+    });
+
+    it('keeps the zero-match sentence alone on an empty page', async () => {
+      const { structured } = surfaces(await runItemized([]));
+
+      expect(structured.notice).toBe(
+        'No independent expenditures matched. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+      );
+    });
+
+    it('names memo_code, memoed_subtotal, and is_notice in the row description', () => {
+      const rowDescription = searchExpenditures.output.shape.results.element.description ?? '';
+
+      for (const field of ['memo_code', 'memoed_subtotal', 'is_notice']) {
+        expect(rowDescription).toContain(field);
+      }
+    });
+  });
+
+  describe('committees map', () => {
+    /** Rows as format() receives them: the handler drops the nested candidate sub-object. */
+    const spanningRows = () => [
+      nestedExpenditureRecord('C00111111', { payee_name: 'FIRST PAYEE' }),
+      nestedExpenditureRecord('C00222222', { payee_name: 'SECOND PAYEE' }),
+      nestedExpenditureRecord('C00111111', { payee_name: 'THIRD PAYEE' }),
+    ];
+
+    const runSpanning = (rows: unknown[], args: Record<string, unknown>) => {
+      mockService.searchExpenditures.mockResolvedValueOnce({
+        pagination: { count: rows.length, per_page: 20 },
+        results: rows,
+        nextCursor: null,
+      });
+      return runToolContract(searchExpenditures, args);
+    };
+
+    it('carries each spender once, in full, on both surfaces of a page spanning committees', async () => {
+      const { structured, text } = surfaces(
+        await runSpanning(spanningRows(), { candidate_id: 'H2OH01234' }),
+      );
+
+      const committees = structured.committees as Record<string, Record<string, unknown>>;
+      expect(Object.keys(committees)).toEqual(['C00111111', 'C00222222']);
+      expect(committees.C00111111).toEqual(nestedCommittee('C00111111'));
+      for (const row of structured.results as Record<string, unknown>[]) {
+        expect(row).not.toHaveProperty('committee');
+      }
+
+      // Parity: every key and value of every record reaches content[], once.
+      expect(occurrences(text, "**Committees referenced above** — each row's committee_id")).toBe(
+        1,
+      );
+      for (const id of ['C00111111', 'C00222222']) {
+        expect(occurrences(text, `**PAC ${id} (${id})**`)).toBe(1);
+      }
+      expect(occurrences(text, '  committee_type_full: Super PAC')).toBe(2);
+      expect(occurrences(text, '  treasurer_name: ROE, RICHARD')).toBe(2);
+      expect(occurrences(text, '  cycles: 2020, 2022, 2024')).toBe(2);
+      // Each row still names the committee it references, read from the map.
+      expect(occurrences(text, '  committee_id: C00111111 (PAC C00111111)')).toBe(2);
+      expect(occurrences(text, '  committee_id: C00222222 (PAC C00222222)')).toBe(1);
+      // The map renders after the rows.
+      expect(text.indexOf('**Committees referenced above**')).toBeGreaterThan(
+        text.indexOf('THIRD PAYEE'),
+      );
+    });
+
+    it('carries no map when the caller scoped the page to one committee_id', async () => {
+      const rows = [
+        nestedExpenditureRecord('C00111111'),
+        nestedExpenditureRecord('C00111111', { payee_name: 'SECOND PAYEE' }),
+      ];
+      const { structured, text } = surfaces(await runSpanning(rows, { committee_id: 'C00111111' }));
+
+      expect(structured).not.toHaveProperty('committees');
+      expect(structured.committee).toEqual(nestedCommittee('C00111111'));
+      expect(text).not.toContain('**Committees referenced above**');
+      expect(occurrences(text, '  treasurer_name: ROE, RICHARD')).toBe(1);
+    });
+
+    it('carries no map when no row embeds a committee record', async () => {
+      const { structured, text } = surfaces(
+        await runSpanning([expenditureRecord(), expenditureRecord()], {
+          candidate_id: 'H2OH01234',
+        }),
+      );
+
+      expect(structured).not.toHaveProperty('committees');
+      expect(text).not.toContain('**Committees referenced above**');
+      expect(text).toContain('  committee_id: C00111111\n');
     });
   });
 });

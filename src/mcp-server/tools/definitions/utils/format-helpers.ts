@@ -7,6 +7,7 @@
 
 import { z } from '@cyanheads/mcp-ts-core';
 import type { PageResult } from '@/services/openfec/types.js';
+import { rowKindSentences } from './row-kinds.js';
 
 /**
  * Pagination params excluded from the search criteria echo — they address a
@@ -144,6 +145,29 @@ export function exhaustedSchedule(result: {
  */
 export const APPROXIMATE_COUNT_NOTICE =
   'The total is an upstream estimate, not a tally — treat it as an order of magnitude, not a figure to quote.';
+
+/**
+ * The page notice for an itemized (keyset) schedule page. `notice` is
+ * last-wins, so everything the page earns goes out as one string: for an empty
+ * page, the exhausted-cursor line or `noMatch`; otherwise the estimate caveat
+ * and the memo and 24/48-hour sentences. `undefined` when the page needs none.
+ */
+export function itemizedPageNotice(
+  pagination: { count: number; is_count_exact?: boolean },
+  rows: readonly Record<string, unknown>[],
+  noMatch: string,
+): string | undefined {
+  if (rows.length === 0) {
+    return pagination.count > 0
+      ? describeExhaustedPosition({ kind: 'cursor', count: pagination.count })
+      : noMatch;
+  }
+  const sentences = [
+    ...(pagination.is_count_exact === false ? [APPROXIMATE_COUNT_NOTICE] : []),
+    ...rowKindSentences(rows),
+  ];
+  return sentences.length > 0 ? sentences.join(' ') : undefined;
+}
 
 /**
  * Render a block for a request that landed past the end of a nonzero result

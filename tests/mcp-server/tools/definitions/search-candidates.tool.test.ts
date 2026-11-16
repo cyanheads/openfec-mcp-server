@@ -4,15 +4,16 @@
  * @module tests/mcp-server/tools/definitions/search-candidates.tool.test
  */
 
-import type { ContentBlock } from '@cyanheads/mcp-ts-core';
+import type { CallToolResult, ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
   searchCandidates: vi.fn(),
   getCandidate: vi.fn(),
   getCandidateTotals: vi.fn(),
+  getAllCandidateTotals: vi.fn(),
   searchCommittees: vi.fn(),
   getCommittee: vi.fn(),
   searchContributions: vi.fn(),
@@ -71,6 +72,16 @@ const formatText = (blocks: ContentBlock[]): string => {
   return block.text;
 };
 
+/** Every text block of a tool result, joined — the `content[]` surface a client reads. */
+const contentText = (result: CallToolResult): string =>
+  result.content
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+
+/** The deadline the tool hands each service read. */
+const BUDGET = { deadlineMs: expect.any(Number) };
+
 const makeCtx = () => createMockContext({ errors: searchCandidates.errors });
 
 describe('searchCandidates', () => {
@@ -79,6 +90,10 @@ describe('searchCandidates', () => {
   beforeEach(() => {
     ctx = makeCtx();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('handler', () => {
@@ -95,6 +110,7 @@ describe('searchCandidates', () => {
       expect(mockService.searchCandidates).toHaveBeenCalledWith(
         expect.objectContaining({ q: 'Biden', page: 1, per_page: 20 }),
         ctx,
+        BUDGET,
       );
       expect(result.candidates).toEqual(candidates);
       expect(result.pagination.count).toBe(1);
@@ -112,15 +128,15 @@ describe('searchCandidates', () => {
         pagination: { ...PAGE, count: 1 },
         results: candidates,
       });
-      mockService.getCandidateTotals.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 1 },
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({
         results: [totalsRecord()],
+        complete: true,
       });
 
       const input = searchCandidates.input.parse({ candidate_id: 'P00003392' });
       const result = await searchCandidates.handler(input, ctx);
 
-      expect(mockService.getCandidate).toHaveBeenCalledWith('P00003392', ctx);
+      expect(mockService.getCandidate).toHaveBeenCalledWith('P00003392', ctx, BUDGET);
       expect(result.candidates).toEqual(candidates);
     });
 
@@ -129,9 +145,9 @@ describe('searchCandidates', () => {
         pagination: { ...PAGE, count: 1 },
         results: [candidateRecord()],
       });
-      mockService.getCandidateTotals.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 1 },
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({
         results: [totalsRecord({ cycle: 2024 })],
+        complete: true,
       });
 
       const input = searchCandidates.input.parse({
@@ -142,13 +158,14 @@ describe('searchCandidates', () => {
       });
       const result = await searchCandidates.handler(input, ctx);
 
-      expect(mockService.getCandidateTotals).toHaveBeenCalledWith(
+      expect(mockService.getAllCandidateTotals).toHaveBeenCalledWith(
         expect.objectContaining({
           candidate_id: ['P00003392'],
           cycle: 2024,
           election_year: 2024,
         }),
         ctx,
+        BUDGET,
       );
       expect(result.search_criteria).toEqual({
         candidate_id: 'P00003392',
@@ -168,15 +185,15 @@ describe('searchCandidates', () => {
         pagination: { ...PAGE, count: 1 },
         results: [candidateRecord()],
       });
-      mockService.getCandidateTotals.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 1 },
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({
         results: [totalsRecord()],
+        complete: true,
       });
 
       const input = searchCandidates.input.parse({ candidate_id: 'P00003392' });
       const result = await searchCandidates.handler(input, ctx);
 
-      expect(mockService.getCandidateTotals).toHaveBeenCalledOnce();
+      expect(mockService.getAllCandidateTotals).toHaveBeenCalledOnce();
       expect(result.totals).toEqual([totalsRecord()]);
       expect(result.search_criteria).toEqual({
         candidate_id: 'P00003392',
@@ -195,7 +212,7 @@ describe('searchCandidates', () => {
       expect((err as McpError).data).toMatchObject({ reason: 'invalid_candidate_id' });
     });
 
-    it('pages the totals sub-fetch on its own terms instead of the candidate search page', async () => {
+    it("keys the totals walk to the page's candidates, never the candidate search's paging", async () => {
       const candidates = [
         candidateRecord({ candidate_id: 'S2CA01110', name: 'SMITH, A' }),
         candidateRecord({ candidate_id: 'S8MO00301', name: 'SMITH, B' }),
@@ -204,15 +221,13 @@ describe('searchCandidates', () => {
         pagination: { page: 2, pages: 5, count: 90, per_page: 10 },
         results: candidates,
       });
-      mockService.getCandidateTotals
-        .mockResolvedValueOnce({
-          pagination: { page: 1, pages: 2, count: 13, per_page: 100 },
-          results: [totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024 })],
-        })
-        .mockResolvedValueOnce({
-          pagination: { page: 2, pages: 2, count: 13, per_page: 100 },
-          results: [totalsRecord({ candidate_id: 'S8MO00301', cycle: 2020 })],
-        });
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({
+        results: [
+          totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024 }),
+          totalsRecord({ candidate_id: 'S8MO00301', cycle: 2020 }),
+        ],
+        complete: true,
+      });
 
       const input = searchCandidates.input.parse({
         query: 'smith',
@@ -223,37 +238,31 @@ describe('searchCandidates', () => {
       });
       const result = await searchCandidates.handler(input, ctx);
 
-      expect(mockService.getCandidateTotals).toHaveBeenCalledTimes(2);
-      const [first, second] = mockService.getCandidateTotals.mock.calls.map((c) => c[0]);
-      expect(first).toMatchObject({
-        candidate_id: ['S2CA01110', 'S8MO00301'],
-        page: 1,
-        per_page: 100,
-      });
-      expect(second).toMatchObject({ page: 2, per_page: 100 });
+      expect(mockService.getAllCandidateTotals).toHaveBeenCalledOnce();
+      const [params] = mockService.getAllCandidateTotals.mock.calls[0]!;
+      expect(params).toMatchObject({ candidate_id: ['S2CA01110', 'S8MO00301'] });
+      expect(params).not.toHaveProperty('page');
+      expect(params).not.toHaveProperty('per_page');
       expect(result.totals).toHaveLength(2);
-      expect(result.missing_totals).toBeUndefined();
+      expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
     });
 
-    it('reports candidates left uncovered when the totals fetch hits its page cap', async () => {
-      mockService.searchCandidates.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 2 },
-        results: [
-          candidateRecord({ candidate_id: 'S2CA01110' }),
-          candidateRecord({ candidate_id: 'S8MO00301' }),
-        ],
+    it('spends one budget across the candidate read and the totals walk', async () => {
+      vi.useFakeTimers();
+      mockService.searchCandidates.mockImplementationOnce(async () => {
+        vi.advanceTimersByTime(30_000);
+        return {
+          pagination: { ...PAGE, count: 1 },
+          results: [candidateRecord({ candidate_id: 'S2CA01110' })],
+        };
       });
-      mockService.getCandidateTotals.mockResolvedValue({
-        pagination: { page: 1, pages: 40, count: 4_000, per_page: 100 },
-        results: [totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024 })],
-      });
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({ results: [], complete: true });
 
       const input = searchCandidates.input.parse({ query: 'smith', include_totals: true });
-      const result = await searchCandidates.handler(input, ctx);
+      await searchCandidates.handler(input, ctx);
 
-      // Capped at 5 pages rather than walking all 40
-      expect(mockService.getCandidateTotals).toHaveBeenCalledTimes(5);
-      expect(result.missing_totals).toEqual(['S8MO00301']);
+      expect(mockService.searchCandidates.mock.calls[0]![2]).toEqual({ deadlineMs: 50_000 });
+      expect(mockService.getAllCandidateTotals.mock.calls[0]![2]).toEqual({ deadlineMs: 20_000 });
     });
 
     it('skips totals when include_totals=false', async () => {
@@ -268,7 +277,7 @@ describe('searchCandidates', () => {
       });
       const result = await searchCandidates.handler(input, ctx);
 
-      expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
+      expect(mockService.getAllCandidateTotals).not.toHaveBeenCalled();
       expect(result.totals).toBeUndefined();
     });
 
@@ -292,7 +301,7 @@ describe('searchCandidates', () => {
         });
         expect(err.data.recovery?.hint).toContain('include_totals');
         expect(mockService.getCandidate).not.toHaveBeenCalled();
-        expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
+        expect(mockService.getAllCandidateTotals).not.toHaveBeenCalled();
       },
     );
 
@@ -331,8 +340,44 @@ describe('searchCandidates', () => {
         declaredRecovery(searchCandidates, 'inputs_not_applicable_to_id_lookup'),
       );
       expect(mockService.getCandidate).not.toHaveBeenCalled();
-      expect(mockService.getCandidateTotals).not.toHaveBeenCalled();
+      expect(mockService.getAllCandidateTotals).not.toHaveBeenCalled();
       expect(mockService.searchCandidates).not.toHaveBeenCalled();
+    });
+
+    it('reports an inapplicable state on the direct-ID path before checking its width', async () => {
+      const err = await contractFailure(searchCandidates, {
+        candidate_id: 'P00003392',
+        state: 'Georgia',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'inputs_not_applicable_to_id_lookup',
+        inapplicable_inputs: ['state'],
+      });
+      expect(mockService.getCandidate).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The incomplete-totals notice advises a single candidate_id; a caller who
+     * keeps the search's own arguments beside it reads which to drop from the
+     * message, since content[] carries no data object.
+     */
+    it('names the refused inputs in the message on both surfaces', async () => {
+      const result = await runToolContract(searchCandidates, {
+        office: 'H',
+        incumbent_challenge: 'I',
+        per_page: 100,
+        include_totals: true,
+        candidate_id: 'H0AL02087',
+      });
+
+      expect(result.isError).toBe(true);
+      const { error } = result.structuredContent as { error: { message: string } };
+      const message =
+        'A direct candidate_id lookup cannot apply office, incumbent_challenge, per_page.';
+      expect(error.message).toBe(message);
+      expect(contentText(result)).toContain(message);
+      expect(mockService.getCandidate).not.toHaveBeenCalled();
     });
 
     it('sets enrichment notice when search returns empty results', async () => {
@@ -421,19 +466,196 @@ describe('searchCandidates', () => {
       expect(text).toContain('receipts: 1000000');
       expect(text).toContain('receipts: 2000000');
     });
+  });
 
-    it('renders the uncovered candidates when totals are incomplete', () => {
-      const blocks = searchCandidates.format!({
-        candidates: [candidateRecord()],
-        totals: [],
-        missing_totals: ['S8MO00301', 'S0IL00402'],
-        pagination: { ...PAGE, count: 1 },
-        search_criteria: { query: 'Biden' },
+  describe('totals walk', () => {
+    const smiths = () => ({
+      pagination: { ...PAGE, count: 2 },
+      results: [
+        candidateRecord({ candidate_id: 'S2CA01110', name: 'SMITH, A' }),
+        candidateRecord({ candidate_id: 'S8MO00301', name: 'SMITH, B' }),
+      ],
+    });
+
+    it('advertises no missing_totals field', () => {
+      expect(searchCandidates.output.shape).not.toHaveProperty('missing_totals');
+    });
+
+    it('renders every totals row the walk read, with no notice, when it read every page', async () => {
+      mockService.searchCandidates.mockResolvedValueOnce(smiths());
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({
+        results: [
+          totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024, receipts: 2_024 }),
+          totalsRecord({ candidate_id: 'S8MO00301', cycle: 1998, receipts: 1_998 }),
+        ],
+        complete: true,
       });
 
-      const text = formatText(blocks);
-      expect(text).toContain('S8MO00301, S0IL00402');
-      expect(text).toContain('candidate_id');
+      const result = await runToolContract(searchCandidates, {
+        query: 'smith',
+        include_totals: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.totals).toEqual([
+        expect.objectContaining({ candidate_id: 'S2CA01110', cycle: 2024 }),
+        expect.objectContaining({ candidate_id: 'S8MO00301', cycle: 1998 }),
+      ]);
+      expect(structured).not.toHaveProperty('notice');
+      expect(structured).not.toHaveProperty('missing_totals');
+      const text = contentText(result);
+      expect(text).toContain('— Financial Totals (cycle 2024) —');
+      expect(text).toContain('— Financial Totals (cycle 1998) —');
+      expect(text).toContain('receipts: 1998');
+      expect(text).not.toContain('incomplete');
+    });
+
+    /** The walk reads candidates whole, so one it never reached shows no totals at all. */
+    it('renders the totals read so far with an incomplete notice when the walk ended early', async () => {
+      mockService.searchCandidates.mockResolvedValueOnce(smiths());
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({
+        results: [totalsRecord({ candidate_id: 'S2CA01110', cycle: 2024, receipts: 2_024 })],
+        complete: false,
+      });
+
+      const result = await runToolContract(searchCandidates, {
+        query: 'smith',
+        include_totals: true,
+      });
+
+      expect(result.isError).toBeFalsy();
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.totals).toEqual([
+        expect.objectContaining({ candidate_id: 'S2CA01110', cycle: 2024 }),
+      ]);
+      expect(structured.candidates).toHaveLength(2);
+      expect(structured.notice).toContain('Financial totals are incomplete');
+      expect(structured.notice).toContain(
+        'a candidate shown without financial totals may still have them on file',
+      );
+      expect(structured.notice).not.toContain('earliest');
+      expect(structured.notice).toContain('candidate_id');
+      const text = contentText(result);
+      expect(text).toContain('— Financial Totals (cycle 2024) —');
+      expect(text).toContain('receipts: 2024');
+      expect(text).toContain(structured.notice as string);
+    });
+
+    it('discloses a walk that read nothing before its budget ran out', async () => {
+      mockService.getCandidate.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 1 },
+        results: [candidateRecord()],
+      });
+      mockService.getAllCandidateTotals.mockResolvedValueOnce({ results: [], complete: false });
+
+      const result = await runToolContract(searchCandidates, { candidate_id: 'P00003392' });
+
+      expect(result.isError).toBeFalsy();
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.totals).toEqual([]);
+      expect(structured.notice).toContain('Financial totals are incomplete');
+      const text = contentText(result);
+      expect(text).toContain('**BIDEN, JOSEPH R JR** (P00003392)');
+      expect(text).not.toContain('— Financial Totals');
+      expect(text).toContain('Financial totals are incomplete');
+    });
+  });
+
+  describe('state and party codes', () => {
+    it.each([
+      [
+        'state',
+        { state: 'Georgia', office: 'S', cycle: 2026 },
+        'invalid_state_code',
+        'Georgia',
+        'Use the postal code (GA for Georgia, PR for Puerto Rico); OpenFEC files presidential candidates under US and foreign addresses under ZZ.',
+      ],
+      [
+        'party',
+        { party: 'Democratic', state: 'GA', office: 'S', cycle: 2026 },
+        'invalid_party_code',
+        'Democratic',
+        'Use the code, not the party name: DEM, REP, LIB, GRE, IND, W (write-in).',
+      ],
+    ] as const)(
+      'rejects a spelled-out %s before any request, on both surfaces',
+      async (field, args, reason, value, hint) => {
+        const result = await runToolContract(searchCandidates, args);
+
+        expect(result.isError).toBe(true);
+        const { error } = result.structuredContent as {
+          error: { data: Record<string, unknown> };
+        };
+        expect(error.data).toMatchObject({ reason, field, value, recovery: { hint } });
+        const text = contentText(result);
+        expect(text).toContain(`"${value}"`);
+        expect(text).toContain(hint);
+        expect(text).toContain(reason);
+        expect(mockService.searchCandidates).not.toHaveBeenCalled();
+        expect(mockService.getAllCandidateTotals).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['GA', 'ga', 'US', 'ZZ', '00', '14', 'D'])('sends state %s as given', async (state) => {
+      mockService.searchCandidates.mockResolvedValueOnce({ pagination: PAGE, results: [] });
+
+      await searchCandidates.handler(searchCandidates.input.parse({ state }), ctx);
+
+      expect(mockService.searchCandidates).toHaveBeenCalledWith(
+        expect.objectContaining({ state }),
+        ctx,
+        BUDGET,
+      );
+    });
+
+    it.each(['DEM', 'dem', 'W', 'D/C', 'N/A'])('sends party %s as given', async (party) => {
+      mockService.searchCandidates.mockResolvedValueOnce({ pagination: PAGE, results: [] });
+
+      await searchCandidates.handler(searchCandidates.input.parse({ party }), ctx);
+
+      expect(mockService.searchCandidates).toHaveBeenCalledWith(
+        expect.objectContaining({ party }),
+        ctx,
+        BUDGET,
+      );
+    });
+
+    /** `/candidates/` filters both through filter_multi, where a leading `-` excludes the code. */
+    it('sends an excluded state and party as given', async () => {
+      mockService.searchCandidates.mockResolvedValueOnce({ pagination: PAGE, results: [] });
+
+      await searchCandidates.handler(
+        searchCandidates.input.parse({ state: '-GA', party: '-DEM' }),
+        ctx,
+      );
+
+      expect(mockService.searchCandidates).toHaveBeenCalledWith(
+        expect.objectContaining({ state: '-GA', party: '-DEM' }),
+        ctx,
+        BUDGET,
+      );
+    });
+
+    /** `/candidates/` has no `other` state: only the STATE_OTHER endpoints do. */
+    it.each([
+      ['state', { state: 'other' }, 'invalid_state_code', 'other'],
+      ['state', { state: '-GAA' }, 'invalid_state_code', '-GAA'],
+      ['party', { party: '-DEMO' }, 'invalid_party_code', '-DEMO'],
+    ] as const)('rejects %s %j before any request', async (field, args, reason, value) => {
+      const err = await contractFailure(searchCandidates, args);
+
+      expect(err.data).toMatchObject({ reason, field, value });
+      expect(mockService.searchCandidates).not.toHaveBeenCalled();
+    });
+
+    it('skips both checks for the empty strings a form client sends', async () => {
+      mockService.searchCandidates.mockResolvedValueOnce({ pagination: PAGE, results: [] });
+
+      const input = searchCandidates.input.parse({ query: 'smith', state: '', party: '' });
+      await searchCandidates.handler(input, ctx);
+
+      expect(mockService.searchCandidates).toHaveBeenCalledOnce();
     });
   });
 

@@ -4,9 +4,9 @@
  * @module tests/mcp-server/tools/definitions/search-disbursements.tool.test
  */
 
-import type { ContentBlock } from '@cyanheads/mcp-ts-core';
+import type { CallToolResult, ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -36,8 +36,20 @@ vi.mock('@/services/openfec/openfec-service.js', async (importOriginal) => ({
 }));
 
 import { searchDisbursements } from '@/mcp-server/tools/definitions/search-disbursements.tool.js';
+import { APPROXIMATE_COUNT_NOTICE } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
 import { cursorQuery, encodeCursor } from '@/services/openfec/openfec-service.js';
 import { contractFailure, declaredRecovery } from './contract-failure.js';
+
+/** The page sentence for memo rows mixed with other rows, as the row-kind helper words it. */
+const MEMO_SENTENCE = (n: number, m: number) =>
+  `${n} of ${m} rows on this page are memo entries (memo_code "X"): each itemizes another row, named by back_reference_transaction_id when filed, or restates earlier activity, and FEC leaves memo entries out of report totals. Do not add them to the other rows.`;
+
+/** All `content[]` text of a tool call, enrichment trailer included. */
+const wireText = (result: CallToolResult) =>
+  result.content
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
 
 const PAGE = { page: 1, pages: 1, count: 0, per_page: 20 };
 
@@ -95,6 +107,41 @@ const aggregateRecord = (overrides: Record<string, unknown> = {}) => ({
   total: 3_500_000,
   count: 120,
   ...overrides,
+});
+
+/** The fields a Schedule B memo entry carries: it itemizes the row its back reference names. */
+const MEMO_FIELDS = {
+  memo_code: 'X',
+  memoed_subtotal: true,
+  back_reference_transaction_id: 'B2D03DFAAD59D4617A4F',
+};
+
+/** A transfer recipient's committee record, as Schedule B embeds it in full. */
+const recipientCommittee = () => ({
+  committee_id: 'C00114439',
+  name: 'WA STATE DEMOCRATIC CENTRAL COMMITTEE',
+  committee_type_full: 'Party - Qualified',
+  designation_full: 'Unauthorized',
+  state: 'WA',
+  treasurer_name: 'ROE, RICHARD',
+  affiliated_committee_name: 'DNC STATE PARTY VICTORY FUND',
+  street_1: '615 2ND AVE',
+  filing_frequency: 'M',
+  cycles: [1976, 2024],
+  is_active: true,
+});
+
+/** An itemized output page mixing two memo rows with the payment they itemize. */
+const memoPageOutput = () => ({
+  results: [
+    disbursementRecord({ recipient_name: 'CASAS, ANN', ...MEMO_FIELDS }),
+    disbursementRecord({ recipient_name: 'PAYCHEX', transaction_id: 'B2D03DFAAD59D4617A4F' }),
+    disbursementRecord({ recipient_name: 'CASAS, ANN', ...MEMO_FIELDS }),
+  ],
+  mode: 'itemized' as const,
+  next_cursor: null,
+  count: 3,
+  search_criteria: {},
 });
 
 /** Narrows the first `format()` block to its text payload. */
@@ -269,6 +316,51 @@ describe('searchDisbursements', () => {
       expect(result.results[0]!.committee_id).toBe('C00703975');
     });
 
+    it('carries each recipient committee once in recipient_committees, keyed by recipient_committee_id', async () => {
+      const recipient = recipientCommittee();
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 3, per_page: 20 },
+        results: [
+          nestedDisbursementRecord('C00703975', {
+            recipient_committee_id: 'C00114439',
+            recipient_committee: recipient,
+          }),
+          nestedDisbursementRecord('C00703975'),
+          nestedDisbursementRecord('C00703975', {
+            recipient_committee_id: 'C00114439',
+            recipient_committee: recipient,
+          }),
+        ],
+        nextCursor: null,
+      });
+
+      const input = searchDisbursements.input.parse({ committee_id: 'C00703975' });
+      const result = await searchDisbursements.handler(input, ctx);
+
+      expect(result.recipient_committees).toEqual({ C00114439: recipient });
+      for (const row of result.results) expect(row).not.toHaveProperty('recipient_committee');
+      expect(result.results.map((r) => r.recipient_committee_id)).toEqual([
+        'C00114439',
+        undefined,
+        'C00114439',
+      ]);
+    });
+
+    it('omits recipient_committees on a page with no committee payee', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 1, per_page: 20 },
+        results: [nestedDisbursementRecord('C00703975')],
+        nextCursor: null,
+      });
+
+      const result = await searchDisbursements.handler(
+        searchDisbursements.input.parse({ committee_id: 'C00703975' }),
+        ctx,
+      );
+
+      expect(result).not.toHaveProperty('recipient_committees');
+    });
+
     it('echoes the resolved mode and criteria on a non-empty response', async () => {
       mockService.searchDisbursements.mockResolvedValueOnce({
         pagination: { count: 1, per_page: 20 },
@@ -400,6 +492,49 @@ describe('searchDisbursements', () => {
         ctx,
       );
       expect(result.pagination?.page).toBe(4);
+    });
+
+    it('sends and echoes an aggregate per_page of 100, returning every row upstream sent, on both surfaces', async () => {
+      /** An aggregate endpoint holding 150 rows that serves the page and per_page it is sent. */
+      mockService.getDisbursementAggregates.mockImplementationOnce(
+        async (_mode: string, params: { page: number; per_page: number }) => {
+          const total = 150;
+          const start = (params.page - 1) * params.per_page;
+          const length = Math.max(0, Math.min(params.per_page, total - start));
+          return {
+            pagination: {
+              page: params.page,
+              pages: Math.ceil(total / params.per_page),
+              count: total,
+              per_page: params.per_page,
+            },
+            results: Array.from({ length }, (_, i) =>
+              aggregateRecord({ purpose: `PURPOSE ${start + i}` }),
+            ),
+          };
+        },
+      );
+
+      const result = await runToolContract(searchDisbursements, {
+        mode: 'by_purpose',
+        committee_id: 'C00703975',
+        per_page: 100,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(mockService.getDisbursementAggregates.mock.calls[0]![1]).toMatchObject({
+        page: 1,
+        per_page: 100,
+      });
+      const structured = result.structuredContent as {
+        results: unknown[];
+        pagination: Record<string, unknown>;
+      };
+      expect(structured.results).toHaveLength(100);
+      expect(structured.pagination).toMatchObject({ page: 1, pages: 2, count: 150, per_page: 100 });
+      const text = wireText(result);
+      expect(text).toContain('PURPOSE 99');
+      expect(text).toContain('_Page 1 of 2 · 150 total · 100 per page_');
     });
 
     it('rejects explicit page in itemized mode before the keyset call', async () => {
@@ -621,41 +756,66 @@ describe('searchDisbursements', () => {
       });
 
       const text = formatText(blocks);
-      expect(text).toContain('**Committee (applies to every row below):** COMMITTEE C00703975');
+      expect(text).toContain(
+        '**Committee (applies to every row below):** COMMITTEE C00703975 (C00703975)\n  committee_type_full: Presidential\n  treasurer_name: SMITH, ANNA\n  cycles: 2020, 2022, 2024',
+      );
       expect(text.match(/COMMITTEE C00703975/g)).toHaveLength(1);
-      expect(text).toContain('SMITH, ANNA');
     });
 
-    it('renders a recipient that is itself a committee compactly instead of as a JSON dump', () => {
-      const recipient_committee = {
-        committee_id: 'C00114439',
-        name: 'WA STATE DEMOCRATIC CENTRAL COMMITTEE',
-        committee_type_full: 'Party - Qualified',
-        designation_full: 'Unauthorized',
-        state: 'WA',
-        treasurer_name: 'ROE, RICHARD',
-        affiliated_committee_name: 'DNC STATE PARTY VICTORY FUND',
-        cycles: [1976, 2024],
-        sponsor: { nested: { deeper: 'NESTED VALUE' } },
-      };
+    it('renders each recipient committee once, in full, after the rows that name it', () => {
+      const recipient = recipientCommittee();
       const blocks = searchDisbursements.format!({
-        results: [disbursementRecord({ recipient_committee }), disbursementRecord()],
+        results: [
+          disbursementRecord({ recipient_committee_id: 'C00114439', sub_id: 'ROW-1' }),
+          disbursementRecord({ sub_id: 'ROW-2' }),
+          disbursementRecord({ recipient_committee_id: 'C00114439', sub_id: 'ROW-3' }),
+        ],
         mode: 'itemized',
         committee: nestedCommittee('C00703975'),
+        recipient_committees: { C00114439: recipient },
+        next_cursor: 'NEXT',
+        count: 3,
+        search_criteria: {},
+      });
+
+      const text = formatText(blocks);
+      // Never the JSON dump the record once rendered as.
+      expect(text).not.toContain('{"');
+      // Each row still names the committee it pays.
+      expect(
+        text.match(
+          / {2}recipient_committee_id: C00114439 \(WA STATE DEMOCRATIC CENTRAL COMMITTEE\)/g,
+        ),
+      ).toHaveLength(2);
+      // The record itself renders once, every field, after the rows and before the cursor.
+      expect(
+        text.match(/\*\*WA STATE DEMOCRATIC CENTRAL COMMITTEE \(C00114439\)\*\*/g),
+      ).toHaveLength(1);
+      for (const [key, value] of Object.entries(recipient)) {
+        if (key === 'name' || key === 'committee_id') continue;
+        expect(text).toContain(`  ${key}: ${Array.isArray(value) ? value.join(', ') : value}`);
+      }
+      const heading = text.indexOf('**Recipient committees referenced above**');
+      expect(heading).toBeGreaterThan(text.indexOf('ROW-3'));
+      expect(heading).toBeLessThan(text.indexOf('next_cursor: `NEXT`'));
+    });
+
+    it('renders a recipient record left on its row in full, never as a JSON dump', () => {
+      const blocks = searchDisbursements.format!({
+        results: [disbursementRecord({ recipient_committee: recipientCommittee() })],
+        mode: 'itemized',
         next_cursor: null,
-        count: 2,
+        count: 1,
         search_criteria: {},
       });
 
       const text = formatText(blocks);
       expect(text).not.toContain('{"');
       expect(text).toContain(
-        '  recipient_committee: WA STATE DEMOCRATIC CENTRAL COMMITTEE (C00114439)',
+        '  recipient_committee:\n    WA STATE DEMOCRATIC CENTRAL COMMITTEE (C00114439)\n    committee_type_full: Party - Qualified',
       );
-      expect(text).toContain('    Party - Qualified · Unauthorized · WA · Treasurer: ROE, RICHARD');
-      expect(text).not.toContain('DNC STATE PARTY VICTORY FUND');
-      expect(text).not.toContain('1976');
-      expect(text).not.toContain('NESTED VALUE');
+      expect(text).toContain('    affiliated_committee_name: DNC STATE PARTY VICTORY FUND');
+      expect(text).toContain('    cycles: 1976, 2024');
     });
   });
 
@@ -765,6 +925,158 @@ describe('searchDisbursements', () => {
       const text = formatText(searchDisbursements.format!(result));
       expect(text).toContain('**97818 total disbursements**');
       expect(text).not.toContain('approximate');
+    });
+  });
+
+  describe('memo entries', () => {
+    const memoPage = (isCountExact: boolean) => ({
+      pagination: { count: 1_312, per_page: 3, is_count_exact: isCountExact },
+      results: [
+        disbursementRecord({ recipient_name: 'CASAS, ANN', ...MEMO_FIELDS }),
+        disbursementRecord({ recipient_name: 'PAYCHEX', transaction_id: 'B2D03DFAAD59D4617A4F' }),
+        disbursementRecord({ recipient_name: 'CASAS, ANN', ...MEMO_FIELDS }),
+      ],
+      nextCursor: null,
+    });
+
+    it('names the memo rows on a mixed page in the notice on both surfaces', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce(memoPage(true));
+
+      const result = await runToolContract(searchDisbursements, {
+        committee_id: 'C00706747',
+        per_page: 3,
+      });
+
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.notice).toBe(MEMO_SENTENCE(2, 3));
+      expect(wireText(result)).toContain(MEMO_SENTENCE(2, 3));
+      // Labelled, not dropped: every row comes back, memo_code intact.
+      expect((structured.results as Record<string, unknown>[]).map((r) => r.memo_code)).toEqual([
+        'X',
+        undefined,
+        'X',
+      ]);
+    });
+
+    it('composes the estimate and memo sentences into one notice', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce(memoPage(false));
+
+      const result = await runToolContract(searchDisbursements, {
+        committee_id: 'C00706747',
+        per_page: 3,
+      });
+
+      expect((result.structuredContent as Record<string, unknown>).notice).toBe(
+        `${APPROXIMATE_COUNT_NOTICE} ${MEMO_SENTENCE(2, 3)}`,
+      );
+    });
+
+    it('carries no memo sentence on an all-memo page', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 2, per_page: 20 },
+        results: [disbursementRecord(MEMO_FIELDS), disbursementRecord(MEMO_FIELDS)],
+        nextCursor: null,
+      });
+
+      const result = await runToolContract(searchDisbursements, { committee_id: 'C00706747' });
+
+      expect((result.structuredContent as Record<string, unknown>).notice).toBeUndefined();
+      expect(wireText(result)).not.toContain('rows on this page are memo entries');
+    });
+
+    it("marks each memo row's header and leaves the others unmarked", () => {
+      const text = formatText(searchDisbursements.format!(memoPageOutput()));
+
+      expect(text.match(/\*\*CASAS, ANN\*\* · memo entry\n/g)).toHaveLength(2);
+      expect(text).toContain('**PAYCHEX**\n');
+      expect(text).not.toContain('**PAYCHEX** ·');
+    });
+
+    it('describes the memo fields on itemized rows and the memo columns on aggregate rows', () => {
+      const row = searchDisbursements.output.shape.results.element.description ?? '';
+      expect(row).toContain('memo_code "X"');
+      expect(row).toContain('memoed_subtotal');
+      expect(row).toContain('memo_total');
+      expect(row).toContain('memo_count');
+      expect(row).toContain('never add memo_total to total');
+    });
+  });
+
+  describe('recipient_state', () => {
+    it('rejects a spelled-out state before any request', async () => {
+      const err = await contractFailure(searchDisbursements, {
+        committee_id: 'C00703975',
+        recipient_state: 'Georgia',
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'recipient_state',
+        value: 'Georgia',
+      });
+      expect(mockService.searchDisbursements).not.toHaveBeenCalled();
+    });
+
+    it.each(['D', 'dc', '00'])('sends the filed code %s as given', async (state) => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      await searchDisbursements.handler(
+        searchDisbursements.input.parse({ committee_id: 'C00703975', recipient_state: state }),
+        ctx,
+      );
+
+      expect(mockService.searchDisbursements.mock.calls[0]![0].recipient_state).toBe(state);
+    });
+
+    /** `/schedules/schedule_b/` also reads `other` (foreign, invalid, or missing) and `-` (exclude). */
+    it.each(['other', 'Other', '-GA', '-d'])('sends the value %s as given', async (state) => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      await searchDisbursements.handler(
+        searchDisbursements.input.parse({ committee_id: 'C00703975', recipient_state: state }),
+        ctx,
+      );
+
+      expect(mockService.searchDisbursements.mock.calls[0]![0].recipient_state).toBe(state);
+    });
+
+    it.each(['-other', '--GA', '-Georgia'])('still rejects recipient_state %s', async (state) => {
+      const err = await contractFailure(searchDisbursements, {
+        committee_id: 'C00703975',
+        recipient_state: state,
+      });
+
+      expect(err.data).toMatchObject({
+        reason: 'invalid_state_code',
+        field: 'recipient_state',
+        value: state,
+      });
+      expect(mockService.searchDisbursements).not.toHaveBeenCalled();
+    });
+
+    it('treats an empty recipient_state as omitted', async () => {
+      mockService.searchDisbursements.mockResolvedValueOnce({
+        pagination: { count: 0, per_page: 20 },
+        results: [],
+        nextCursor: null,
+      });
+
+      await searchDisbursements.handler(
+        searchDisbursements.input.parse({ committee_id: 'C00703975', recipient_state: '' }),
+        ctx,
+      );
+
+      expect(mockService.searchDisbursements.mock.calls[0]![0]).not.toHaveProperty(
+        'recipient_state',
+      );
     });
   });
 });

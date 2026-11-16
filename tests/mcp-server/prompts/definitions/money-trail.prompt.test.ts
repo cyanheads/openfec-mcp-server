@@ -145,6 +145,33 @@ describe('moneyTrailPrompt', () => {
     });
   });
 
+  /**
+   * Itemized Schedule E lists most spending twice — on the 24/48-hour notice and
+   * again on the periodic report — and by_candidate leaves notices out, so the
+   * outside-money step has to say where totals come from and what not to sum.
+   */
+  describe('outside money step', () => {
+    const step4 = section(firstMessage({ candidate_id: 'P80000722' }).content.text, 4);
+
+    it('takes per-committee totals from by_candidate, periodic reports only', () => {
+      expect(step4).toContain('(mode: by_candidate)');
+      expect(step4).toContain('largest total first');
+      expect(step4).toContain('These totals come from periodic reports only');
+    });
+
+    it('adds current-cycle notice spending through itemized is_notice: true', () => {
+      expect(step4).toContain('In the current cycle');
+      expect(step4).toContain('(mode: itemized, is_notice: true)');
+      expect(step4).toContain("dated after its spender's last periodic report");
+    });
+
+    it('never sums an itemized page mixing notices and reports, or memo entries', () => {
+      expect(step4).toContain('never add up an itemized page that mixes notices with report rows');
+      expect(step4).toContain('is_notice: false');
+      expect(step4).toContain('memo entries (memo_code "X")');
+    });
+  });
+
   it('pins the cycle on every call when one was supplied', () => {
     expect(firstMessage({ candidate_id: 'P00003392', cycle: '2020' }).content.text).toContain(
       'Pass cycle=2020',

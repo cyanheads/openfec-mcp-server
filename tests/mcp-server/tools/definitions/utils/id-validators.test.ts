@@ -155,6 +155,44 @@ describe('validateCommitteeId', () => {
       expect(JSON.stringify(err.data)).toContain('NOTVALID');
     });
 
+    it('names the field that carried the ID, committee_id by default', () => {
+      const dataFor = (...args: Parameters<typeof validateCommitteeId>) => {
+        try {
+          validateCommitteeId(...args);
+        } catch (e) {
+          return (e as McpError).data;
+        }
+        throw new Error('validateCommitteeId accepted a malformed ID');
+      };
+
+      expect(dataFor('NOTVALID')).toEqual({
+        committee_id: 'NOTVALID',
+        reason: 'invalid_committee_id',
+      });
+      expect(dataFor('NAR-PAC', 'contributor_id')).toEqual({
+        contributor_id: 'NAR-PAC',
+        reason: 'invalid_committee_id',
+      });
+    });
+
+    it('names the field that carried the ID in the message, where a content[]-only caller reads it', () => {
+      const messageFor = (...args: Parameters<typeof validateCommitteeId>) => {
+        try {
+          validateCommitteeId(...args);
+        } catch (e) {
+          return (e as McpError).message;
+        }
+        throw new Error('validateCommitteeId accepted a malformed ID');
+      };
+
+      expect(messageFor('NOTVALID')).toBe(
+        "Invalid committee_id format. FEC committee IDs start with 'C' followed by exactly eight digits (e.g., 'C00358796').",
+      );
+      const donor = messageFor('NAR-PAC', 'contributor_id');
+      expect(donor).toMatch(/^Invalid contributor_id format\. /);
+      expect(donor).not.toContain('committee_id');
+    });
+
     it('rejects injection-like strings', () => {
       expect(() => validateCommitteeId('C<script>alert(1)</script>')).toThrow(McpError);
     });

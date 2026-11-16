@@ -20,12 +20,17 @@ export function validateCandidateId(candidateId: string): void {
   }
 }
 
-/** Throw validationError if `committeeId` doesn't match the FEC committee ID pattern. */
-export function validateCommitteeId(committeeId: string): void {
+/**
+ * Throw validationError if `committeeId` doesn't match the FEC committee ID
+ * pattern. `field` names the input that carried it in the message and the error
+ * data, since a committee ID also arrives under other names (a donor's
+ * `contributor_id`).
+ */
+export function validateCommitteeId(committeeId: string, field = 'committee_id'): void {
   if (!COMMITTEE_ID_RE.test(committeeId)) {
     throw validationError(
-      "Invalid committee ID format. FEC committee IDs start with 'C' followed by exactly eight digits (e.g., 'C00358796').",
-      { committee_id: committeeId, reason: 'invalid_committee_id' },
+      `Invalid ${field} format. FEC committee IDs start with 'C' followed by exactly eight digits (e.g., 'C00358796').`,
+      { [field]: committeeId, reason: 'invalid_committee_id' },
     );
   }
 }

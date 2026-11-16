@@ -4,9 +4,9 @@
  * @module tests/mcp-server/tools/definitions/search-coordinated-expenditures.tool.test
  */
 
-import type { ContentBlock } from '@cyanheads/mcp-ts-core';
+import type { CallToolResult, ContentBlock } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockService = {
@@ -76,6 +76,30 @@ const formatText = (blocks: ContentBlock[]): string => {
   if (block?.type !== 'text') throw new Error('format() did not return a text block');
   return block.text;
 };
+
+/** All `content[]` text of a tool call, enrichment trailer included. */
+const wireText = (result: CallToolResult) =>
+  result.content
+    .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n');
+
+/**
+ * A Schedule F memo row: memo_code "X" and no memoed_subtotal, which Schedule F
+ * does not carry.
+ */
+const memoRow = (overrides: Record<string, unknown> = {}) =>
+  row({
+    memo_code: 'X',
+    memo_text: 'MEMO ENTRY',
+    back_reference_transaction_id: 'SF-1063568',
+    payee_name: 'FAIRMONT HOTELS',
+    expenditure_amount: 26,
+    ...overrides,
+  });
+
+const MEMO_SENTENCE = (n: number, m: number) =>
+  `${n} of ${m} rows on this page are memo entries (memo_code "X"): each itemizes another row, named by back_reference_transaction_id when filed, or restates earlier activity, and FEC leaves memo entries out of report totals. Do not add them to the other rows.`;
 
 const makeCtx = () => createMockContext();
 
@@ -165,6 +189,7 @@ describe('searchCoordinatedExpenditures', () => {
       const result = await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(result.committee).toMatchObject({ committee_id: 'C00003418' });
+      expect(result).not.toHaveProperty('committees');
       for (const r of result.results) {
         expect(r).not.toHaveProperty('committee');
         expect(r).not.toHaveProperty('subordinate_committee');
@@ -172,18 +197,51 @@ describe('searchCoordinatedExpenditures', () => {
       }
     });
 
-    it('keeps the per-row committee when the query spans committees, still dropping subordinate_committee', async () => {
+    it('carries each spender once in committees when the query spans committees, still dropping subordinate_committee', async () => {
       mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
-        pagination: { ...PAGE, count: 2 },
-        results: [row(), row({ committee_id: 'C00010603', committee: committee('C00010603') })],
+        pagination: { ...PAGE, count: 3 },
+        results: [
+          row(),
+          row({ committee_id: 'C00010603', committee: committee('C00010603') }),
+          row({ expenditure_amount: 73_563 }),
+        ],
       });
 
       const input = searchCoordinatedExpenditures.input.parse({ cycle: 2024 });
       const result = await searchCoordinatedExpenditures.handler(input, ctx);
 
       expect(result.committee).toBeUndefined();
-      expect(result.results[0]).toHaveProperty('committee');
-      expect(result.results[0]).not.toHaveProperty('subordinate_committee');
+      expect(result.committees).toEqual({
+        C00003418: committee(),
+        C00010603: committee('C00010603'),
+      });
+      for (const r of result.results) {
+        expect(r).not.toHaveProperty('committee');
+        expect(r).not.toHaveProperty('subordinate_committee');
+      }
+      expect(result.results.map((r) => r.committee_id)).toEqual([
+        'C00003418',
+        'C00010603',
+        'C00003418',
+      ]);
+    });
+
+    it("keeps another cycle's record for the same spender on its row", async () => {
+      const cycle2018 = { ...committee('C00010603'), cycle: 2018, treasurer_name: 'DERROUGH' };
+      mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 2 },
+        results: [
+          row({ committee_id: 'C00010603', committee: { ...committee('C00010603'), cycle: 2016 } }),
+          row({ committee_id: 'C00010603', committee: cycle2018 }),
+        ],
+      });
+
+      const input = searchCoordinatedExpenditures.input.parse({ candidate_id: 'P00003392' });
+      const result = await searchCoordinatedExpenditures.handler(input, ctx);
+
+      expect(result.committees).toEqual({ C00010603: { ...committee('C00010603'), cycle: 2016 } });
+      expect(result.results[0]).not.toHaveProperty('committee');
+      expect(result.results[1]!.committee).toEqual(cycle2018);
     });
 
     it('sets an enrichment notice when nothing matched', async () => {
@@ -257,36 +315,64 @@ describe('searchCoordinatedExpenditures', () => {
       expect(text).toContain('REPUBLICAN NATIONAL COMMITTEE (C00003418)');
     });
 
-    it('renders an un-hoisted per-row committee compactly instead of as a JSON dump', () => {
-      const { subordinate_committee: _dropped, ...first } = row({
-        committee: {
-          ...committee(),
-          treasurer_name: 'DOE, JANE',
-          street_1: '310 FIRST STREET SE',
-          cycles: [1976, 1978],
-          sponsor: { nested: { deeper: 'NESTED VALUE' } },
-        },
-      });
-      const { subordinate_committee: _alsoDropped, ...second } = row({
-        committee_id: 'C00010603',
-        committee: { ...committee('C00010603'), name: 'DNC SERVICES CORP' },
-      });
+    it('renders each spender once, in full, and names it on every row that references it', () => {
+      const rnc = {
+        ...committee(),
+        treasurer_name: 'DOE, JANE',
+        street_1: '310 FIRST STREET SE',
+        cycles: [1976, 1978],
+      };
+      const dnc = { ...committee('C00010603'), name: 'DNC SERVICES CORP' };
+      const bare = (overrides: Record<string, unknown>) => {
+        const { committee: _c, subordinate_committee: _s, ...rest } = row(overrides);
+        return rest;
+      };
       const blocks = searchCoordinatedExpenditures.format!({
-        results: [first, second],
-        pagination: { ...PAGE, count: 2 },
+        results: [
+          bare({ payee_name: 'PAYEE ONE' }),
+          bare({ committee_id: 'C00010603', payee_name: 'PAYEE TWO' }),
+          bare({ payee_name: 'PAYEE THREE' }),
+        ],
+        committees: { C00003418: rnc, C00010603: dnc },
+        pagination: { ...PAGE, count: 3 },
         search_criteria: { candidate_id: 'P80001571' },
       });
 
       const text = formatText(blocks);
       expect(text).not.toContain('{"');
-      expect(text).toContain('  committee: REPUBLICAN NATIONAL COMMITTEE (C00003418)');
+      expect(
+        text.match(/ {2}committee_id: C00003418 \(REPUBLICAN NATIONAL COMMITTEE\)/g),
+      ).toHaveLength(2);
+      expect(text).toContain('  committee_id: C00010603 (DNC SERVICES CORP)');
+      expect(text.match(/\*\*REPUBLICAN NATIONAL COMMITTEE \(C00003418\)\*\*/g)).toHaveLength(1);
+      expect(text.match(/\*\*DNC SERVICES CORP \(C00010603\)\*\*/g)).toHaveLength(1);
+      for (const [key, value] of Object.entries(rnc)) {
+        if (key === 'name' || key === 'committee_id') continue;
+        expect(text).toContain(`  ${key}: ${Array.isArray(value) ? value.join(', ') : value}`);
+      }
+      const heading = text.indexOf('**Committees referenced above**');
+      expect(heading).toBeGreaterThan(text.indexOf('PAYEE THREE'));
+      expect(heading).toBeLessThan(text.indexOf('Page 1 of 1'));
+    });
+
+    it("renders a spender record left on its row in full — another cycle's record — never as JSON", () => {
+      const { subordinate_committee: _dropped, ...first } = row({
+        committee: { ...committee(), cycle: 2018, sponsor: { nested: { deeper: 'NESTED VALUE' } } },
+      });
+      const blocks = searchCoordinatedExpenditures.format!({
+        results: [first],
+        pagination: { ...PAGE, count: 1 },
+        search_criteria: { candidate_id: 'P80001571' },
+      });
+
+      const text = formatText(blocks);
+      expect(text).not.toContain('{"committee_id"');
       expect(text).toContain(
-        '    Party - Qualified · Unauthorized · REPUBLICAN PARTY · DC · Treasurer: DOE, JANE',
+        '  committee:\n    REPUBLICAN NATIONAL COMMITTEE (C00003418)\n    committee_type_full: Party - Qualified',
       );
-      expect(text).toContain('  committee: DNC SERVICES CORP (C00010603)');
-      expect(text).not.toContain('310 FIRST STREET');
-      expect(text).not.toContain('1976');
-      expect(text).not.toContain('NESTED VALUE');
+      expect(text).toContain('    cycle: 2018');
+      // A field with no known shape inside the record keeps the generic rendering.
+      expect(text).toContain('    sponsor: {"nested":{"deeper":"NESTED VALUE"}}');
       expect(text).toContain('payee_name: NATIONAL MEDIA RESEARCH');
     });
 
@@ -341,6 +427,60 @@ describe('searchCoordinatedExpenditures', () => {
       const text = formatText(searchCoordinatedExpenditures.format!(result));
       expect(text).toContain('No results found.');
       expect(text).not.toContain('No results at this position');
+    });
+  });
+
+  describe('memo entries', () => {
+    it('names the memo rows on a mixed page in the notice on both surfaces', async () => {
+      mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 25 },
+        results: [memoRow(), row(), memoRow({ expenditure_amount: 31 })],
+      });
+
+      const result = await runToolContract(searchCoordinatedExpenditures, {
+        cycle: 2024,
+        max_amount: 100,
+      });
+
+      const structured = result.structuredContent as Record<string, unknown>;
+      expect(structured.notice).toBe(MEMO_SENTENCE(2, 3));
+      expect(wireText(result)).toContain(MEMO_SENTENCE(2, 3));
+      expect((structured.results as Record<string, unknown>[]).map((r) => r.memo_code)).toEqual([
+        'X',
+        undefined,
+        'X',
+      ]);
+    });
+
+    it('carries no memo sentence on a page without memo rows', async () => {
+      mockService.searchCoordinatedExpenditures.mockResolvedValueOnce({
+        pagination: { ...PAGE, count: 2 },
+        results: [row(), row()],
+      });
+
+      const result = await runToolContract(searchCoordinatedExpenditures, { cycle: 2024 });
+
+      expect((result.structuredContent as Record<string, unknown>).notice).toBeUndefined();
+      expect(wireText(result)).not.toContain('memo entries');
+    });
+
+    it("marks each memo row's header and leaves the others unmarked", () => {
+      const blocks = searchCoordinatedExpenditures.format!({
+        results: [memoRow(), row()],
+        pagination: { ...PAGE, count: 2 },
+        search_criteria: { cycle: 2024 },
+      });
+
+      const text = formatText(blocks);
+      expect(text).toContain('**$26 for TRUMP, DONALD J** — 2024-08-07 · memo entry\n');
+      expect(text).toContain('**$9,000,000 for TRUMP, DONALD J** — 2024-08-07\n');
+    });
+
+    it('describes memo_code on the row', () => {
+      const description =
+        searchCoordinatedExpenditures.output.shape.results.element.description ?? '';
+      expect(description).toContain('memo_code "X"');
+      expect(description).toContain('never add it to the other rows');
     });
   });
 });

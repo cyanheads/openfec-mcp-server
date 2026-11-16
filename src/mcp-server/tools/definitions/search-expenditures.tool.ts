@@ -13,9 +13,9 @@ import {
   getOpenFecService,
 } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { validatePartyCode, validateStateCode } from './utils/code-validators.js';
 import { currentCycle } from './utils/election-cycle.js';
 import {
-  APPROXIMATE_COUNT_NOTICE,
   approximateCount,
   buildSearchCriteria,
   describeExhaustedPosition,
@@ -25,21 +25,22 @@ import {
   formatEmptyResult,
   formatExhaustedResult,
   formatSearchCriteria,
+  itemizedPageNotice,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
-import { validateRange } from './utils/range-validators.js';
+import { validateScheduleRanges } from './utils/range-validators.js';
+import { markRowKinds } from './utils/row-kinds.js';
 import {
-  disclosePageBound,
+  COMMITTEES,
+  CommitteeMapSchema,
+  committeeRenderers,
+  formatCommitteeMaps,
   formatHoistedCommittee,
-  formatRowCommittee,
   HoistedCommitteeSchema,
-  PageBoundEnrichment,
-  PageBoundTrailer,
-  PER_PAGE_CAPS,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -112,6 +113,59 @@ const ITEMIZED_INPUTS = [
   'cursor',
 ] as const;
 
+/** The by_candidate scope inputs itemized mode also takes, in the order the notice names them. */
+const NOTICE_FOLLOW_UP_SCOPE = [
+  'committee_id',
+  'candidate_id',
+  'support_oppose',
+  'candidate_office',
+  'candidate_office_state',
+  'candidate_office_district',
+  'cycle',
+] as const;
+
+/** by_candidate inputs that itemized mode rejects (`inputs_not_applicable_to_mode`). */
+const BY_CANDIDATE_ONLY_INPUTS = ['page', 'election_full'] as const;
+
+type NoticeFollowUpScope = {
+  readonly [K in (typeof NOTICE_FOLLOW_UP_SCOPE)[number]]?: string | number | undefined;
+} & { readonly [K in (typeof BY_CANDIDATE_ONLY_INPUTS)[number]]?: number | boolean | undefined };
+
+/**
+ * `/by_candidate/` sums periodic-report rows only — OpenFEC leaves 24/48-hour
+ * notices out so one buy is not counted twice — so in the current cycle,
+ * spending a committee has filed only on a notice is missing from its total. A
+ * past cycle's notices have all reappeared on reports, so it has no such gap.
+ * A caller replaying the named call over its by_candidate arguments would keep
+ * `page` or `election_full`, which itemized mode rejects, so the sentence names
+ * the ones the caller passed as inputs to leave out.
+ */
+const noticeGapSentence = (input: NoticeFollowUpScope): string => {
+  const call = [
+    'mode: "itemized"',
+    'is_notice: true',
+    ...NOTICE_FOLLOW_UP_SCOPE.filter((key) => input[key] !== undefined && input[key] !== '').map(
+      (key) => `${key}: ${JSON.stringify(input[key])}`,
+    ),
+  ];
+  const drop = BY_CANDIDATE_ONLY_INPUTS.filter((key) => input[key] !== undefined);
+  const without =
+    drop.length > 0 ? `, without ${drop.join(' or ')}, which itemized mode rejects` : '';
+  return `by_candidate totals come from periodic reports only, so spending a committee has reported so far only on a 24/48-hour notice is missing from them. Find it with ${call.join(', ')}${without} — the notices dated after a spender's last periodic report are what its total lacks.`;
+};
+
+/** Empty by_candidate page in a past cycle, where every notice is already on a report. */
+const BY_CANDIDATE_NO_MATCH =
+  'No expenditures by candidate matched. Not every race draws outside spending; if you expected rows, check the cycle and the candidate_id or race scope.';
+
+/** Empty by_candidate page in the current cycle — the notice gap sentence follows it. */
+const BY_CANDIDATE_NONE_REPORTED =
+  'No periodic report lists independent expenditures in this scope.';
+
+/** `format()` hint for an empty by_candidate page; the notice adds the current-cycle lead. */
+const BY_CANDIDATE_EMPTY_HINT =
+  'by_candidate counts spending from periodic reports only, and not every race draws outside spending. If you expected rows, check the cycle and the candidate_id or race scope.';
+
 export const searchExpenditures = tool('openfec_search_expenditures', {
   description:
     'Search independent expenditures (Schedule E) — outside spending supporting or opposing federal candidates. Covers Super PACs, party committees, and other groups. Use itemized mode for individual expenditure records, or by_candidate for aggregated totals per candidate; by_candidate needs either a candidate_id or a full race scope (candidate_office alone for President, plus candidate_office_state for Senate, plus candidate_office_district as well for House).',
@@ -145,7 +199,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .enum(modes)
       .default('itemized')
       .describe(
-        'Query mode. "itemized" returns individual expenditure records (keyset pagination). "by_candidate" returns aggregated totals per candidate by committee (page-based).',
+        'Query mode. "itemized" returns individual expenditure records (keyset pagination). "by_candidate" returns aggregated totals per candidate by committee (page-based), largest total first.',
       ),
     committee_id: z
       .string()
@@ -188,7 +242,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .string()
       .optional()
       .describe(
-        'Three-letter party code of the targeted candidate (e.g., DEM, REP). Itemized only — by_candidate rejects it, since the aggregate endpoint has no party filter.',
+        'Party code as OpenFEC files it, up to three characters (e.g., DEM, REP, LIB, W). Filters on the party of the targeted candidate. Itemized only — by_candidate rejects it, since the aggregate endpoint has no party filter.',
       ),
     cycle: z
       .number()
@@ -215,7 +269,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     is_notice: z
       .boolean()
       .optional()
-      .describe('Only 24/48-hour notice filings (near-election spending). Itemized only.'),
+      .describe(
+        'Which Schedule E filings to read. Omitted returns both 24/48-hour notices and periodic-report rows, which overlap: most spending filed on a notice is reported again on the next periodic report of the same spender, so never add the two kinds together. false returns periodic-report rows only, which sum once memo entries (memo_code "X") are left out. true returns 24/48-hour notices only — the newest spending, filed before it reaches a periodic report. Itemized only.',
+      ),
     most_recent: z
       .boolean()
       .optional()
@@ -249,15 +305,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .describe(
         'Page number (1-indexed) for by_candidate mode. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for by_candidate.',
       ),
-    per_page: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe(
-        `Results per page. Itemized mode sends at most ${PER_PAGE_CAPS.expenditures.committeeScoped} upstream when scoped by committee_id and ${PER_PAGE_CAPS.expenditures.perRowCommittee} otherwise, keeping the response under a 100,000-byte budget; a page bounded below your request reports truncated and cap, and next_cursor continues it.`,
-      ),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
@@ -272,7 +320,7 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         z
           .looseObject({})
           .describe(
-            'Itemized independent expenditure record (mode=itemized) or per-candidate aggregate row (mode=by_candidate).',
+            'Itemized independent expenditure record (mode=itemized) or per-candidate aggregate row (mode=by_candidate). Itemized rows carry is_notice — true for a 24/48-hour notice, false for a periodic-report row, and most notice spending reappears on the next periodic report — and memo_code, "X" (with memoed_subtotal true) on a memo entry, which itemizes or restates another row and sits outside report totals. Never add notice rows to report rows, or memo entries to any other row.',
           ),
       )
       .describe(
@@ -284,6 +332,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         'Query mode as the server resolved it. Row shapes differ by mode — itemized rows are individual expenditures, by_candidate rows are per-candidate totals — so read this rather than inferring the shape from the fields present.',
       ),
     committee: HoistedCommitteeSchema,
+    committees: CommitteeMapSchema.describe(
+      "Spending committees the itemized rows reference, keyed by each row's committee_id: every distinct spender once, in full, instead of a copy on each row. Present on itemized pages not scoped to one committee_id. A row whose record differs from its ID's entry (the same committee's record for another cycle) keeps its own. Absent when no row carries one.",
+    ),
     next_cursor: z
       .string()
       .nullable()
@@ -315,11 +366,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, that the total is an estimate, or that the page was bounded below the per_page requested and how to continue.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when expenditures did match, that the total is an estimate, how many rows on an itemized page that mixes them with other rows are 24/48-hour notices or memo entries and not to be summed with the rest, or — by_candidate in the current cycle — that spending filed only on 24/48-hour notices is missing from the totals, with the itemized call that lists it. Several apply at once as sentences of one notice.',
       ),
-    ...PageBoundEnrichment,
   },
-  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     const fec = getOpenFecService();
@@ -327,15 +376,20 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
 
     if (input.candidate_id) validateCandidateId(input.candidate_id);
     if (input.committee_id) validateCommitteeId(input.committee_id);
+    if (input.candidate_office_state) {
+      /** `/schedules/schedule_e/` reads `other` and `-`; `/by_candidate/` matches the state exactly. */
+      validateStateCode(
+        'candidate_office_state',
+        input.candidate_office_state,
+        mode === 'itemized' ? { exclusion: true, other: true } : {},
+      );
+    }
 
     /* ---------------------------------------------------------------- */
     /*  Itemized expenditures (keyset/SEEK)                             */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
-      const inapplicableInputs = [
-        ...(input.page !== undefined ? ['page'] : []),
-        ...(input.election_full !== undefined ? ['election_full'] : []),
-      ];
+      const inapplicableInputs = BY_CANDIDATE_ONLY_INPUTS.filter((key) => input[key] !== undefined);
       if (inapplicableInputs.length > 0) {
         throw ctx.fail(
           'inputs_not_applicable_to_mode',
@@ -348,20 +402,11 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         );
       }
 
-      validateRange({
-        minField: 'min_date',
-        minValue: input.min_date,
-        maxField: 'max_date',
-        maxValue: input.max_date,
-        valueType: 'date',
-      });
-      validateRange({
-        minField: 'min_amount',
-        minValue: input.min_amount,
-        maxField: 'max_amount',
-        maxValue: input.max_amount,
-        valueType: 'number',
-      });
+      /** Itemized only: by_candidate rejects a party as inapplicable before its width matters. */
+      if (input.candidate_party) {
+        validatePartyCode('candidate_party', input.candidate_party, { exclusion: true });
+      }
+      validateScheduleRanges(input);
 
       /**
        * Schedule E is large enough that an unscoped scan times out upstream, and
@@ -378,20 +423,8 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
        * keeps an omitted `most_recent` and an explicit `true` on one identity.
        */
       const applied = { ...input, cycle, most_recent: mostRecent };
-      /**
-       * A committee-scoped page hoists the committee record out of its rows; a
-       * page spanning committees keeps one per row, roughly doubling its weight.
-       * The cap lowers the upstream request itself, so the keyset cursor is
-       * minted from the last row actually returned and stays exact.
-       */
-      const perPage = Math.min(
-        input.per_page,
-        input.committee_id
-          ? PER_PAGE_CAPS.expenditures.committeeScoped
-          : PER_PAGE_CAPS.expenditures.perRowCommittee,
-      );
       const params: FecParams = {
-        per_page: perPage,
+        per_page: input.per_page,
         most_recent: mostRecent,
         cycle,
       };
@@ -435,38 +468,31 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         returned: result.results.length,
       });
 
-      ctx.enrich.total(result.pagination.count);
-      if (result.results.length === 0) {
-        ctx.enrich.notice(
-          result.pagination.count > 0
-            ? describeExhaustedPosition({ kind: 'cursor', count: result.pagination.count })
-            : 'No independent expenditures matched. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
-        );
-      } else if (result.pagination.is_count_exact === false) {
-        ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
-      }
-      disclosePageBound(ctx, {
-        requested: input.per_page,
-        applied: perPage,
-        shown: result.results.length,
-        continuation: { kind: 'cursor', nextCursor: result.nextCursor },
-        approximate: result.pagination.is_count_exact === false,
-      });
-
       /**
        * Schedule E does not require a committee_id, so a candidate- or
-       * race-scoped page spans several spending committees. Hoist only when the
-       * caller pinned one; the embedded `candidate` sub-object carries nothing
-       * the row and the echoed cycle do not already state.
+       * race-scoped page spans several spending committees: hoist the committee
+       * only when the caller pinned one, and otherwise carry each spender once
+       * in the page's `committees` map. The embedded `candidate` sub-object
+       * carries nothing the row and the echoed cycle do not already state.
        */
       const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
         hoistCommittee: Boolean(input.committee_id),
         drop: ['candidate'],
+        collect: [COMMITTEES],
       });
+
+      ctx.enrich.total(result.pagination.count);
+      const notice = itemizedPageNotice(
+        result.pagination,
+        trimmed.results,
+        'No independent expenditures matched. Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+      );
+      if (notice) ctx.enrich.notice(notice);
 
       return {
         results: trimmed.results,
         ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+        ...(trimmed.committees ? { committees: trimmed.committees } : {}),
         mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
@@ -518,10 +544,17 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
      * that named only the two-year cycle.
      */
     const electionFull = input.election_full ?? ELECTION_FULL_DEFAULT;
+    /**
+     * `/by_candidate/` has no default order, so without a sort its rows come back
+     * by committee_id and the largest spenders sit pages deep. No null-ordering
+     * flag rides along: `total` is never null there, and the endpoint ignores
+     * the null flags anyway.
+     */
     const params: FecParams = {
       page: input.page ?? 1,
       per_page: input.per_page,
       election_full: electionFull,
+      sort: '-total',
     };
 
     if (input.committee_id) params.committee_id = input.committee_id;
@@ -539,14 +572,17 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
     });
 
     ctx.enrich.total(result.pagination.count);
+    /** `notice` is last-wins: every sentence this page earns goes out in one call. */
+    const inCurrentCycle = input.cycle === undefined || input.cycle >= currentCycle();
+    const notices: string[] = [];
     const exhausted = exhaustedPage(result.pagination, result.results.length);
     if (exhausted) {
-      ctx.enrich.notice(describeExhaustedPosition(exhausted));
+      notices.push(describeExhaustedPosition(exhausted));
     } else if (result.results.length === 0) {
-      ctx.enrich.notice(
-        'No expenditures by candidate matched. Verify the candidate_id (or the office/state/district race scope) and the cycle are correct.',
-      );
+      notices.push(inCurrentCycle ? BY_CANDIDATE_NONE_REPORTED : BY_CANDIDATE_NO_MATCH);
     }
+    if (inCurrentCycle) notices.push(noticeGapSentence(input));
+    if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
 
     return {
       results: result.results,
@@ -564,7 +600,9 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
       }
       return formatEmptyResult(
         result.search_criteria,
-        'Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
+        result.mode === 'by_candidate'
+          ? BY_CANDIDATE_EMPTY_HINT
+          : 'Try a different cycle, broaden filters, or verify the candidate_id/committee_id. Not all races attract significant outside spending.',
         result.mode,
       );
     }
@@ -582,13 +620,15 @@ export const searchExpenditures = tool('openfec_search_expenditures', {
         );
       }
     }
+    const renderers = committeeRenderers(result);
     for (const r of result.results) {
       const indicator = supportOpposeLabel(r.support_oppose_indicator);
       const candidate = String(r.candidate_name ?? r.candidate_id ?? 'Unknown');
       lines.push(
-        `**[${indicator}] ${candidate}**\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']), { committee: formatRowCommittee })}`,
+        `${markRowKinds(`**[${indicator}] ${candidate}**`, r)}\n${renderRecord(r, new Set(['candidate_name', 'support_oppose_indicator']), renderers)}`,
       );
     }
+    lines.push(...formatCommitteeMaps(result));
     if (isItemized && result.next_cursor) {
       lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);
     }

@@ -40,9 +40,11 @@ describe('campaignAnalysisPrompt', () => {
 
   it('uses fallback "the specified candidate" when neither name nor id given', () => {
     const text = firstMessage({}).content.text;
-    expect(text).toContain('the specified candidate');
+    // The target is named only in the opening line; the steps below quote field values.
+    const openingLine = text.split('\n')[0];
+    expect(openingLine).toContain('the specified candidate');
+    expect(openingLine).not.toMatch(/"[^"]*"/); // no quoted name
     expect(text).not.toContain('candidate ID');
-    expect(text).not.toMatch(/"[^"]*"/); // no quoted name
   });
 
   it('returns exactly 1 message with role=user', () => {
@@ -170,6 +172,35 @@ describe('campaignAnalysisPrompt', () => {
     expect(step2).toContain(
       'build the trajectory from the cycles the committee served this candidate',
     );
+  });
+
+  /**
+   * Itemized Schedule E lists most spending twice — on the 24/48-hour notice and
+   * again on the periodic report — and by_candidate leaves notices out, so the
+   * support-vs-opposition total has to come from by_candidate plus the current
+   * cycle's newer notices, never from summing a mixed itemized page.
+   */
+  describe('outside money section', () => {
+    const section6 = section(firstMessage({ candidate_id: 'P80000722' }).content.text, 6);
+
+    it('takes the support and opposition totals from by_candidate, periodic reports only', () => {
+      expect(section6).toContain('mode: by_candidate');
+      expect(section6).toContain('periodic reports only');
+    });
+
+    it('adds current-cycle notice spending through itemized is_notice: true', () => {
+      expect(section6).toContain('in the current cycle');
+      expect(section6).toContain('(mode: itemized, is_notice: true)');
+      expect(section6).toContain("dated after each spender's last periodic report");
+    });
+
+    it('never sums an itemized page mixing notices and reports, or memo entries', () => {
+      expect(section6).toContain(
+        'Never sum an itemized page that mixes 24/48-hour notices with periodic-report rows',
+      );
+      expect(section6).toContain('is_notice: false');
+      expect(section6).toContain('memo entries (memo_code "X")');
+    });
   });
 
   it('pins the cycle on every call when one was supplied', () => {

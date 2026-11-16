@@ -1,20 +1,81 @@
 /**
  * @fileoverview Payload shaping for the high-volume page tools. OpenFEC embeds
- * a full ~40-field committee object in every itemized Schedule A/B/E/F row;
- * when the query is scoped to a single committee that object is identical
- * across the page, so it is hoisted out once instead of being shipped per row.
- * Every itemized and filing row also sheds its null and empty fields, and each
- * tool caps the page size it requests upstream so a full page stays inside the
- * per-surface response budget. The budget and its byte measure are shared with
- * the legal tools, which hold to it by measuring each response instead.
+ * a full committee record (26–38 fields) in itemized Schedule A/B/E/F rows —
+ * the filing committee on every row, and on some rows a donor or recipient
+ * that is itself a committee. Each record is carried once per page instead of
+ * once per row: the committee a single-committee query is scoped to is hoisted
+ * to the top level, and the rest move into page-level maps keyed by the flat ID
+ * the row already carries. Both surfaces carry every record whole. Every
+ * itemized and filing row also sheds its null and empty fields. Shaping changes
+ * what a row carries, never how many rows a page holds: the caller's
+ * `per_page` is the page.
  * @module src/mcp-server/tools/definitions/utils/trim-schedule-row
  */
 
-import { type Context, z } from '@cyanheads/mcp-ts-core';
+import { z } from '@cyanheads/mcp-ts-core';
 import { isRecord } from '@cyanheads/mcp-ts-core/utils';
-import { APPROXIMATE_COUNT_NOTICE, type RecordFieldRenderer } from './format-helpers.js';
+import { type RecordFieldRenderer, renderRecord } from './format-helpers.js';
+
+type Row = Record<string, unknown>;
+
+/** Output key of a page-level committee map. */
+export type CommitteeMapKey = 'committees' | 'contributor_committees' | 'recipient_committees';
+
+/**
+ * A page's committee maps: each referenced ID → the one record rows with that
+ * ID share. Accepts `undefined` members so a tool's parsed output passes as is.
+ */
+export type CommitteeMaps = { [K in CommitteeMapKey]?: Record<string, Row> | undefined };
+
+/** A nested committee record rows may carry, the flat ID naming it, and the map it moves into. */
+export interface CommitteeMapSpec {
+  /** Row key of the nested record. */
+  readonly field: string;
+  /** Row key of the flat ID that names the record. */
+  readonly idKey: string;
+  /** Heading the map renders under in `content[]`. */
+  readonly label: string;
+  /** Output key of the page-level map. */
+  readonly mapKey: CommitteeMapKey;
+}
+
+/** The filing committee — Schedule E/F spenders, or Schedule A recipients on a donor-scoped page. */
+export const COMMITTEES = {
+  field: 'committee',
+  idKey: 'committee_id',
+  label: 'Committees',
+  mapKey: 'committees',
+} as const satisfies CommitteeMapSpec;
+
+/** Schedule A: a donor that is itself a registered committee. */
+export const CONTRIBUTOR_COMMITTEES = {
+  field: 'contributor',
+  idKey: 'contributor_id',
+  label: 'Contributor committees',
+  mapKey: 'contributor_committees',
+} as const satisfies CommitteeMapSpec;
+
+/** Schedule B: a payee that is itself a registered committee. */
+export const RECIPIENT_COMMITTEES = {
+  field: 'recipient_committee',
+  idKey: 'recipient_committee_id',
+  label: 'Recipient committees',
+  mapKey: 'recipient_committees',
+} as const satisfies CommitteeMapSpec;
+
+/** Every map, in the order `content[]` renders them. */
+const MAP_SPECS: readonly CommitteeMapSpec[] = [
+  CONTRIBUTOR_COMMITTEES,
+  RECIPIENT_COMMITTEES,
+  COMMITTEES,
+];
 
 export interface TrimScheduleRowsOptions {
+  /**
+   * Nested committee records to move off the rows into page-level maps. The
+   * filing committee's spec is skipped on a page whose committee was hoisted.
+   */
+  collect?: readonly CommitteeMapSpec[];
   /** Row keys to delete outright — sub-objects fully covered by a flat field. */
   drop?: readonly string[];
   /**
@@ -25,10 +86,10 @@ export interface TrimScheduleRowsOptions {
   hoistCommittee: boolean;
 }
 
-export interface TrimmedSchedulePage {
-  /** The shared committee, present only when it was hoisted out of every row. */
-  committee?: Record<string, unknown>;
-  results: Record<string, unknown>[];
+export interface TrimmedSchedulePage extends CommitteeMaps {
+  /** The shared committee, present only when it was hoisted out of the rows. */
+  committee?: Row;
+  results: Row[];
 }
 
 /** A value that carries no information: null, undefined, '', [], or {}. */
@@ -63,34 +124,89 @@ export function dropEmptyFields(record: Record<string, unknown>): Record<string,
 }
 
 /**
- * Hoist the shared committee object out of itemized schedule rows, drop
- * duplicated sub-objects, and drop empty fields at every depth. The hoist
- * requires both a single-committee query scope and agreement across the
- * returned rows; when either fails the rows are returned with their own
- * committee object intact.
+ * Lift the record most of `rows` carry under `field` — the first seen on a
+ * tie — off every row carrying an identical copy, and return it. One committee
+ * ID can carry different records on a page that spans cycles, each that
+ * committee's filing history for the row's own cycle; rows carrying a record
+ * other than the one lifted keep theirs. Records from one upstream response
+ * serialize their keys in one order, so equal JSON is equal content.
+ */
+function liftPrevailing(rows: readonly Row[], field: string): Row {
+  const counts = new Map<string, number>();
+  const serialized = rows.map((row) => {
+    const json = JSON.stringify(row[field]);
+    counts.set(json, (counts.get(json) ?? 0) + 1);
+    return json;
+  });
+  let prevailing = serialized[0] as string;
+  for (const [json, n] of counts) if (n > (counts.get(prevailing) ?? 0)) prevailing = json;
+  const record = rows[serialized.indexOf(prevailing)]?.[field] as Row;
+  rows.forEach((row, i) => {
+    if (serialized[i] === prevailing) delete row[field];
+  });
+  return record;
+}
+
+/** Whether every row carries a committee record naming one shared committee ID. */
+function namesOneCommittee(rows: readonly Row[]): boolean {
+  const first = rows[0]?.committee;
+  if (!isRecord(first) || first.committee_id == null) return false;
+  return rows.every(
+    (row) => isRecord(row.committee) && row.committee.committee_id === first.committee_id,
+  );
+}
+
+/**
+ * Move each row's `spec.field` record into a map keyed by the row's own
+ * `spec.idKey`, when that ID names the record: each ID's entry is the record
+ * most of its rows carry. A record that differs from its ID's entry, or whose
+ * row carries no matching ID, stays on its row. Returns undefined when nothing
+ * moved.
+ */
+function collectRecords(
+  rows: readonly Row[],
+  spec: CommitteeMapSpec,
+): Record<string, Row> | undefined {
+  const byId = new Map<string, Row[]>();
+  for (const row of rows) {
+    const record = row[spec.field];
+    const id = row[spec.idKey];
+    if (!isRecord(record) || typeof id !== 'string' || record.committee_id !== id) continue;
+    const group = byId.get(id);
+    if (group) group.push(row);
+    else byId.set(id, [row]);
+  }
+  if (byId.size === 0) return undefined;
+  const map: Record<string, Row> = Object.create(null);
+  for (const [id, group] of byId) map[id] = liftPrevailing(group, spec.field);
+  return map;
+}
+
+/**
+ * Drop empty fields at every depth and duplicated sub-objects, hoist the
+ * shared committee, and move the remaining nested committee records into
+ * page-level maps. The hoist requires both a single-committee query scope and
+ * one committee ID across the returned rows; it lifts the record most rows
+ * carry, and a row whose record differs keeps its own. Never mutates its
+ * input.
  */
 export function trimScheduleRows(
   sourceRows: readonly Record<string, unknown>[],
   options: TrimScheduleRowsOptions,
 ): TrimmedSchedulePage {
-  const drop = options.drop ?? [];
-  const rows = sourceRows.map(dropEmptyFields);
-  const committees = rows.map((row) => (isRecord(row.committee) ? row.committee : undefined));
-  const ids = new Set(committees.map((committee) => committee?.committee_id ?? null));
-  const first = committees[0];
-  const shared =
-    options.hoistCommittee && first !== undefined && ids.size === 1 && !ids.has(null)
-      ? first
-      : undefined;
+  const results = sourceRows.map(dropEmptyFields);
+  for (const row of results) for (const key of options.drop ?? []) delete row[key];
 
-  const results = rows.map((row) => {
-    const trimmed: Record<string, unknown> = { ...row };
-    if (shared) delete trimmed.committee;
-    for (const key of drop) delete trimmed[key];
-    return trimmed;
-  });
+  const page: TrimmedSchedulePage = { results };
+  const hoisted = options.hoistCommittee && namesOneCommittee(results);
+  if (hoisted) page.committee = liftPrevailing(results, COMMITTEES.field);
 
-  return shared ? { results, committee: shared } : { results };
+  for (const spec of options.collect ?? []) {
+    if (hoisted && spec.field === COMMITTEES.field) continue;
+    const map = collectRecords(results, spec);
+    if (map) page[spec.mapKey] = map;
+  }
+  return page;
 }
 
 /** Reusable output field for the hoisted committee. */
@@ -98,167 +214,107 @@ export const HoistedCommitteeSchema = z
   .looseObject({})
   .optional()
   .describe(
-    'The committee every row in this response belongs to, carried once instead of repeated in each row. Present only when the query was scoped to a single committee_id; otherwise each row keeps its own committee object.',
+    "The committee every row in this response belongs to, carried once in full instead of repeated in each row. Present only when the query was scoped to a single committee_id. A row whose committee record differs from this one — the same committee's record for another cycle — keeps its own.",
   );
 
 /**
- * The two parts every committee rendering shares: a `NAME (ID)` title and one
- * attribute line (type, designation, party, state, treasurer), empty when
- * upstream recorded none of them.
+ * Reusable output field for a page-level committee map. Each tool overrides the
+ * description to name the row field and ID it collects.
  */
-function summarizeCommittee(committee: Record<string, unknown>): { title: string; detail: string } {
-  const name = committee.name ?? committee.committee_id ?? 'Unknown';
-  const id = committee.committee_id ? ` (${String(committee.committee_id)})` : '';
-  const detail = [
-    committee.committee_type_full,
-    committee.designation_full,
-    committee.party_full,
-    committee.state,
-    committee.treasurer_name ? `Treasurer: ${String(committee.treasurer_name)}` : undefined,
-  ]
-    .filter((v) => typeof v === 'string' && v !== '')
-    .join(' · ');
-  return { title: `${String(name)}${id}`, detail };
+export const CommitteeMapSchema = z
+  .record(
+    z.string().describe('The committee ID the rows carry.'),
+    z
+      .looseObject({})
+      .describe(
+        'The committee record as OpenFEC files it for the cycle: name, type, designation, party, address, treasurer, filing frequency, file dates, and the cycles it was active.',
+      ),
+  )
+  .optional()
+  .describe(
+    "Committee records the rows reference, keyed by the ID each row carries: every distinct committee once, in full, instead of a copy on each row. A row whose record differs from its ID's entry (another cycle's record for the same committee) keeps its own. Absent when no row carries one.",
+  );
+
+/** Keys a committee title already shows. */
+const TITLE_KEYS: ReadonlySet<string> = new Set(['name', 'committee_id']);
+
+/** `NAME (ID)`, or whichever of the two the record has. */
+function committeeTitle(committee: Row): string {
+  const name = committee.name == null ? undefined : String(committee.name);
+  const id = committee.committee_id == null ? undefined : String(committee.committee_id);
+  if (name !== undefined && id !== undefined) return `${name} (${id})`;
+  return name ?? id ?? 'Unknown';
 }
 
-/** Render the hoisted committee as a short header block for format(). */
-export function formatHoistedCommittee(committee: Record<string, unknown> | undefined): string[] {
+/** A title line followed by every other non-empty field of the record. */
+function committeeBlock(title: string, committee: Row): string {
+  const fields = renderRecord(committee, TITLE_KEYS);
+  return fields ? `${title}\n${fields}` : title;
+}
+
+/** Render the hoisted committee in full — its name and ID, then every other field — for format(). */
+export function formatHoistedCommittee(committee: Row | undefined): string[] {
   if (!committee) return [];
-  const { title, detail } = summarizeCommittee(committee);
-  const header = `**Committee (applies to every row below):** ${title}`;
-  return detail ? [`${header}\n  ${detail}`] : [header];
+  return [
+    committeeBlock(
+      `**Committee (applies to every row below):** ${committeeTitle(committee)}`,
+      committee,
+    ),
+  ];
 }
 
 /**
- * Render a committee record left nested in a row — the spender on a page that
- * spans several committees, or a donor or recipient that is itself a
- * committee — as its title plus one attribute line, a `renderRecord` field
- * renderer. A value that is not a committee record is declined, so it takes
- * the generic rendering. The full record stays on `structuredContent`; the
- * text surface carries what tells the rows apart.
+ * Render each committee map the page carries: a heading naming the ID that
+ * points into it, then every entry once, in full. Rendered after the rows that
+ * reference them.
  */
-export const formatRowCommittee: RecordFieldRenderer = (committee) => {
-  if (!isRecord(committee)) return null;
-  const { title, detail } = summarizeCommittee(committee);
-  return detail ? `${title}\n    ${detail}` : title;
+export function formatCommitteeMaps(page: CommitteeMaps): string[] {
+  return MAP_SPECS.flatMap((spec) => {
+    const map = page[spec.mapKey];
+    if (!map) return [];
+    return [
+      `**${spec.label} referenced above** — each row's ${spec.idKey} names its entry:`,
+      ...Object.values(map).map((record) =>
+        committeeBlock(`**${committeeTitle(record)}**`, record),
+      ),
+    ];
+  });
+}
+
+/**
+ * A committee record left on its row renders in full as a block under its key,
+ * never as a JSON dump. A value that is not a record is declined, so it takes
+ * the generic rendering.
+ */
+const renderRowCommittee: RecordFieldRenderer = (value) => {
+  if (!isRecord(value)) return null;
+  const fields = renderRecord(value, TITLE_KEYS);
+  const nested = fields
+    ? `\n${fields
+        .split('\n')
+        .map((line) => `  ${line}`)
+        .join('\n')}`
+    : '';
+  return `\n    ${committeeTitle(value)}${nested}`;
 };
 
-/* ------------------------------------------------------------------ */
-/*  Page-size budget                                                  */
-/* ------------------------------------------------------------------ */
-
 /**
- * Bytes each response surface — `structuredContent` and `content[]`,
- * independently — is sized to stay under at a tool's largest effective page.
+ * `renderRecord` field renderers for a schedule row: each flat ID with a map
+ * entry names the committee it points to (`C00003418 (NAME)`), so the row says
+ * whose it is without repeating the record, and a committee record still on the
+ * row renders in full.
  */
-export const RESPONSE_BUDGET_BYTES = 100_000;
-
-const utf8 = new TextEncoder();
-
-/** UTF-8 byte length of `text` — the unit {@link RESPONSE_BUDGET_BYTES} is counted in. */
-export const utf8Bytes = (text: string): number => utf8.encode(text).length;
-
-/**
- * An upper bound on the `content[]` bytes the framework's enrichment trailer
- * adds for these rendered field lines: the block it opens with a blank line,
- * the separator a reader joining text blocks inserts, and at most a blank line
- * between fields.
- */
-export const enrichmentTrailerBytes = (lines: readonly string[]): number =>
-  lines.reduce((sum, line) => sum + utf8Bytes(line) + 2, 3);
-
-/**
- * The largest `per_page` each high-volume tool sends upstream, per scope. Each
- * is the largest multiple of 5 for which a page of the heaviest row measured
- * live in that scope stays within {@link RESPONSE_BUDGET_BYTES} on both
- * surfaces, and a page at the heaviest measured per-row average stays within
- * 90% of it. The schema-declared `per_page` maximum stays 100 — the cap lowers
- * only what is requested upstream, so no fetched row is ever discarded.
- * Measurements and method: docs/design.md, decision 16.
- */
-export const PER_PAGE_CAPS = {
-  /** Always one receiving committee; donor-as-committee rows carry a ~1KB contributor record. */
-  contributions: 30,
-  /** Always one spending committee; transfer rows carry a ~1KB recipient_committee record. */
-  disbursements: 30,
-  expenditures: { committeeScoped: 60, perRowCommittee: 30 },
-  coordinatedExpenditures: { committeeScoped: 80, perRowCommittee: 25 },
-  filings: 65,
-  /**
-   * With totals, one candidate brings one totals row per cycle it filed in —
-   * one row when the totals are scoped to a cycle or election year, up to
-   * twenty across every cycle for a long-serving incumbent.
-   */
-  candidatesWithTotals: { oneCycle: 35, allCycles: 5 },
-} as const;
-
-/**
- * Enrichment fields that disclose a page the cap bounded below the caller's
- * `per_page`. Spread into a tool's `enrichment` block; populated by
- * {@link disclosePageBound}.
- */
-export const PageBoundEnrichment = {
-  truncated: z
-    .boolean()
-    .optional()
-    .describe(
-      'True when this page holds fewer rows than the per_page requested because a full page would exceed the 100,000-byte response budget, and more rows remain. Absent on a complete page, including a naturally short last page.',
-    ),
-  shown: z.number().optional().describe('Rows in this page. Present only when truncated is true.'),
-  cap: z
-    .number()
-    .optional()
-    .describe(
-      'The per_page this call applied in place of the one requested — the page-size ceiling for this tool and scope. Present only when truncated is true.',
-    ),
-};
-
-/** `content[]` trailer labels for {@link PageBoundEnrichment} — `enrichmentTrailer` on each tool. */
-export const PageBoundTrailer = {
-  truncated: { label: 'Page bounded below per_page requested' },
-  shown: { label: 'Rows in this page' },
-  cap: { label: 'per_page applied' },
-};
-
-/** How the tool paginates, carrying the upstream state that says whether rows remain. */
-export type PageContinuation =
-  | { kind: 'cursor'; nextCursor: string | null }
-  | { kind: 'page'; pagination: { page: number; pages: number } };
-
-/**
- * Disclose a page the `per_page` cap bounded below the caller's request —
- * `truncated`, `shown`, `cap`, and a notice naming the continuation — when rows
- * remain past it. A page the cap did not bound, and a last page, disclose
- * nothing: those are complete. Call it after any other notice the response
- * sets; an estimated total is restated here since notices are last-wins.
- */
-export function disclosePageBound(
-  ctx: Context,
-  bound: {
-    /** The per_page the caller asked for. */
-    requested: number;
-    /** The per_page sent upstream. */
-    applied: number;
-    /** Rows in the page. */
-    shown: number;
-    continuation: PageContinuation;
-    /** Whether upstream reported the total as an estimate. */
-    approximate?: boolean;
-  },
-): void {
-  const { continuation } = bound;
-  const hasMore =
-    continuation.kind === 'cursor'
-      ? continuation.nextCursor !== null
-      : continuation.pagination.page < continuation.pagination.pages;
-  if (bound.applied >= bound.requested || !hasMore) return;
-  const next =
-    continuation.kind === 'cursor'
-      ? 'Pass next_cursor to continue.'
-      : `Pages are counted at per_page ${bound.applied}, as pagination.per_page reports: request page ${continuation.pagination.page + 1} to continue.`;
-  const guidance = [
-    `Page bounded to ${bound.applied} rows, below the ${bound.requested} requested: a full page from this tool and scope would exceed the 100,000-byte response budget. ${next} Nothing is skipped.`,
-    ...(bound.approximate ? [APPROXIMATE_COUNT_NOTICE] : []),
-  ].join(' ');
-  ctx.enrich.truncated({ shown: bound.shown, cap: bound.applied, guidance });
+export function committeeRenderers(page: CommitteeMaps): Record<string, RecordFieldRenderer> {
+  const renderers: Record<string, RecordFieldRenderer> = {};
+  for (const spec of MAP_SPECS) {
+    renderers[spec.field] = renderRowCommittee;
+    const map = page[spec.mapKey];
+    if (!map) continue;
+    renderers[spec.idKey] = (id) => {
+      if (typeof id !== 'string' || !Object.hasOwn(map, id)) return null;
+      const name = map[id]?.name;
+      return name == null ? null : `${id} (${String(name)})`;
+    };
+  }
+  return renderers;
 }

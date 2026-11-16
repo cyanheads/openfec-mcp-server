@@ -12,9 +12,9 @@ import {
   getOpenFecService,
 } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { validateStateCode } from './utils/code-validators.js';
 import { currentCycle } from './utils/election-cycle.js';
 import {
-  APPROXIMATE_COUNT_NOTICE,
   approximateCount,
   buildSearchCriteria,
   describeExhaustedPosition,
@@ -24,21 +24,22 @@ import {
   formatEmptyResult,
   formatExhaustedResult,
   formatSearchCriteria,
+  itemizedPageNotice,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   toPagination,
 } from './utils/format-helpers.js';
 import { validateCommitteeId } from './utils/id-validators.js';
-import { validateRange } from './utils/range-validators.js';
+import { validateScheduleRanges } from './utils/range-validators.js';
+import { markRowKinds } from './utils/row-kinds.js';
 import {
-  disclosePageBound,
+  CommitteeMapSchema,
+  committeeRenderers,
+  formatCommitteeMaps,
   formatHoistedCommittee,
-  formatRowCommittee,
   HoistedCommitteeSchema,
-  PageBoundEnrichment,
-  PageBoundTrailer,
-  PER_PAGE_CAPS,
+  RECIPIENT_COMMITTEES,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -168,15 +169,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .describe(
         'Page number (1-indexed) for aggregate modes. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for aggregates.',
       ),
-    per_page: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe(
-        `Results per page. Itemized mode sends at most ${PER_PAGE_CAPS.disbursements} upstream, keeping the response under a 100,000-byte budget; a page bounded below your request reports truncated and cap, and next_cursor continues it.`,
-      ),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
@@ -191,7 +184,7 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         z
           .looseObject({})
           .describe(
-            'Itemized disbursement record (mode=itemized) or aggregate row (mode=by_purpose, by_recipient, by_recipient_id).',
+            'Itemized disbursement record (mode=itemized) or aggregate row (mode=by_purpose, by_recipient, by_recipient_id). An itemized row with memo_code "X" (memoed_subtotal: true) is a memo entry: it itemizes another row, named by back_reference_transaction_id when filed, or restates earlier activity, and FEC leaves it out of report totals — never add it to the other rows. A row paying a registered committee names it by recipient_committee_id; its record is in recipient_committees. Aggregate rows carry memo_count and memo_total beside count and total: the bucket\'s memo entries, which count and total already exclude — never add memo_total to total.',
           ),
       )
       .describe(
@@ -203,6 +196,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         'Query mode as the server resolved it. Row shapes differ by mode — itemized rows are individual payments, aggregate rows are buckets with a total — so read this rather than inferring the shape from the fields present.',
       ),
     committee: HoistedCommitteeSchema,
+    recipient_committees: CommitteeMapSchema.describe(
+      "Committee records for the itemized rows that pay a registered committee (committee-to-committee transfers), keyed by the recipient_committee_id each such row carries: every distinct recipient once, in full, instead of a copy on each row. A row whose record differs from its ID's entry keeps its own. Absent when no row on the page pays a committee.",
+    ),
     next_cursor: z
       .string()
       .nullable()
@@ -234,11 +230,9 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when disbursements did match, that the total is an estimate, or that the page was bounded below the per_page requested and how to continue.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when disbursements did match, that the total is an estimate, or how many rows on the page are memo entries not to be added to the rest. Every applicable sentence is joined into this one notice.',
       ),
-    ...PageBoundEnrichment,
   },
-  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     const fec = getOpenFecService();
@@ -258,20 +252,14 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         });
       }
 
-      validateRange({
-        minField: 'min_date',
-        minValue: input.min_date,
-        maxField: 'max_date',
-        maxValue: input.max_date,
-        valueType: 'date',
-      });
-      validateRange({
-        minField: 'min_amount',
-        minValue: input.min_amount,
-        maxField: 'max_amount',
-        maxValue: input.max_amount,
-        valueType: 'number',
-      });
+      validateScheduleRanges(input);
+      /** `/schedules/schedule_b/` reads a leading `-` as exclude, and `other` as foreign, invalid, or missing states. */
+      if (input.recipient_state) {
+        validateStateCode('recipient_state', input.recipient_state, {
+          exclusion: true,
+          other: true,
+        });
+      }
 
       const cycle = input.cycle ?? currentCycle();
       /**
@@ -280,12 +268,10 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
        * identity are both built from the effective values, not the raw input.
        */
       const applied = { ...input, cycle };
-      /** Lowered upstream, never trimmed after the fetch, so the keyset cursor stays exact. */
-      const perPage = Math.min(input.per_page, PER_PAGE_CAPS.disbursements);
       const params: FecParams = {
         committee_id: input.committee_id,
         two_year_transaction_period: cycle,
-        per_page: perPage,
+        per_page: input.per_page,
       };
 
       if (input.recipient_name) params.recipient_name = input.recipient_name;
@@ -316,32 +302,30 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
         returned: result.results.length,
       });
 
-      ctx.enrich.total(result.pagination.count);
-      if (result.results.length === 0) {
-        ctx.enrich.notice(
-          result.pagination.count > 0
-            ? describeExhaustedPosition({ kind: 'cursor', count: result.pagination.count })
-            : 'No itemized disbursements matched. Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
-        );
-      } else if (result.pagination.is_count_exact === false) {
-        ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
-      }
-      disclosePageBound(ctx, {
-        requested: input.per_page,
-        applied: perPage,
-        shown: result.results.length,
-        continuation: { kind: 'cursor', nextCursor: result.nextCursor },
-        approximate: result.pagination.is_count_exact === false,
-      });
-
-      /** committee_id is required here, so every row carries the same committee. */
+      /**
+       * committee_id is required here, so every row carries the same committee.
+       * A transfer row also carries its recipient's committee record, which
+       * moves into the page's recipient_committees map.
+       */
       const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
         hoistCommittee: true,
+        collect: [RECIPIENT_COMMITTEES],
       });
+
+      ctx.enrich.total(result.pagination.count);
+      const notice = itemizedPageNotice(
+        result.pagination,
+        trimmed.results,
+        'No itemized disbursements matched. Try a different cycle, broaden name/description filters, or look up the committee by name with openfec_search_committees.',
+      );
+      if (notice) ctx.enrich.notice(notice);
 
       return {
         results: trimmed.results,
         ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+        ...(trimmed.recipient_committees
+          ? { recipient_committees: trimmed.recipient_committees }
+          : {}),
         mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
@@ -428,12 +412,12 @@ export const searchDisbursements = tool('openfec_search_disbursements', {
           `**${fmtTotal(result.count, result.count_is_approximate, 'total disbursements')}**\n`,
         );
       }
+      const renderers = committeeRenderers(result);
       for (const r of result.results) {
-        const name = String(r.recipient_name ?? 'Unknown');
-        lines.push(
-          `**${name}**\n${renderRecord(r, new Set(['recipient_name']), { recipient_committee: formatRowCommittee })}`,
-        );
+        const header = markRowKinds(`**${String(r.recipient_name ?? 'Unknown')}**`, r);
+        lines.push(`${header}\n${renderRecord(r, new Set(['recipient_name']), renderers)}`);
       }
+      lines.push(...formatCommitteeMaps(result));
       if (result.next_cursor) {
         lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);
       }

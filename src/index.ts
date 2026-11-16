@@ -19,7 +19,7 @@ await createApp({
   prompts: allPromptDefinitions,
   skills: 'skills',
   instructions:
-    'Use the openfec_* tools for US federal campaign finance data: candidates, committees, contributions (Schedule A), disbursements (Schedule B), independent expenditures (Schedule E), filings, elections, calendar, and legal documents. Candidate IDs use H/S/P prefixes (House/Senate/President); committee IDs use C. Cycles are even-year integers covering the prior 2 years (2024 = Jan 2023 – Dec 2024). Itemized contributions and disbursements scope to committee_id, not candidate_id.',
+    'Use the openfec_* tools for US federal campaign finance data: candidates, committees, contributions (Schedule A), disbursements (Schedule B), independent expenditures (Schedule E), filings, elections, calendar, and legal documents. Candidate IDs use H/S/P prefixes (House/Senate/President); committee IDs use C. Cycles are even-year integers covering the prior 2 years (2024 = Jan 2023 – Dec 2024). Itemized disbursements scope to committee_id, not candidate_id; itemized contributions scope to the recipient committee_id or a donor (contributor_id, contributor_name, or contributor_employer), never candidate_id.',
   landing: {
     // Public hosted catalog — serve full tool/resource/prompt inventory without auth
     requireAuth: false,

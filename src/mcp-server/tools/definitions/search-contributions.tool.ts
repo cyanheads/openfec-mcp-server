@@ -13,6 +13,7 @@ import {
   getOpenFecService,
 } from '@/services/openfec/openfec-service.js';
 import type { FecParams } from '@/services/openfec/types.js';
+import { validateStateCode } from './utils/code-validators.js';
 import { currentCycle } from './utils/election-cycle.js';
 import {
   APPROXIMATE_COUNT_NOTICE,
@@ -25,21 +26,23 @@ import {
   formatEmptyResult,
   formatExhaustedResult,
   formatSearchCriteria,
+  itemizedPageNotice,
   PaginationSchema,
   renderRecord,
   SearchCriteriaSchema,
   toPagination,
 } from './utils/format-helpers.js';
 import { validateCandidateId, validateCommitteeId } from './utils/id-validators.js';
-import { validateRange } from './utils/range-validators.js';
+import { validateScheduleRanges } from './utils/range-validators.js';
+import { markRowKinds } from './utils/row-kinds.js';
 import {
-  disclosePageBound,
+  COMMITTEES,
+  CONTRIBUTOR_COMMITTEES,
+  CommitteeMapSchema,
+  committeeRenderers,
+  formatCommitteeMaps,
   formatHoistedCommittee,
-  formatRowCommittee,
   HoistedCommitteeSchema,
-  PageBoundEnrichment,
-  PageBoundTrailer,
-  PER_PAGE_CAPS,
   trimScheduleRows,
 } from './utils/trim-schedule-row.js';
 
@@ -59,6 +62,7 @@ type ResolvedMode = (typeof resolvedModes)[number];
  * an unnarrowed result set that looks like an answer to the narrowed question.
  */
 const ITEMIZED_ONLY_INPUTS = [
+  'contributor_id',
   'contributor_name',
   'contributor_employer',
   'contributor_occupation',
@@ -79,6 +83,7 @@ const AGGREGATE_INPUTS = 'committee_id, candidate_id, cycle, mode, page, per_pag
 const ITEMIZED_INPUTS = [
   'mode',
   'committee_id',
+  'contributor_id',
   'contributor_name',
   'contributor_employer',
   'contributor_occupation',
@@ -96,18 +101,65 @@ const ITEMIZED_INPUTS = [
   'cursor',
 ] as const;
 
+/**
+ * Inputs that each scope an itemized search on their own: the recipient, or
+ * the donor by ID, name, or employer. Occupation, place, date, and amount
+ * filters describe a population rather than a giver, so they only narrow.
+ */
+const ITEMIZED_SCOPES = [
+  'committee_id',
+  'contributor_id',
+  'contributor_name',
+  'contributor_employer',
+] as const;
+
+/**
+ * Sent on the `_candidate` aggregate variants, whose upstream default is the
+ * same value: the full election period ending in `cycle`. Sending and echoing
+ * it keeps the criteria echo from naming only the two-year cycle.
+ */
+const CANDIDATE_AGGREGATE_ELECTION_FULL = true;
+
+const UNSCOPED_AGGREGATE_NOTICE =
+  "Without committee_id or candidate_id, each row is one committee's bucket for one cycle, across every committee on file, not a combined breakdown. Pass committee_id or candidate_id to break down one committee or candidate.";
+
+/**
+ * Dollar range of each Schedule A size bucket, keyed by the floor OpenFEC
+ * returns as `size`. Bucket 0 folds in unitemized individual contributions on
+ * both the committee and the candidate endpoints, which is why its count is null.
+ */
+const SIZE_RANGES = new Map<number, string>([
+  [0, '$200 and under (includes unitemized)'],
+  [200, '$200.01 to $499.99'],
+  [500, '$500 to $999.99'],
+  [1000, '$1,000 to $1,999.99'],
+  [2000, '$2,000 and over'],
+]);
+
+/** Insert `size_range` right after `size`; a floor outside the five buckets stays unlabeled. */
+function labelSizeBucket(row: Record<string, unknown>): Record<string, unknown> {
+  const range = typeof row.size === 'number' ? SIZE_RANGES.get(row.size) : undefined;
+  if (range === undefined) return row;
+  const labeled: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    labeled[key] = value;
+    if (key === 'size') labeled.size_range = range;
+  }
+  return labeled;
+}
+
 export const searchContributions = tool('openfec_search_contributions', {
   description:
-    'Search itemized individual contributions (Schedule A) or get aggregate breakdowns by size, state, employer, or occupation. Use to answer "who is funding this committee?" Itemized mode requires a committee_id. Aggregate by_size/by_state can use candidate_id instead.',
+    'Search itemized contributions (Schedule A) or get aggregate breakdowns by size, state, employer, or occupation. Use to answer "who is funding this committee?" or "where has this donor given?" Itemized mode needs a recipient committee_id or a donor: contributor_id, contributor_name, or contributor_employer. Aggregate by_size/by_state can use candidate_id instead of committee_id.',
   annotations: { readOnlyHint: true, idempotentHint: true },
 
   errors: [
     {
-      reason: 'itemized_requires_committee_id',
+      reason: 'itemized_requires_scope',
       code: JsonRpcErrorCode.ValidationError,
-      when: 'Itemized mode invoked without a committee_id',
+      when: 'Itemized mode invoked without committee_id, contributor_id, contributor_name, or contributor_employer',
       recovery:
-        "Provide a committee_id, switch to a by_size or by_state aggregate mode with candidate_id, or look up the candidate's committee with openfec_search_committees.",
+        'Provide the recipient committee_id or a donor scope (contributor_id, contributor_name, or contributor_employer). Occupation, city, state, ZIP, date, and amount filters narrow a scoped search but cannot scope one; for a breakdown across contributors use a by_size or by_state aggregate mode.',
     },
     {
       reason: 'aggregate_requires_committee_id',
@@ -120,7 +172,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       reason: 'itemized_only_filters_in_aggregate_mode',
       code: JsonRpcErrorCode.ValidationError,
       when: 'An itemized-only filter was supplied alongside an aggregate mode, which cannot apply it',
-      recovery: `Re-run with mode "itemized" (requires committee_id) to filter by contributor, date range, or amount, or drop the named inputs to keep the aggregate. Aggregate modes accept only ${AGGREGATE_INPUTS}.`,
+      recovery: `Re-run with mode "itemized" (scoped by committee_id or a donor) to filter by contributor, date range, or amount, or drop the named inputs to keep the aggregate. Aggregate modes accept only ${AGGREGATE_INPUTS}.`,
     },
     {
       reason: 'inputs_not_applicable_to_mode',
@@ -136,25 +188,38 @@ export const searchContributions = tool('openfec_search_contributions', {
       .enum(modes)
       .default('itemized')
       .describe(
-        'Query mode. "itemized" returns individual contribution records (keyset pagination). "by_size" aggregates by contribution size bucket. "by_state" aggregates by contributor state. "by_employer" aggregates by employer. "by_occupation" aggregates by occupation.',
+        'Query mode. "itemized" returns individual contribution records (keyset pagination). "by_size" aggregates by contribution size bucket. "by_state" aggregates by contributor state. "by_employer" aggregates by employer. "by_occupation" aggregates by occupation. Without committee_id or candidate_id, by_size and by_state return one row per committee and cycle across every committee on file, not a combined breakdown.',
       ),
     committee_id: z
       .string()
       .optional()
       .describe(
-        'Receiving committee ID (e.g., C00703975). Get IDs from openfec_search_committees results.',
+        'Receiving committee ID (e.g., C00703975). Get IDs from openfec_search_committees results. In itemized mode it scopes the search on its own or narrows a donor scope to gifts to this committee.',
       ),
     candidate_id: z
       .string()
       .optional()
       .describe(
-        'Candidate ID (e.g., P00003392). Get IDs from openfec_search_candidates results. Enables by_size and by_state aggregates without a committee_id.',
+        'Candidate ID (e.g., P00003392). Get IDs from openfec_search_candidates results. Enables by_size and by_state aggregates without a committee_id; those cover the full election period ending in cycle (4yr president, 6yr senate, 2yr house).',
       ),
-    contributor_name: z.string().optional().describe('Full-text donor name search. Itemized only.'),
+    contributor_id: z
+      .string()
+      .optional()
+      .describe(
+        'FEC committee ID of a registered donor (C + eight digits): the receipts recipients reported from it. Earmarked contributions carry the conduit ID here (e.g. ActBlue, C00401224) with the individual in contributor_name. Itemized only.',
+      ),
+    contributor_name: z
+      .string()
+      .optional()
+      .describe(
+        'Full-text donor name search. Itemized only; scopes the search on its own. Without committee_id, a common name can time out upstream — add committee_id or a more specific name.',
+      ),
     contributor_employer: z
       .string()
       .optional()
-      .describe('Full-text employer search. Itemized only.'),
+      .describe(
+        'Full-text employer search. Itemized only; scopes the search on its own. Without committee_id, an employer scan can time out upstream — add committee_id to narrow it.',
+      ),
     contributor_occupation: z
       .string()
       .optional()
@@ -172,7 +237,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       .number()
       .optional()
       .describe(
-        'Two-year election cycle (e.g., 2024). Even years only. Defaults to current cycle for itemized mode.',
+        'Two-year election cycle (e.g., 2024). Even years only. Defaults to current cycle for itemized mode and for candidate-scoped by_size/by_state, where it names the election: those totals cover the full election period ending in it (4yr president, 6yr senate, 2yr house), not this two-year cycle alone.',
       ),
     min_date: z
       .string()
@@ -215,15 +280,7 @@ export const searchContributions = tool('openfec_search_contributions', {
       .describe(
         'Page number (1-indexed) for aggregate modes. Explicit page is rejected in itemized mode, which paginates with cursor. Defaults to 1 for aggregates.',
       ),
-    per_page: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe(
-        `Results per page. Itemized mode sends at most ${PER_PAGE_CAPS.contributions} upstream, keeping the response under a 100,000-byte budget; a page bounded below your request reports truncated and cap, and next_cursor continues it.`,
-      ),
+    per_page: z.number().int().min(1).max(100).default(20).describe('Results per page.'),
     cursor: z
       .string()
       .optional()
@@ -238,7 +295,7 @@ export const searchContributions = tool('openfec_search_contributions', {
         z
           .looseObject({})
           .describe(
-            'Itemized contribution record (mode=itemized) or aggregate row (mode=by_size, by_state, by_employer, by_occupation).',
+            'Itemized contribution record (mode=itemized) or aggregate row (mode=by_size, by_state, by_employer, by_occupation). An itemized row with memo_code "X" (memoed_subtotal true) is a memo entry: it itemizes or restates another row and FEC leaves it out of report totals, so never add it to the other rows. by_size rows carry size_range, the dollar range of the size bucket; the $200-and-under bucket includes unitemized contributions, so its count is null.',
           ),
       )
       .describe(
@@ -250,6 +307,12 @@ export const searchContributions = tool('openfec_search_contributions', {
         'Query mode as the server resolved it. "by_size" and "by_state" resolve to "by_size_candidate" / "by_state_candidate" when scoped by candidate_id — a different endpoint with different row shapes — so read this rather than assuming the mode you sent.',
       ),
     committee: HoistedCommitteeSchema,
+    committees: CommitteeMapSchema.describe(
+      "Recipient committee records on an itemized page scoped by donor without committee_id, keyed by each row's committee_id: every distinct recipient once, in full. The rows' flat committee_name is null, so this is where each recipient's name lives. Absent when committee_id scoped the page (see committee) or no row carries a record.",
+    ),
+    contributor_committees: CommitteeMapSchema.describe(
+      "Donor records for donors that are themselves registered committees, keyed by each row's contributor_id: every distinct donor committee once, in full. A row whose record differs from its ID's entry keeps its own. Absent when no row carries one.",
+    ),
     next_cursor: z
       .string()
       .nullable()
@@ -281,25 +344,24 @@ export const searchContributions = tool('openfec_search_contributions', {
       .string()
       .optional()
       .describe(
-        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when contributions did match, that the total is an estimate, or that the page was bounded below the per_page requested and how to continue.',
+        'Guidance when the response needs context: how to broaden a search that matched nothing, which requested position ran out when contributions did match, that an unscoped by_size or by_state page lists per-committee buckets, that the total is an estimate, or how many rows on the page are memo entries not to sum with the rest.',
       ),
-    ...PageBoundEnrichment,
   },
-  enrichmentTrailer: PageBoundTrailer,
 
   async handler(input, ctx) {
     const fec = getOpenFecService();
     const mode = input.mode;
 
     if (input.committee_id) validateCommitteeId(input.committee_id);
+    if (input.contributor_id) validateCommitteeId(input.contributor_id, 'contributor_id');
     if (input.candidate_id) validateCandidateId(input.candidate_id);
 
     /* ---------------------------------------------------------------- */
     /*  Itemized contributions (keyset/SEEK)                            */
     /* ---------------------------------------------------------------- */
     if (mode === 'itemized') {
-      if (!input.committee_id) {
-        throw ctx.fail('itemized_requires_committee_id');
+      if (!ITEMIZED_SCOPES.some((key) => input[key]?.trim())) {
+        throw ctx.fail('itemized_requires_scope');
       }
 
       const inapplicableInputs = [
@@ -318,20 +380,14 @@ export const searchContributions = tool('openfec_search_contributions', {
         );
       }
 
-      validateRange({
-        minField: 'min_date',
-        minValue: input.min_date,
-        maxField: 'max_date',
-        maxValue: input.max_date,
-        valueType: 'date',
-      });
-      validateRange({
-        minField: 'min_amount',
-        minValue: input.min_amount,
-        maxField: 'max_amount',
-        maxValue: input.max_amount,
-        valueType: 'number',
-      });
+      validateScheduleRanges(input);
+      /** `/schedules/schedule_a/` reads a leading `-` as exclude, and `other` as foreign, invalid, or missing states. */
+      if (input.contributor_state) {
+        validateStateCode('contributor_state', input.contributor_state, {
+          exclusion: true,
+          other: true,
+        });
+      }
 
       const cycle = input.cycle ?? currentCycle();
       /**
@@ -340,14 +396,13 @@ export const searchContributions = tool('openfec_search_contributions', {
        * identity are both built from the effective values, not the raw input.
        */
       const applied = { ...input, cycle };
-      /** Lowered upstream, never trimmed after the fetch, so the keyset cursor stays exact. */
-      const perPage = Math.min(input.per_page, PER_PAGE_CAPS.contributions);
       const params: FecParams = {
-        committee_id: input.committee_id,
         two_year_transaction_period: cycle,
-        per_page: perPage,
+        per_page: input.per_page,
       };
 
+      if (input.committee_id) params.committee_id = input.committee_id;
+      if (input.contributor_id) params.contributor_id = input.contributor_id;
       if (input.contributor_name) params.contributor_name = input.contributor_name;
       if (input.contributor_employer) params.contributor_employer = input.contributor_employer;
       if (input.contributor_occupation)
@@ -369,37 +424,36 @@ export const searchContributions = tool('openfec_search_contributions', {
       const result = await fec.searchContributions(params, query, ctx, resume?.delivered);
       ctx.log.info('Itemized contributions fetched', {
         committee_id: input.committee_id,
+        contributor_id: input.contributor_id,
         cycle,
         count: result.pagination.count,
         returned: result.results.length,
       });
 
-      ctx.enrich.total(result.pagination.count);
-      if (result.results.length === 0) {
-        ctx.enrich.notice(
-          result.pagination.count > 0
-            ? describeExhaustedPosition({ kind: 'cursor', count: result.pagination.count })
-            : 'No itemized contributions matched. Try a different cycle or broaden name/employer filters.',
-        );
-      } else if (result.pagination.is_count_exact === false) {
-        ctx.enrich.notice(APPROXIMATE_COUNT_NOTICE);
-      }
-      disclosePageBound(ctx, {
-        requested: input.per_page,
-        applied: perPage,
-        shown: result.results.length,
-        continuation: { kind: 'cursor', nextCursor: result.nextCursor },
-        approximate: result.pagination.is_count_exact === false,
+      /**
+       * Only a committee_id scope pins every row to one recipient, which is
+       * hoisted; a donor scope spans recipients, which go to the `committees` map.
+       */
+      const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
+        hoistCommittee: Boolean(input.committee_id),
+        collect: [CONTRIBUTOR_COMMITTEES, COMMITTEES],
       });
 
-      /** committee_id is required here, so every row carries the same committee. */
-      const trimmed = trimScheduleRows(result.results as Record<string, unknown>[], {
-        hoistCommittee: true,
-      });
+      ctx.enrich.total(result.pagination.count);
+      const notice = itemizedPageNotice(
+        result.pagination,
+        trimmed.results,
+        'No itemized contributions matched. Try a different cycle or broaden name/employer filters.',
+      );
+      if (notice) ctx.enrich.notice(notice);
 
       return {
         results: trimmed.results,
         ...(trimmed.committee ? { committee: trimmed.committee } : {}),
+        ...(trimmed.committees ? { committees: trimmed.committees } : {}),
+        ...(trimmed.contributor_committees
+          ? { contributor_committees: trimmed.contributor_committees }
+          : {}),
         mode: 'itemized' as const,
         next_cursor: result.nextCursor,
         count: result.pagination.count,
@@ -469,8 +523,10 @@ export const searchContributions = tool('openfec_search_contributions', {
       sort: '-total',
       sort_hide_null: true,
     };
-    if (useByCandidate) params.candidate_id = input.candidate_id;
-    else if (input.committee_id) params.committee_id = input.committee_id;
+    if (useByCandidate) {
+      params.candidate_id = input.candidate_id;
+      params.election_full = CANDIDATE_AGGREGATE_ELECTION_FULL;
+    } else if (input.committee_id) params.committee_id = input.committee_id;
     if (cycle) params.cycle = cycle;
 
     const aggregateMode: ResolvedMode = useByCandidate
@@ -494,13 +550,29 @@ export const searchContributions = tool('openfec_search_contributions', {
       ctx.enrich.notice(
         'No contribution aggregates matched. Verify the committee_id or candidate_id is correct.',
       );
+    } else {
+      /** `notice` is last-wins, so every sentence this page earns goes out in one call. */
+      const notices: string[] = [];
+      if (
+        (mode === 'by_size' || mode === 'by_state') &&
+        !input.committee_id &&
+        !input.candidate_id
+      ) {
+        notices.push(UNSCOPED_AGGREGATE_NOTICE);
+      }
+      if (result.pagination.is_count_exact === false) notices.push(APPROXIMATE_COUNT_NOTICE);
+      if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
     }
 
     return {
-      results: result.results,
+      results: mode === 'by_size' ? result.results.map(labelSizeBucket) : result.results,
       mode: aggregateMode,
       pagination: toPagination(result.pagination),
-      search_criteria: buildSearchCriteria({ ...input, cycle }),
+      search_criteria: buildSearchCriteria({
+        ...input,
+        cycle,
+        ...(useByCandidate ? { election_full: CANDIDATE_AGGREGATE_ELECTION_FULL } : {}),
+      }),
     };
   },
 
@@ -529,12 +601,12 @@ export const searchContributions = tool('openfec_search_contributions', {
           `**${fmtTotal(result.count, result.count_is_approximate, 'total contributions')}**\n`,
         );
       }
+      const renderers = committeeRenderers(result);
       for (const r of result.results) {
-        const name = String(r.contributor_name ?? 'Unknown');
-        lines.push(
-          `**${name}**\n${renderRecord(r, new Set(['contributor_name']), { contributor: formatRowCommittee })}`,
-        );
+        const header = markRowKinds(`**${String(r.contributor_name ?? 'Unknown')}**`, r);
+        lines.push(`${header}\n${renderRecord(r, new Set(['contributor_name']), renderers)}`);
       }
+      lines.push(...formatCommitteeMaps(result));
       if (result.next_cursor) {
         lines.push('\n_More results available._', `next_cursor: \`${result.next_cursor}\``);
       }

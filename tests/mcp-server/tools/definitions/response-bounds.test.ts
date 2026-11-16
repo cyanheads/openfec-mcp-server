@@ -1,5 +1,6 @@
 /**
- * @fileoverview End-to-end page-bound tests for the high-volume search tools:
+ * @fileoverview End-to-end page tests for the high-volume search tools — the
+ * caller's `per_page` is the page, and every row upstream sends comes back:
  * each tool runs through its public contract (handler, format, enrichment)
  * against the real OpenFEC service, with only the upstream HTTP boundary faked.
  * The fake upstream honors `per_page`, `page`, and `last_index` the way OpenFEC
@@ -8,7 +9,6 @@
  * @module tests/mcp-server/tools/definitions/response-bounds.test
  */
 
-import { readFileSync } from 'node:fs';
 import type { CallToolResult } from '@cyanheads/mcp-ts-core';
 import {
   createFetchMock,
@@ -32,10 +32,7 @@ import { searchCoordinatedExpenditures } from '@/mcp-server/tools/definitions/se
 import { searchDisbursements } from '@/mcp-server/tools/definitions/search-disbursements.tool.js';
 import { searchExpenditures } from '@/mcp-server/tools/definitions/search-expenditures.tool.js';
 import { searchFilings } from '@/mcp-server/tools/definitions/search-filings.tool.js';
-import {
-  PER_PAGE_CAPS,
-  RESPONSE_BUDGET_BYTES,
-} from '@/mcp-server/tools/definitions/utils/trim-schedule-row.js';
+import { APPROXIMATE_COUNT_NOTICE } from '@/mcp-server/tools/definitions/utils/format-helpers.js';
 import { initOpenFecService } from '@/services/openfec/openfec-service.js';
 
 /* ------------------------------------------------------------------ */
@@ -226,10 +223,10 @@ const text = (result: CallToolResult) =>
 const rowsOf = (result: CallToolResult) => (sc(result).results ?? sc(result).candidates) as Row[];
 
 /* ------------------------------------------------------------------ */
-/*  Characterization — behavior the page bound must not change        */
+/*  Characterization — behavior the page size never changed           */
 /* ------------------------------------------------------------------ */
 
-describe('per_page within the page budget', () => {
+describe('per_page below the maximum', () => {
   it.each([
     ['openfec_search_contributions', '/schedules/schedule_a/'],
     ['openfec_search_disbursements', '/schedules/schedule_b/'],
@@ -314,7 +311,10 @@ describe('per_page within the page budget', () => {
 
     const [row] = rowsOf(result);
     expect(row).toMatchObject({ is_notice: false, expenditure_amount: 0 });
-    expect(row!.committee).toMatchObject({ is_active: true });
+    expect(row).not.toHaveProperty('committee');
+    expect((sc(result).committees as Record<string, Row>).C00000001).toMatchObject({
+      is_active: true,
+    });
     expect(text(result)).toContain('is_notice: false');
     expect(text(result)).toContain('expenditure_amount: 0');
   });
@@ -466,28 +466,37 @@ describe('null and empty fields', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/*  Effective per_page cap                                            */
+/*  The caller's per_page is the page                                 */
 /* ------------------------------------------------------------------ */
 
 type Definition = typeof searchFilings;
 
-interface KeysetScope {
+/** The largest page a caller can ask for — OpenFEC's own maximum. */
+const MAX_PER_PAGE = 100;
+
+/** The fields that once disclosed a page cut below the caller's per_page. */
+const BOUND_FIELDS = ['truncated', 'shown', 'cap'] as const;
+
+/** Text a page cut below the caller's per_page used to carry on `content[]`. */
+const BOUND_TEXT = ['100,000-byte', 'per_page applied', 'Rows in this page', 'Page bounded'];
+
+interface Scope {
   args: Record<string, unknown>;
-  cap: number;
   definition: Definition;
   label: string;
   make: (n: number) => Row[];
   path: string;
+  routes?: () => void;
 }
 
-const KEYSET_SCOPES: KeysetScope[] = [
+/** Every keyset scope that once sent upstream a per_page below the caller's. */
+const KEYSET_SCOPES: Scope[] = [
   {
     label: 'contributions',
     definition: searchContributions as unknown as Definition,
     args: { committee_id: 'C00703975', cycle: 2024 },
     path: '/schedules/schedule_a/',
     make: contributionRows,
-    cap: PER_PAGE_CAPS.contributions,
   },
   {
     label: 'disbursements',
@@ -495,7 +504,6 @@ const KEYSET_SCOPES: KeysetScope[] = [
     args: { committee_id: 'C00703975', cycle: 2024 },
     path: '/schedules/schedule_b/',
     make: disbursementRows,
-    cap: PER_PAGE_CAPS.disbursements,
   },
   {
     label: 'expenditures scoped by candidate (per-row committee)',
@@ -503,7 +511,6 @@ const KEYSET_SCOPES: KeysetScope[] = [
     args: { candidate_id: 'P80000722', cycle: 2024 },
     path: '/schedules/schedule_e/',
     make: expenditureRows,
-    cap: PER_PAGE_CAPS.expenditures.perRowCommittee,
   },
   {
     label: 'expenditures scoped by committee (hoisted committee)',
@@ -516,28 +523,17 @@ const KEYSET_SCOPES: KeysetScope[] = [
         committee_id: 'C00000001',
         committee: committeeRecord('C00000001'),
       })),
-    cap: PER_PAGE_CAPS.expenditures.committeeScoped,
   },
 ];
 
-interface PagedScope {
-  args: Record<string, unknown>;
-  cap: number;
-  definition: Definition;
-  label: string;
-  make: (n: number) => Row[];
-  path: string;
-  routes?: () => void;
-}
-
-const PAGED_SCOPES: PagedScope[] = [
+/** Every page-based scope that once sent upstream a per_page below the caller's. */
+const PAGED_SCOPES: Scope[] = [
   {
     label: 'coordinated expenditures scoped by candidate (per-row committee)',
     definition: searchCoordinatedExpenditures as unknown as Definition,
     args: { candidate_id: 'P80000722', cycle: 2024 },
     path: '/schedules/schedule_f/',
     make: coordinatedRows,
-    cap: PER_PAGE_CAPS.coordinatedExpenditures.perRowCommittee,
   },
   {
     label: 'coordinated expenditures scoped by committee (hoisted committee)',
@@ -550,7 +546,6 @@ const PAGED_SCOPES: PagedScope[] = [
         committee_id: 'C00003418',
         committee: committeeRecord('C00003418'),
       })),
-    cap: PER_PAGE_CAPS.coordinatedExpenditures.committeeScoped,
   },
   {
     label: 'filings',
@@ -558,7 +553,6 @@ const PAGED_SCOPES: PagedScope[] = [
     args: { form_type: 'F3P' },
     path: '/filings/',
     make: filingRows,
-    cap: PER_PAGE_CAPS.filings,
   },
   {
     label: 'candidates with totals for one cycle',
@@ -566,7 +560,6 @@ const PAGED_SCOPES: PagedScope[] = [
     args: { state: 'CA', office: 'H', cycle: 2024, include_totals: true },
     path: '/candidates/',
     make: candidateRows,
-    cap: PER_PAGE_CAPS.candidatesWithTotals.oneCycle,
     routes: () => http.route({ match: /\/candidates\/totals\/\?/, respond: totalsUpstream }),
   },
   {
@@ -575,7 +568,6 @@ const PAGED_SCOPES: PagedScope[] = [
     args: { office: 'S', election_year: 2024, include_totals: true },
     path: '/candidates/',
     make: candidateRows,
-    cap: PER_PAGE_CAPS.candidatesWithTotals.oneCycle,
     routes: () => http.route({ match: /\/candidates\/totals\/\?/, respond: totalsUpstream }),
   },
   {
@@ -584,7 +576,6 @@ const PAGED_SCOPES: PagedScope[] = [
     args: { state: 'CA', office: 'H', include_totals: true },
     path: '/candidates/',
     make: candidateRows,
-    cap: PER_PAGE_CAPS.candidatesWithTotals.allCycles,
     routes: () => http.route({ match: /\/candidates\/totals\/\?/, respond: totalsUpstream }),
   },
 ];
@@ -592,116 +583,107 @@ const PAGED_SCOPES: PagedScope[] = [
 /** The path regex for an endpoint's query URL, so `/candidates/` never matches `/candidates/totals/`. */
 const endpoint = (path: string) => new RegExp(`${path.replaceAll('/', '\\/')}\\?`);
 
-const enrichmentOf = (result: CallToolResult) => {
-  const { truncated, shown, cap, totalCount, notice } = sc(result);
-  return { truncated, shown, cap, totalCount, notice };
+/** Assert a page carries no page-bound disclosure on either surface. */
+const expectNoBound = (result: CallToolResult) => {
+  for (const field of BOUND_FIELDS) expect(sc(result)).not.toHaveProperty(field);
+  const rendered = text(result);
+  for (const fragment of BOUND_TEXT) expect(rendered).not.toContain(fragment);
 };
 
-describe.each(KEYSET_SCOPES)('keyset cap — $label', ({ definition, args, path, make, cap }) => {
-  it('requests the capped page size upstream and discloses the bound on both surfaces', async () => {
-    const rows = make(cap * 3 + 7);
+describe.each(KEYSET_SCOPES)('keyset page — $label', ({ definition, args, path, make }) => {
+  it('sends the per_page requested and returns every row upstream sent, on both surfaces', async () => {
+    const rows = make(MAX_PER_PAGE * 2 + 50);
     http.route({ match: endpoint(path), respond: keysetUpstream(rows) });
 
-    const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
+    const result = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
 
     expect(result.isError).toBeFalsy();
-    expect(upstreamCalls(path)[0]!.searchParams.get('per_page')).toBe(String(cap));
-    expect(rowsOf(result)).toHaveLength(cap);
+    expect(upstreamCalls(path)[0]!.searchParams.get('per_page')).toBe(String(MAX_PER_PAGE));
+    expect(rowsOf(result).map((r) => r.sub_id)).toEqual(
+      rows.slice(0, MAX_PER_PAGE).map((r) => r.sub_id),
+    );
     expect(sc(result).count).toBe(rows.length);
+    expect(sc(result).totalCount).toBe(rows.length);
     expect(sc(result).next_cursor).toEqual(expect.any(String));
-    expect(enrichmentOf(result)).toMatchObject({
-      truncated: true,
-      shown: cap,
-      cap,
-      totalCount: rows.length,
-      notice: expect.stringContaining('100,000-byte'),
-    });
-    expect(enrichmentOf(result).notice).toContain('next_cursor');
+    expect(sc(result).notice).toBeUndefined();
+    expectNoBound(result);
     const rendered = text(result);
-    expect(rendered).toContain('100,000-byte');
-    expect(rendered).toContain(`**per_page applied:** ${cap}`);
-    expect(rendered).toContain(`**Rows in this page:** ${cap}`);
-    expect(rendered).toContain(`next_cursor: \``);
-    expect(rendered).toContain(String(rows.length));
+    expect(rendered).toContain('sub_id: 0');
+    expect(rendered).toContain(`sub_id: ${MAX_PER_PAGE - 1}`);
+    expect(rendered).not.toContain(`sub_id: ${MAX_PER_PAGE}`);
+    expect(rendered).toContain(`next_cursor: \`${String(sc(result).next_cursor)}\``);
   });
 
-  it('retrieves every row exactly once by following next_cursor with the original per_page', async () => {
-    const rows = make(cap * 2 + 3);
+  it('walks every row exactly once at the requested per_page, each page resuming after the last', async () => {
+    const rows = make(MAX_PER_PAGE * 2 + 50);
     http.route({ match: endpoint(path), respond: keysetUpstream(rows) });
 
     const seen: unknown[] = [];
-    const truncatedFlags: unknown[] = [];
     let cursor: string | undefined;
     for (let call = 0; call < 10; call++) {
       const result = await runToolContract(definition, {
         ...args,
-        per_page: 100,
+        per_page: MAX_PER_PAGE,
         ...(cursor ? { cursor } : {}),
       } as never);
+      expectNoBound(result);
       seen.push(...rowsOf(result).map((r) => r.sub_id));
-      truncatedFlags.push(sc(result).truncated);
       cursor = (sc(result).next_cursor as string | null) ?? undefined;
       if (!cursor) break;
     }
 
     expect(seen).toEqual(rows.map((r) => r.sub_id));
-    // Bounded pages say so; the naturally short last page does not.
-    expect(truncatedFlags).toEqual([true, true, undefined]);
+    const calls = upstreamCalls(path);
+    expect(calls.map((u) => u.searchParams.get('per_page'))).toEqual(['100', '100', '100']);
+    expect(calls.map((u) => u.searchParams.get('last_index'))).toEqual([null, '99', '199']);
   });
 
-  it('does not report truncation for a naturally short page', async () => {
-    http.route({ match: endpoint(path), respond: keysetUpstream(make(cap - 1)) });
-
-    const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
-
-    expect(rowsOf(result)).toHaveLength(cap - 1);
-    expect(sc(result).next_cursor).toBeNull();
-    expect(sc(result).truncated).toBeUndefined();
-    expect(text(result)).not.toContain('100,000-byte');
-  });
-
-  it('does not report truncation when nothing matched', async () => {
-    http.route({ match: endpoint(path), respond: keysetUpstream([]) });
-
-    const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
-
-    expect(rowsOf(result)).toEqual([]);
-    expect(sc(result).truncated).toBeUndefined();
-    expect(text(result)).toContain('No results found.');
-    expect(text(result)).not.toContain('100,000-byte');
-  });
-
-  it('does not report truncation for a page exactly at the cap with nothing after it', async () => {
-    http.route({ match: endpoint(path), respond: keysetUpstream(make(cap)) });
-
-    const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
-
-    expect(rowsOf(result)).toHaveLength(cap);
-    expect(sc(result).next_cursor).toBeNull();
-    expect(sc(result).truncated).toBeUndefined();
-  });
-
-  it('does not report truncation for a full page that ends exactly at the last row', async () => {
-    const rows = make(cap * 2);
+  it('ends the walk on a full page that holds the last row', async () => {
+    const rows = make(MAX_PER_PAGE * 2);
     http.route({ match: endpoint(path), respond: keysetUpstream(rows) });
 
-    const first = await runToolContract(definition, { ...args, per_page: 100 } as never);
-    expect(sc(first).truncated).toBe(true);
+    const first = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
+    expect(rowsOf(first)).toHaveLength(MAX_PER_PAGE);
+    expect(sc(first).next_cursor).toEqual(expect.any(String));
 
     const second = await runToolContract(definition, {
       ...args,
-      per_page: 100,
+      per_page: MAX_PER_PAGE,
       cursor: sc(first).next_cursor,
     } as never);
 
-    expect(rowsOf(second)).toHaveLength(cap);
+    expect(rowsOf(second).map((r) => r.sub_id)).toEqual(
+      rows.slice(MAX_PER_PAGE).map((r) => r.sub_id),
+    );
     expect(sc(second).next_cursor).toBeNull();
-    expect(sc(second).truncated).toBeUndefined();
-    expect(text(second)).not.toContain('100,000-byte');
+    expect(text(second)).not.toContain('next_cursor');
+    expectNoBound(second);
   });
 
-  it('does not report truncation for a cursor that resumes past the last row', async () => {
-    const rows = make(cap);
+  it('returns a naturally short page whole, with nothing to continue', async () => {
+    const rows = make(37);
+    http.route({ match: endpoint(path), respond: keysetUpstream(rows) });
+
+    const result = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
+
+    expect(rowsOf(result).map((r) => r.sub_id)).toEqual(rows.map((r) => r.sub_id));
+    expect(sc(result).next_cursor).toBeNull();
+    expect(sc(result).notice).toBeUndefined();
+    expectNoBound(result);
+  });
+
+  it('reports an empty match as one, with no bound', async () => {
+    http.route({ match: endpoint(path), respond: keysetUpstream([]) });
+
+    const result = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
+
+    expect(rowsOf(result)).toEqual([]);
+    expect(text(result)).toContain('No results found.');
+    expectNoBound(result);
+  });
+
+  it('reports a cursor that resumes past the last row as exhausted, with no bound', async () => {
+    const rows = make(MAX_PER_PAGE);
     http.route({
       match: endpoint(path),
       respond: (request) => {
@@ -710,128 +692,120 @@ describe.each(KEYSET_SCOPES)('keyset cap — $label', ({ definition, args, path,
         return keysetUpstream(rows)(new Request(url));
       },
     });
-    const first = await runToolContract(definition, { ...args, per_page: 100 } as never);
+    const first = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
     expect(sc(first).results ?? []).toEqual([]);
 
-    expect(sc(first).truncated).toBeUndefined();
     expect(sc(first).notice).toContain('past the last matching row');
-  });
-
-  it('leaves a per_page at or below the cap untouched, even with more rows upstream', async () => {
-    http.route({ match: endpoint(path), respond: keysetUpstream(make(cap * 2)) });
-
-    const result = await runToolContract(definition, { ...args, per_page: cap } as never);
-
-    expect(upstreamCalls(path)[0]!.searchParams.get('per_page')).toBe(String(cap));
-    expect(sc(result).next_cursor).toEqual(expect.any(String));
-    expect(sc(result).truncated).toBeUndefined();
+    expectNoBound(first);
   });
 });
 
-describe.each(PAGED_SCOPES)(
-  'page-based cap — $label',
-  ({ definition, args, path, make, cap, routes }) => {
-    it('requests and echoes the capped per_page, disclosing the bound on both surfaces', async () => {
-      const rows = make(cap * 3 + 7);
-      routes?.();
-      http.route({ match: endpoint(path), respond: pagedUpstream(rows) });
+/** The field that identifies a row of each page-based scope, and how `content[]` renders it. */
+const rowKey = (path: string) => (path === '/candidates/' ? 'candidate_id' : null);
+const renderedId = (path: string, row: Row) => {
+  const key = rowKey(path);
+  if (key) return String(row[key]);
+  const last = Object.keys(row).at(-1)!;
+  return `${last}: ${String(row[last])}`;
+};
+const idOf = (path: string, row: Row) => row[rowKey(path) ?? Object.keys(row).at(-1)!];
 
-      const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
-      const pages = Math.ceil(rows.length / cap);
+describe.each(PAGED_SCOPES)('paged — $label', ({ definition, args, path, make, routes }) => {
+  it('sends and echoes the per_page requested, returning every row upstream sent on both surfaces', async () => {
+    const rows = make(MAX_PER_PAGE * 2 + 50);
+    routes?.();
+    http.route({ match: endpoint(path), respond: pagedUpstream(rows) });
 
-      expect(result.isError).toBeFalsy();
-      expect(upstreamCalls(path)[0]!.searchParams.get('per_page')).toBe(String(cap));
-      expect(rowsOf(result)).toHaveLength(cap);
-      expect(sc(result).pagination).toMatchObject({
-        page: 1,
-        pages,
-        count: rows.length,
-        per_page: cap,
-      });
-      expect(enrichmentOf(result)).toMatchObject({
-        truncated: true,
-        shown: cap,
-        cap,
-        totalCount: rows.length,
-        notice: expect.stringContaining('page 2'),
-      });
-      const rendered = text(result);
-      expect(rendered).toContain('100,000-byte');
-      expect(rendered).toContain(`**per_page applied:** ${cap}`);
-      expect(rendered).toContain(`Page 1 of ${pages} · ${rows.length} total · ${cap} per page`);
+    const result = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
+
+    expect(result.isError).toBeFalsy();
+    expect(upstreamCalls(path)[0]!.searchParams.get('per_page')).toBe(String(MAX_PER_PAGE));
+    expect(rowsOf(result).map((r) => idOf(path, r))).toEqual(
+      rows.slice(0, MAX_PER_PAGE).map((r) => idOf(path, r)),
+    );
+    expect(sc(result).pagination).toMatchObject({
+      page: 1,
+      pages: 3,
+      count: rows.length,
+      per_page: MAX_PER_PAGE,
     });
+    expect(sc(result).totalCount).toBe(rows.length);
+    expect(sc(result).notice).toBeUndefined();
+    expectNoBound(result);
+    const rendered = text(result);
+    expect(rendered).toContain(renderedId(path, rows[0]!));
+    expect(rendered).toContain(renderedId(path, rows[MAX_PER_PAGE - 1]!));
+    expect(rendered).not.toContain(renderedId(path, rows[MAX_PER_PAGE]!));
+    expect(rendered).toContain(`Page 1 of 3 · ${rows.length} total · ${MAX_PER_PAGE} per page`);
+  });
 
-    it('retrieves every row exactly once by walking pages at the echoed per_page', async () => {
-      const rows = make(cap * 2 + 3);
-      routes?.();
-      http.route({ match: endpoint(path), respond: pagedUpstream(rows) });
+  it('walks every row exactly once at the requested per_page, page 2 starting at row 101', async () => {
+    const rows = make(MAX_PER_PAGE * 2 + 50);
+    routes?.();
+    http.route({ match: endpoint(path), respond: pagedUpstream(rows) });
 
-      const key = path === '/candidates/' ? 'candidate_id' : Object.keys(rows[0]!).at(-1)!;
-      const seen: unknown[] = [];
-      const truncatedFlags: unknown[] = [];
-      for (let page = 1; page <= 10; page++) {
-        const result = await runToolContract(definition, { ...args, per_page: 100, page } as never);
-        const pagination = sc(result).pagination as { pages: number; per_page: number };
-        expect(pagination.per_page).toBe(cap);
-        seen.push(...rowsOf(result).map((r) => r[key]));
-        truncatedFlags.push(sc(result).truncated);
-        if (page >= pagination.pages) break;
-      }
-
-      expect(seen).toEqual(rows.map((r) => r[key]));
-      expect(truncatedFlags).toEqual([true, true, undefined]);
-    });
-
-    it('does not report truncation for a naturally short page', async () => {
-      routes?.();
-      http.route({ match: endpoint(path), respond: pagedUpstream(make(cap - 1)) });
-
-      const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
-
-      expect(rowsOf(result)).toHaveLength(cap - 1);
-      expect(sc(result).truncated).toBeUndefined();
-      expect(text(result)).not.toContain('100,000-byte');
-    });
-
-    it('does not report truncation when nothing matched', async () => {
-      routes?.();
-      http.route({ match: endpoint(path), respond: pagedUpstream([]) });
-
-      const result = await runToolContract(definition, { ...args, per_page: 100 } as never);
-
-      expect(rowsOf(result)).toEqual([]);
-      expect(sc(result).truncated).toBeUndefined();
-      expect(text(result)).toContain('No results found.');
-      expect(text(result)).not.toContain('100,000-byte');
-    });
-
-    it('does not report truncation for a page past the end', async () => {
-      routes?.();
-      http.route({ match: endpoint(path), respond: pagedUpstream(make(cap * 2)) });
-
+    const pages: Row[][] = [];
+    for (let page = 1; page <= 10; page++) {
       const result = await runToolContract(definition, {
         ...args,
-        per_page: 100,
-        page: 9,
+        per_page: MAX_PER_PAGE,
+        page,
       } as never);
+      expectNoBound(result);
+      const pagination = sc(result).pagination as { pages: number; per_page: number };
+      expect(pagination.per_page).toBe(MAX_PER_PAGE);
+      pages.push(rowsOf(result));
+      if (page >= pagination.pages) break;
+    }
 
-      expect(rowsOf(result)).toEqual([]);
-      expect(sc(result).truncated).toBeUndefined();
-      expect(sc(result).notice).toContain('past the last page');
-    });
+    expect(pages.flat().map((r) => idOf(path, r))).toEqual(rows.map((r) => idOf(path, r)));
+    expect(idOf(path, pages[1]![0]!)).toBe(idOf(path, rows[MAX_PER_PAGE]!));
+    expect(upstreamCalls(path).map((u) => u.searchParams.get('per_page'))).toEqual([
+      '100',
+      '100',
+      '100',
+    ]);
+  });
 
-    it('leaves a per_page at or below the cap untouched, even with more pages upstream', async () => {
-      routes?.();
-      http.route({ match: endpoint(path), respond: pagedUpstream(make(cap * 2)) });
+  it('returns a naturally short page whole', async () => {
+    const rows = make(37);
+    routes?.();
+    http.route({ match: endpoint(path), respond: pagedUpstream(rows) });
 
-      const result = await runToolContract(definition, { ...args, per_page: cap } as never);
+    const result = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
 
-      expect(upstreamCalls(path)[0]!.searchParams.get('per_page')).toBe(String(cap));
-      expect(sc(result).pagination).toMatchObject({ page: 1, pages: 2, per_page: cap });
-      expect(sc(result).truncated).toBeUndefined();
-    });
-  },
-);
+    expect(rowsOf(result).map((r) => idOf(path, r))).toEqual(rows.map((r) => idOf(path, r)));
+    expect(sc(result).pagination).toMatchObject({ page: 1, pages: 1, per_page: MAX_PER_PAGE });
+    expect(sc(result).notice).toBeUndefined();
+    expectNoBound(result);
+  });
+
+  it('reports an empty match as one, with no bound', async () => {
+    routes?.();
+    http.route({ match: endpoint(path), respond: pagedUpstream([]) });
+
+    const result = await runToolContract(definition, { ...args, per_page: MAX_PER_PAGE } as never);
+
+    expect(rowsOf(result)).toEqual([]);
+    expect(text(result)).toContain('No results found.');
+    expectNoBound(result);
+  });
+
+  it('reports a page past the end as exhausted, with no bound', async () => {
+    routes?.();
+    http.route({ match: endpoint(path), respond: pagedUpstream(make(MAX_PER_PAGE * 2)) });
+
+    const result = await runToolContract(definition, {
+      ...args,
+      per_page: MAX_PER_PAGE,
+      page: 9,
+    } as never);
+
+    expect(rowsOf(result)).toEqual([]);
+    expect(sc(result).notice).toContain('past the last page');
+    expectNoBound(result);
+  });
+});
 
 describe('per_page schema bounds', () => {
   it.each([
@@ -850,18 +824,18 @@ describe('per_page schema bounds', () => {
   });
 });
 
-describe('scopes the cap does not apply to', () => {
-  it('does not cap a candidate search without totals', async () => {
+describe('scopes that never cut a page', () => {
+  it('sends a candidate search without totals at the per_page requested', async () => {
     http.route({ match: endpoint('/candidates/'), respond: pagedUpstream(candidateRows(150)) });
 
     const result = await runToolContract(searchCandidates, { state: 'CA', per_page: 100 });
 
     expect(upstreamCalls('/candidates/')[0]!.searchParams.get('per_page')).toBe('100');
     expect(rowsOf(result)).toHaveLength(100);
-    expect(sc(result).truncated).toBeUndefined();
+    expectNoBound(result);
   });
 
-  it('does not cap an aggregate mode', async () => {
+  it('sends an aggregate mode at the per_page requested', async () => {
     http.route({
       match: endpoint('/schedules/schedule_e/by_candidate/'),
       respond: pagedUpstream(range(150).map((i) => ({ candidate_id: `P${i}`, total: i }))),
@@ -876,11 +850,13 @@ describe('scopes the cap does not apply to', () => {
     expect(
       upstreamCalls('/schedules/schedule_e/by_candidate/')[0]!.searchParams.get('per_page'),
     ).toBe('100');
-    expect(sc(result).truncated).toBeUndefined();
+    expectNoBound(result);
   });
+});
 
-  it('marks an estimated total alongside the bound rather than replacing either notice', async () => {
-    const rows = contributionRows(PER_PAGE_CAPS.contributions * 2);
+describe('an estimated total on a full page', () => {
+  it('carries the estimate notice alone on both surfaces', async () => {
+    const rows = contributionRows(MAX_PER_PAGE * 2);
     http.route({
       match: endpoint('/schedules/schedule_a/'),
       respond: async (request) => {
@@ -895,165 +871,275 @@ describe('scopes the cap does not apply to', () => {
     const result = await runToolContract(searchContributions, {
       committee_id: 'C00703975',
       cycle: 2024,
-      per_page: 100,
+      per_page: MAX_PER_PAGE,
     });
 
-    expect(sc(result).truncated).toBe(true);
-    expect(sc(result).notice).toContain('100,000-byte');
-    expect(sc(result).notice).toContain('upstream estimate');
+    expect(rowsOf(result)).toHaveLength(MAX_PER_PAGE);
+    expect(sc(result).notice).toBe(APPROXIMATE_COUNT_NOTICE);
+    expect(text(result)).toContain(APPROXIMATE_COUNT_NOTICE);
+    expectNoBound(result);
   });
 });
 
 /* ------------------------------------------------------------------ */
-/*  Byte budget at the cap, from the heaviest live rows               */
+/*  Committee records once per page                                   */
+/* ------------------------------------------------------------------ */
+
+/** `committeeRecord(id)` as both surfaces carry it: every populated field, no null or empty one. */
+const populatedCommittee = (id: string): Row => ({
+  committee_id: id,
+  name: `COMMITTEE ${id}`,
+  committee_type_full: 'Super PAC (Independent Expenditure-Only)',
+  designation_full: 'Unauthorized',
+  state: 'DC',
+  treasurer_name: 'ROE, RICHARD',
+  cycles: [2022, 2024],
+  is_active: true,
+});
+
+/** Assert `rendered` carries every field of `record` once, in full, under its `**NAME (ID)**` title. */
+const expectRenderedOnce = (rendered: string, record: Row) => {
+  const title = `**${String(record.name)} (${String(record.committee_id)})**`;
+  expect(rendered.split(title)).toHaveLength(2);
+  const block = rendered.slice(rendered.indexOf(title)).split('\n\n')[0]!;
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'name' || key === 'committee_id') continue;
+    expect(block).toContain(`  ${key}: ${Array.isArray(value) ? value.join(', ') : String(value)}`);
+  }
+};
+
+const memoSentence = (n: number, m: number) =>
+  `${n} of ${m} rows on this page are memo entries (memo_code "X"): each itemizes another row, named by back_reference_transaction_id when filed, or restates earlier activity, and FEC leaves memo entries out of report totals. Do not add them to the other rows.`;
+
+describe('committee records once per page', () => {
+  it('carries each coordinated spender once in committees, in full on both surfaces', async () => {
+    const rows = coordinatedRows(MAX_PER_PAGE);
+    http.route({ match: endpoint('/schedules/schedule_f/'), respond: pagedUpstream(rows) });
+
+    const result = await runToolContract(searchCoordinatedExpenditures, {
+      candidate_id: 'P80000722',
+      cycle: 2024,
+      per_page: MAX_PER_PAGE,
+    });
+
+    const structured = sc(result);
+    expect(structured).not.toHaveProperty('committee');
+    expect(structured.committees).toEqual({
+      C00003418: populatedCommittee('C00003418'),
+      C00010603: populatedCommittee('C00010603'),
+    });
+    for (const row of rowsOf(result)) expect(row).not.toHaveProperty('committee');
+    expect(rowsOf(result).map((r) => r.sub_id)).toEqual(rows.map((r) => r.sub_id));
+
+    const rendered = text(result);
+    expect(rendered).not.toContain('{"');
+    expectRenderedOnce(rendered, populatedCommittee('C00003418'));
+    expectRenderedOnce(rendered, populatedCommittee('C00010603'));
+    expect(rendered.split('  committee_id: C00003418 (COMMITTEE C00003418)')).toHaveLength(51);
+    expect(rendered.split('  committee_id: C00010603 (COMMITTEE C00010603)')).toHaveLength(51);
+  });
+
+  it('keeps the single-committee hoist on a coordinated page scoped to one committee', async () => {
+    const rows = coordinatedRows(3).map((r) => ({
+      ...r,
+      committee_id: 'C00003418',
+      committee: committeeRecord('C00003418'),
+    }));
+    http.route({ match: endpoint('/schedules/schedule_f/'), respond: pagedUpstream(rows) });
+
+    const result = await runToolContract(searchCoordinatedExpenditures, {
+      committee_id: 'C00003418',
+    });
+
+    expect(sc(result).committee).toEqual(populatedCommittee('C00003418'));
+    expect(sc(result)).not.toHaveProperty('committees');
+    const rendered = text(result);
+    expect(rendered).toContain(
+      '**Committee (applies to every row below):** COMMITTEE C00003418 (C00003418)\n  committee_type_full: Super PAC (Independent Expenditure-Only)',
+    );
+    expect(rendered).toContain('  cycles: 2022, 2024');
+  });
+
+  it('carries each transfer recipient once in recipient_committees, in full on both surfaces', async () => {
+    const rows = disbursementRows(30).map((r, i) =>
+      i % 10 === 0
+        ? {
+            ...r,
+            recipient_committee_id: 'C00114439',
+            recipient_committee: committeeRecord('C00114439'),
+          }
+        : r,
+    );
+    http.route({ match: endpoint('/schedules/schedule_b/'), respond: keysetUpstream(rows) });
+
+    const result = await runToolContract(searchDisbursements, {
+      committee_id: 'C00703975',
+      cycle: 2024,
+      per_page: 30,
+    });
+
+    const structured = sc(result);
+    expect(structured.committee).toEqual(populatedCommittee('C00703975'));
+    expect(structured.recipient_committees).toEqual({ C00114439: populatedCommittee('C00114439') });
+    expect(emptyPaths(structured.recipient_committees)).toEqual([]);
+    for (const row of rowsOf(result)) expect(row).not.toHaveProperty('recipient_committee');
+
+    const rendered = text(result);
+    expect(rendered).not.toContain('{"');
+    expectRenderedOnce(rendered, populatedCommittee('C00114439'));
+    expect(
+      rendered.split('  recipient_committee_id: C00114439 (COMMITTEE C00114439)'),
+    ).toHaveLength(4);
+  });
+
+  it('omits recipient_committees from a page with no committee payee', async () => {
+    http.route({
+      match: endpoint('/schedules/schedule_b/'),
+      respond: keysetUpstream(disbursementRows(5)),
+    });
+
+    const result = await runToolContract(searchDisbursements, {
+      committee_id: 'C00703975',
+      cycle: 2024,
+    });
+
+    expect(sc(result)).not.toHaveProperty('recipient_committees');
+    expect(text(result)).not.toContain('referenced above');
+  });
+});
+
+describe('memo entries among other rows', () => {
+  it('labels the memo rows of a coordinated page on both surfaces without dropping one', async () => {
+    const rows = coordinatedRows(25).map((r, i) => (i < 12 ? { ...r, memo_code: 'X' } : r));
+    http.route({ match: endpoint('/schedules/schedule_f/'), respond: pagedUpstream(rows) });
+
+    const result = await runToolContract(searchCoordinatedExpenditures, {
+      cycle: 2024,
+      max_amount: 100,
+      per_page: 25,
+    });
+
+    expect(rowsOf(result)).toHaveLength(25);
+    expect(sc(result).notice).toBe(memoSentence(12, 25));
+    const rendered = text(result);
+    expect(rendered).toContain(memoSentence(12, 25));
+    expect(rendered.split(' · memo entry\n')).toHaveLength(13);
+  });
+
+  it('joins the estimate and memo sentences into one notice on a disbursement page', async () => {
+    const rows = disbursementRows(30).map((r, i) =>
+      i === 16 || i === 22 ? { ...r, memo_code: 'X', memoed_subtotal: true } : r,
+    );
+    http.route({
+      match: endpoint('/schedules/schedule_b/'),
+      respond: async (request) => {
+        const body = (await keysetUpstream(rows)(request).json()) as {
+          pagination: Record<string, unknown>;
+        };
+        body.pagination.is_count_exact = false;
+        return Response.json(body);
+      },
+    });
+
+    const result = await runToolContract(searchDisbursements, {
+      committee_id: 'C00706747',
+      cycle: 2026,
+      per_page: 30,
+    });
+
+    const notice = `${APPROXIMATE_COUNT_NOTICE} ${memoSentence(2, 30)}`;
+    expect(sc(result).notice).toBe(notice);
+    expect(text(result)).toContain(notice);
+    expect(text(result)).toContain('**VENDOR 16** · memo entry\n');
+    expect(text(result)).toContain('**VENDOR 17**\n');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Candidate totals across every cycle                               */
 /* ------------------------------------------------------------------ */
 
 /**
- * The heaviest row observed live for each tool and scope, with every string
- * replaced by an equal-length placeholder: the byte weight is real, the
- * contents are not. A page of `cap` copies is the worst page each scope has
- * produced — a regression here means a cap or a renderer outgrew the budget.
+ * `/candidates/totals/` ordered as OpenFEC orders it: one row per requested
+ * candidate per cycle, sorted on `sort` — by candidate ID, newest cycle first
+ * within one, when the request asks for `candidate_id`; newest cycle first
+ * otherwise — then paged.
  */
-const HEAVIEST = JSON.parse(
-  readFileSync(new URL('../../../fixtures/heaviest-rows.json', import.meta.url), 'utf8'),
-) as Record<string, { row: Row; committee?: Row; candidate: Row; totals: Row[] }>;
+const totalsAcrossCycles = (cycles: readonly number[]) => (request: Request) => {
+  const query = new URL(request.url).searchParams;
+  const ids = query.getAll('candidate_id');
+  const rows =
+    query.get('sort') === 'candidate_id'
+      ? ids
+          .toSorted()
+          .flatMap((id) => cycles.map((cycle) => ({ candidate_id: id, cycle, receipts: cycle })))
+      : cycles.flatMap((cycle) => ids.map((id) => ({ candidate_id: id, cycle, receipts: cycle })));
+  return pagedUpstream(rows)(request);
+};
 
-const bytes = (value: string) => new TextEncoder().encode(value).length;
+describe('candidate totals across every cycle', () => {
+  it('reads every totals row for a full page of candidates, past the first five requests', async () => {
+    const cycles = [2026, 2024, 2022, 2020, 2018, 2016, 2014];
+    const candidates = candidateRows(MAX_PER_PAGE);
+    http.route(
+      { match: endpoint('/candidates/totals/'), respond: totalsAcrossCycles(cycles) },
+      { match: endpoint('/candidates/'), respond: pagedUpstream(candidates) },
+    );
 
-const copies = (row: Row, n: number, committee?: Row): Row[] =>
-  range(n).map((i) => ({ ...row, sub_id: String(i), ...(committee ? { committee } : {}) }));
+    const result = await runToolContract(searchCandidates, {
+      state: 'CA',
+      office: 'H',
+      include_totals: true,
+      per_page: MAX_PER_PAGE,
+    });
 
-describe('byte budget at the cap', () => {
+    const ids = candidates.map((c) => c.candidate_id as string);
+    const calls = upstreamCalls('/candidates/totals/');
+    /** Ordered by candidate, a page of 100 holds 14 candidates' 7 rows whole; each request starts at the 15th. */
+    expect(calls.map((u) => u.searchParams.getAll('candidate_id'))).toEqual(
+      range(8).map((i) => ids.slice(14 * i)),
+    );
+    for (const call of calls) {
+      expect(call.searchParams.get('page')).toBe('1');
+      expect(call.searchParams.get('per_page')).toBe('100');
+      expect(call.searchParams.get('sort')).toBe('candidate_id');
+    }
+
+    const totals = sc(result).totals as Row[];
+    expect(totals).toHaveLength(ids.length * cycles.length);
+    for (const id of ids) {
+      expect(totals.filter((t) => t.candidate_id === id).map((t) => t.cycle)).toEqual(cycles);
+    }
+    expect(sc(result)).not.toHaveProperty('missing_totals');
+    expect(sc(result).notice).toBeUndefined();
+    const rendered = text(result);
+    expect(rendered.split('— Financial Totals (cycle 2014) —')).toHaveLength(ids.length + 1);
+    expect(rendered).not.toContain('not retrieved');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Advertised output                                                 */
+/* ------------------------------------------------------------------ */
+
+describe('advertised output', () => {
   it.each([
-    [
-      'contributions',
-      searchContributions,
-      { committee_id: 'C00703975', cycle: 2024 },
-      '/schedules/schedule_a/',
-      'contributions',
-    ],
-    [
-      'disbursements',
-      searchDisbursements,
-      { committee_id: 'C00703975', cycle: 2024 },
-      '/schedules/schedule_b/',
-      'disbursements',
-    ],
-    [
-      'expenditures, per-row committee',
-      searchExpenditures,
-      { candidate_id: 'P80000722', cycle: 2024 },
-      '/schedules/schedule_e/',
-      'expendituresPerRow',
-    ],
-    [
-      'expenditures, hoisted committee',
-      searchExpenditures,
-      { committee_id: 'C00825851', cycle: 2024 },
-      '/schedules/schedule_e/',
-      'expendituresCommittee',
-    ],
-  ] as const)(
-    '%s stays under the budget per surface',
-    async (_label, definition, args, path, key) => {
-      const { row, committee } = HEAVIEST[key]!;
-      http.route({ match: endpoint(path), respond: keysetUpstream(copies(row, 200, committee)) });
-
-      const result = await runToolContract(
-        definition as unknown as Definition,
-        {
-          ...args,
-          per_page: 100,
-        } as never,
-      );
-
-      expect(result.isError).toBeFalsy();
-      expect(sc(result).truncated).toBe(true);
-      expect(bytes(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-        RESPONSE_BUDGET_BYTES,
-      );
-      expect(bytes(text(result))).toBeLessThanOrEqual(RESPONSE_BUDGET_BYTES);
-    },
-  );
-
-  it.each([
-    [
-      'coordinated expenditures, per-row committee',
-      searchCoordinatedExpenditures,
-      { candidate_id: 'P80000722', cycle: 2024 },
-      '/schedules/schedule_f/',
-      'coordinatedPerRow',
-    ],
-    [
-      'coordinated expenditures, hoisted committee',
-      searchCoordinatedExpenditures,
-      { committee_id: 'C00003418' },
-      '/schedules/schedule_f/',
-      'coordinatedCommittee',
-    ],
-    ['filings', searchFilings, { form_type: 'F3X' }, '/filings/', 'filings'],
-  ] as const)(
-    '%s stays under the budget per surface',
-    async (_label, definition, args, path, key) => {
-      const { row, committee } = HEAVIEST[key]!;
-      http.route({ match: endpoint(path), respond: pagedUpstream(copies(row, 200, committee)) });
-
-      const result = await runToolContract(
-        definition as unknown as Definition,
-        {
-          ...args,
-          per_page: 100,
-        } as never,
-      );
-
-      expect(result.isError).toBeFalsy();
-      expect(sc(result).truncated).toBe(true);
-      expect(bytes(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-        RESPONSE_BUDGET_BYTES,
-      );
-      expect(bytes(text(result))).toBeLessThanOrEqual(RESPONSE_BUDGET_BYTES);
-    },
-  );
-
-  it.each([
-    ['one cycle', { state: 'CA', office: 'H', cycle: 2024 }, 'candidatesOneCycle'],
-    ['every cycle', { state: 'CA', office: 'H' }, 'candidatesAllCycles'],
-  ] as const)(
-    'candidates with totals for %s stay under the budget per surface',
-    async (_label, args, key) => {
-      const { candidate, totals } = HEAVIEST[key]!;
-      const candidates = range(200).map((i) => ({
-        ...candidate,
-        candidate_id: `H4CA${String(i).padStart(5, '0')}`,
-      }));
-      http.route(
-        {
-          match: endpoint('/candidates/totals/'),
-          respond: (request) => {
-            const ids = new URL(request.url).searchParams.getAll('candidate_id');
-            const results = ids.flatMap((id) => totals.map((t) => ({ ...t, candidate_id: id })));
-            return Response.json({
-              api_version: '1.0',
-              pagination: { count: results.length, page: 1, pages: 1, per_page: 100 },
-              results,
-            });
-          },
-        },
-        { match: endpoint('/candidates/'), respond: pagedUpstream(candidates) },
-      );
-
-      const result = await runToolContract(searchCandidates, {
-        ...args,
-        include_totals: true,
-        per_page: 100,
-      });
-
-      expect(result.isError).toBeFalsy();
-      expect(sc(result).truncated).toBe(true);
-      expect(bytes(JSON.stringify(result.structuredContent))).toBeLessThanOrEqual(
-        RESPONSE_BUDGET_BYTES,
-      );
-      expect(bytes(text(result))).toBeLessThanOrEqual(RESPONSE_BUDGET_BYTES);
-    },
-  );
+    ['openfec_search_contributions', searchContributions],
+    ['openfec_search_disbursements', searchDisbursements],
+    ['openfec_search_expenditures', searchExpenditures],
+    ['openfec_search_coordinated_expenditures', searchCoordinatedExpenditures],
+    ['openfec_search_filings', searchFilings],
+    ['openfec_search_candidates', searchCandidates],
+  ] as const)('%s declares no page-bound field and no trailer for one', (_name, definition) => {
+    const { output, enrichment, enrichmentTrailer } = definition as unknown as {
+      enrichment?: Record<string, unknown>;
+      enrichmentTrailer?: Record<string, unknown>;
+      output: { shape: Record<string, unknown> };
+    };
+    const advertised = Object.keys({ ...output.shape, ...enrichment });
+    for (const field of BOUND_FIELDS) {
+      expect(advertised).not.toContain(field);
+      expect(Object.keys(enrichmentTrailer ?? {})).not.toContain(field);
+    }
+  });
 });

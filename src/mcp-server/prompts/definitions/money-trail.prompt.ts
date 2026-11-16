@@ -65,10 +65,10 @@ Carry forward the receipt totals already retrieved in step 1. Use openfec_search
 - Top employer and occupation patterns (mode: by_employer, by_occupation)
 
 ## Step 4: Track outside money
-Use openfec_search_expenditures with the candidate_id to find:
-- Independent expenditures supporting this candidate (support_oppose: S)
-- Independent expenditures opposing this candidate (support_oppose: O)
-- Which Super PACs and groups are involved (mode: by_candidate for summary)
+Use openfec_search_expenditures with the candidate_id:
+- Totals by spender (mode: by_candidate): each committee's independent expenditures supporting (support_oppose: S) or opposing (support_oppose: O) this candidate, largest total first. These totals come from periodic reports only.
+- In the current cycle, also list the 24/48-hour notices (mode: itemized, is_notice: true): a notice dated after its spender's last periodic report is spending the by_candidate total does not include yet.
+- Individual expenditures (mode: itemized) show which Super PACs and groups paid whom, when, and for what. Most notice spending is reported again on the next periodic report, so never add up an itemized page that mixes notices with report rows (pass is_notice: false for report rows alone), and leave memo entries (memo_code "X") out of any sum.
 
 ## Step 5: Add party coordinated spending
 Use openfec_search_coordinated_expenditures with the candidate_id. Schedule F is money a party committee spends on the candidate's behalf in coordination with the campaign, under its own statutory limit — legally distinct from the independent expenditures in step 4 and absent from them, so a trail that stops at Schedule E understates party support. Each row names the spending party committee.

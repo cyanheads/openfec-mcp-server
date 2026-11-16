@@ -56,6 +56,32 @@ export function validateRange({
   }
 }
 
+/** The date and amount bounds the Schedule A, B, E, and F search tools share. */
+interface ScheduleRangeInput {
+  max_amount?: number | undefined;
+  max_date?: string | undefined;
+  min_amount?: number | undefined;
+  min_date?: string | undefined;
+}
+
+/** Validate the `min_date`/`max_date` and `min_amount`/`max_amount` pairs, dates first. */
+export function validateScheduleRanges(input: ScheduleRangeInput): void {
+  validateRange({
+    minField: 'min_date',
+    minValue: input.min_date,
+    maxField: 'max_date',
+    maxValue: input.max_date,
+    valueType: 'date',
+  });
+  validateRange({
+    minField: 'min_amount',
+    minValue: input.min_amount,
+    maxField: 'max_amount',
+    maxValue: input.max_amount,
+    valueType: 'number',
+  });
+}
+
 function isCalendarDate(value: string): boolean {
   if (!ISO_DATE_RE.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);

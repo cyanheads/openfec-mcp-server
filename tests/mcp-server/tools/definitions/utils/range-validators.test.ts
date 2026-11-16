@@ -5,7 +5,10 @@
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { describe, expect, it } from 'vitest';
-import { validateRange } from '@/mcp-server/tools/definitions/utils/range-validators.js';
+import {
+  validateRange,
+  validateScheduleRanges,
+} from '@/mcp-server/tools/definitions/utils/range-validators.js';
 
 const capture = (fn: () => void): McpError => {
   let caught: unknown;
@@ -94,5 +97,58 @@ describe('validateRange', () => {
       max_value: maxValue,
       recovery: { hint: expect.any(String) },
     });
+  });
+});
+
+describe('validateScheduleRanges', () => {
+  it('accepts ordered date and amount pairs, and no bounds at all', () => {
+    expect(() =>
+      validateScheduleRanges({
+        min_date: '2024-01-01',
+        max_date: '2024-12-31',
+        min_amount: 100,
+        max_amount: 500,
+      }),
+    ).not.toThrow();
+    expect(() => validateScheduleRanges({})).not.toThrow();
+  });
+
+  it.each([
+    ['dates', { min_date: '2024-12-31', max_date: '2024-01-01' }, 'min_date', 'max_date'],
+    ['amounts', { min_amount: 500, max_amount: 100 }, 'min_amount', 'max_amount'],
+  ] as const)('rejects inverted %s alone', (_label, input, minField, maxField) => {
+    const error = capture(() => validateScheduleRanges(input));
+
+    expect(error.data).toMatchObject({
+      reason: 'invalid_range',
+      min_field: minField,
+      max_field: maxField,
+    });
+  });
+
+  it('checks the dates before the amounts when both pairs are inverted', () => {
+    const error = capture(() =>
+      validateScheduleRanges({
+        min_date: '2024-12-31',
+        max_date: '2024-01-01',
+        min_amount: 500,
+        max_amount: 100,
+      }),
+    );
+
+    expect(error.data).toMatchObject({
+      reason: 'invalid_range',
+      min_field: 'min_date',
+      max_field: 'max_date',
+    });
+    expect(error.message).toBe('min_date must be less than or equal to max_date.');
+  });
+
+  it('reports a malformed date ahead of an inverted amount pair', () => {
+    const error = capture(() =>
+      validateScheduleRanges({ max_date: '2024-02-30', min_amount: 500, max_amount: 100 }),
+    );
+
+    expect(error.data).toMatchObject({ reason: 'invalid_date', field: 'max_date' });
   });
 });
