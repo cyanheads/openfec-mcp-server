@@ -1,6 +1,6 @@
 # openfec-mcp-server - Directory Structure
 
-Generated on: 2026-11-12 11:38:19
+Generated on: 2026-11-16 11:22:09
 
 ```text
 openfec-mcp-server/
@@ -26,6 +26,7 @@ openfec-mcp-server/
 ├── changelog/
 │   ├── 0.1.x/
 │   ├── 0.10.x/
+│   ├── 0.11.x/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
 │   ├── 0.4.x/
@@ -168,11 +169,13 @@ openfec-mcp-server/
 │   │   └── tools/
 │   │       └── definitions/
 │   │           ├── utils/
+│   │           │   ├── code-validators.ts
 │   │           │   ├── election-cycle.ts
 │   │           │   ├── format-helpers.ts
 │   │           │   ├── id-validators.ts
 │   │           │   ├── legal-field-renderers.ts
 │   │           │   ├── range-validators.ts
+│   │           │   ├── row-kinds.ts
 │   │           │   └── trim-schedule-row.ts
 │   │           ├── get-committee-totals.tool.ts
 │   │           ├── get-legal-document.tool.ts
@@ -198,7 +201,6 @@ openfec-mcp-server/
 │   ├── fixtures/
 │   │   ├── committee-totals.json
 │   │   ├── heaviest-legal-records.json
-│   │   ├── heaviest-rows.json
 │   │   └── legal-records.json
 │   ├── mcp-server/
 │   │   ├── prompts/
@@ -213,10 +215,12 @@ openfec-mcp-server/
 │   │   └── tools/
 │   │       └── definitions/
 │   │           ├── utils/
+│   │           │   ├── code-validators.test.ts
 │   │           │   ├── format-helpers.test.ts
 │   │           │   ├── id-validators.test.ts
 │   │           │   ├── legal-field-renderers.test.ts
 │   │           │   ├── range-validators.test.ts
+│   │           │   ├── row-kinds.test.ts
 │   │           │   └── trim-schedule-row.test.ts
 │   │           ├── contract-failure.ts
 │   │           ├── get-committee-totals.tool.test.ts
@@ -239,6 +243,7 @@ openfec-mcp-server/
 │   │   └── mcpb-agent-docs.test.ts
 │   └── services/
 │       └── openfec/
+│           ├── candidate-totals-upstream.ts
 │           ├── committee-totals-upstream.ts
 │           ├── openfec-service-extended.test.ts
 │           ├── openfec-service-http-errors.test.ts
