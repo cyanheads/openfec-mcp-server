@@ -4,7 +4,7 @@ All notable changes to this project. Each entry links to its full per-version fi
 
 ## [0.11.0](changelog/0.11.x/0.11.0.md) — 2026-11-16 · ⚠️ Breaking
 
-Search tools return the per_page asked for, with each committee record once per page. Itemized contributions search by donor, memo entries and 24/48-hour notices are labelled, and state, party, and committee codes are checked before the request. Breaking: bound-disclosure fields removed, committee records moved to page maps.
+Searches return the per_page asked for, itemized contributions search by donor, memo and 24/48-hour notice rows are labelled, and state, party, and committee codes are checked first. Breaking: bound-disclosure fields removed, committee records moved to page maps, ZIP election searches with inapplicable presidential or Senate geography rejected.
 
 ## [0.10.1](changelog/0.10.x/0.10.1.md) — 2026-11-12
 
